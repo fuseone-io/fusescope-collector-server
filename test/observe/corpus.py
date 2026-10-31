@@ -1,0 +1,230 @@
+"""Deterministic OTLP/JSON corpus for observation and parity runs.
+
+Usage: python3 corpus.py <t0_unix_nanos> <out_dir>
+
+Every ID, name and value is fixed; only timestamps move, as offsets from t0, so
+two collectors fed the same t0 must write the same rows.
+"""
+
+import json
+import os
+import sys
+
+MS = 1_000_000
+
+
+def t(t0, offset_ms):
+    return str(t0 + offset_ms * MS)
+
+
+def kv(key, value):
+    if isinstance(value, bool):
+        return {"key": key, "value": {"boolValue": value}}
+    if isinstance(value, int):
+        return {"key": key, "value": {"intValue": str(value)}}
+    if isinstance(value, float):
+        return {"key": key, "value": {"doubleValue": value}}
+    if isinstance(value, list):
+        return {"key": key, "value": {"arrayValue": {"values": [kv("", v)["value"] for v in value]}}}
+    if isinstance(value, dict):
+        return {"key": key, "value": {"kvlistValue": {"values": [kv(k, v) for k, v in value.items()]}}}
+    if isinstance(value, bytes):
+        import base64
+
+        return {"key": key, "value": {"bytesValue": base64.b64encode(value).decode()}}
+    return {"key": key, "value": {"stringValue": value}}
+
+
+def attrs(d):
+    return [kv(k, v) for k, v in d.items()]
+
+
+CHECKOUT = {
+    "service.name": "checkout",
+    "service.namespace": "shop",
+    "service.version": "1.2.3",
+    "deployment.environment": "prod",
+    "host.name": "node-1",
+    "k8s.cluster.name": "main",
+    "k8s.namespace.name": "shop",
+    "k8s.pod.name": "checkout-7d9f",
+    "telemetry.sdk.language": "go",
+}
+PAYMENT = {
+    "service.name": "payment",
+    "deployment.environment": "prod",
+    "host.name": "node-2",
+    "telemetry.sdk.language": "java",
+}
+SCOPE = {"name": "observe/corpus", "version": "1.0.0"}
+
+TRACE_A = "0af7651916cd43dd8448eb211c80319c"
+TRACE_B = "4bf92f3577b34da6a3ce929d0e0e4736"
+S_ROOT, S_DB, S_ERR, S_LINK, S_PROD, S_PAY, S_CONS = (
+    "b7ad6b7169203331",
+    "00f067aa0ba902b7",
+    "53995c3f42cd8ad8",
+    "1a2b3c4d5e6f7081",
+    "2b3c4d5e6f708192",
+    "3c4d5e6f708192a3",
+    "4d5e6f708192a3b4",
+)
+
+
+def span(trace, sid, parent, name, kind, start, end, a, t0, status=None, events=(), links=()):
+    s = {
+        "traceId": trace,
+        "spanId": sid,
+        "name": name,
+        "kind": kind,
+        "startTimeUnixNano": t(t0, start),
+        "endTimeUnixNano": t(t0, end),
+        "attributes": attrs(a),
+        "events": [
+            {"timeUnixNano": t(t0, et), "name": en, "attributes": attrs(ea)} for et, en, ea in events
+        ],
+        "links": [{"traceId": lt, "spanId": ls, "attributes": attrs(la)} for lt, ls, la in links],
+        "status": status or {},
+    }
+    if parent:
+        s["parentSpanId"] = parent
+    return s
+
+
+def traces(t0):
+    checkout_spans = [
+        span(TRACE_A, S_ROOT, None, "GET /cart", 2, 0, 120, {
+            "http.request.method": "GET",
+            "http.route": "/cart",
+            "http.response.status_code": 200,
+            "url.full": "https://shop.example.com/cart?id=42",
+            "server.address": "shop.example.com",
+            "user_agent.original": "corpus/1.0",
+        }, t0),
+        span(TRACE_A, S_DB, S_ROOT, "SELECT cart", 3, 10, 30, {
+            "db.system.name": "postgresql",
+            "db.namespace": "shop",
+            "db.query.text": "SELECT * FROM cart WHERE id = $1",
+            "server.address": "db.internal",
+            "server.port": 5432,
+        }, t0),
+        span(TRACE_A, S_ERR, S_ROOT, "applyDiscount", 1, 35, 60, {
+            "discount.code": "FALL25",
+        }, t0, status={"code": 2, "message": "discount expired"}, events=[
+            (40, "exception", {
+                "exception.type": "DiscountExpiredError",
+                "exception.message": "discount FALL25 expired",
+                "exception.stacktrace": "DiscountExpiredError: discount FALL25 expired\n    at applyDiscount (cart.go:42)",
+            }),
+            (55, "retry", {"attempt": 2}),
+        ]),
+        span(TRACE_A, S_LINK, S_ROOT, "typed-attributes", 1, 61, 70, {
+            "attr.bool": True,
+            "attr.int": -7,
+            "attr.double": 3.25,
+            "attr.string": "plain",
+            "attr.int_array": [1, 2, 3],
+            "attr.string_array": ["a", "b"],
+            "attr.bytes": b"\x00\x01fusescope",
+            "attr.map": {"inner": "value", "n": 1},
+            "attr.empty": "",
+        }, t0, links=[(TRACE_B, S_CONS, {"link.reason": "async"})]),
+        span(TRACE_A, S_PROD, S_ROOT, "orders publish", 4, 71, 75, {
+            "messaging.system": "kafka",
+            "messaging.destination.name": "orders",
+            "messaging.operation.type": "send",
+        }, t0),
+    ]
+    payment_spans = [
+        span(TRACE_A, S_PAY, S_DB, "POST /charge", 2, 80, 115, {
+            "http.request.method": "POST",
+            "http.route": "/charge",
+            "http.response.status_code": 500,
+            "rpc.system": "grpc",
+        }, t0, status={"code": 2}),
+        span(TRACE_B, S_CONS, None, "orders process", 5, 200, 260, {
+            "messaging.system": "kafka",
+            "messaging.destination.name": "orders",
+            "messaging.operation.type": "process",
+        }, t0, status={"code": 1}),
+    ]
+    return {"resourceSpans": [
+        {"resource": {"attributes": attrs(CHECKOUT)}, "scopeSpans": [{"scope": SCOPE, "spans": checkout_spans}]},
+        {"resource": {"attributes": attrs(PAYMENT)}, "scopeSpans": [{"scope": SCOPE, "spans": payment_spans}]},
+    ]}
+
+
+def logs(t0):
+    def rec(ms, sev_num, sev_text, body, a, trace=None, sid=None):
+        r = {
+            "timeUnixNano": t(t0, ms),
+            "observedTimeUnixNano": t(t0, ms + 1),
+            "severityNumber": sev_num,
+            "body": kv("", body)["value"],
+            "attributes": attrs(a),
+        }
+        if sev_text:
+            r["severityText"] = sev_text
+        if trace:
+            r["traceId"], r["spanId"], r["flags"] = trace, sid, 1
+        return r
+
+    records = [
+        rec(5, 9, "INFO", "cart loaded", {"cart.items": 3}, TRACE_A, S_ROOT),
+        rec(41, 17, "ERROR", "discount expired", {
+            "exception.type": "DiscountExpiredError",
+            "code.function": "applyDiscount",
+        }, TRACE_A, S_ERR),
+        rec(90, 13, "WARN", {"event": "slow_charge", "duration_ms": 35, "ok": False}, {"payment.provider": "acme"}),
+        rec(95, 5, None, "debug without severity text", {"attr.double": 0.5, "attr.bool": True}),
+        rec(96, 0, None, "", {}),
+    ]
+    return {"resourceLogs": [
+        {"resource": {"attributes": attrs(CHECKOUT)}, "scopeLogs": [{"scope": SCOPE, "logRecords": records}]},
+    ]}
+
+
+def metrics(t0):
+    start = t(t0, -60_000)
+    now = t(t0, 0)
+    point = {"startTimeUnixNano": start, "timeUnixNano": now}
+    ms = [
+        {"name": "system.memory.usage", "unit": "By", "description": "Memory in use.",
+         "gauge": {"dataPoints": [dict(point, asInt="1048576", attributes=attrs({"state": "used"}))]}},
+        {"name": "http.server.request.count", "unit": "{request}",
+         "sum": {"aggregationTemporality": 2, "isMonotonic": True,
+                 "dataPoints": [dict(point, asInt="42", attributes=attrs({"http.route": "/cart", "http.response.status_code": 200}))]}},
+        {"name": "queue.depth.change", "unit": "{item}",
+         "sum": {"aggregationTemporality": 1, "isMonotonic": False,
+                 "dataPoints": [dict(point, asDouble=-2.5, attributes=attrs({"queue": "orders"}))]}},
+        {"name": "http.server.request.duration", "unit": "s",
+         "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="6", sum=0.73, min=0.01, max=0.4,
+             bucketCounts=["1", "2", "2", "1"], explicitBounds=[0.025, 0.1, 0.25],
+             attributes=attrs({"http.route": "/cart"}))]}},
+        {"name": "rpc.server.duration", "unit": "ms",
+         "exponentialHistogram": {"aggregationTemporality": 1, "dataPoints": [dict(point,
+             count="5", sum=12.5, min=0.5, max=6.0, scale=2, zeroCount="1",
+             positive={"offset": 1, "bucketCounts": ["1", "0", "2", "1"]},
+             negative={"offset": 0, "bucketCounts": []},
+             attributes=attrs({"rpc.method": "Charge"}))]}},
+        {"name": "go.gc.pause", "unit": "s",
+         "summary": {"dataPoints": [dict(point, count="10", sum=0.02, quantileValues=[
+             {"quantile": 0.5, "value": 0.001}, {"quantile": 0.99, "value": 0.008}])]}},
+    ]
+    return {"resourceMetrics": [
+        {"resource": {"attributes": attrs(CHECKOUT)}, "scopeMetrics": [{"scope": SCOPE, "metrics": ms}]},
+    ]}
+
+
+def main():
+    t0, out = int(sys.argv[1]), sys.argv[2]
+    os.makedirs(out, exist_ok=True)
+    for name, build in (("traces", traces), ("logs", logs), ("metrics", metrics)):
+        with open(os.path.join(out, f"{name}.json"), "w") as f:
+            json.dump(build(t0), f, indent=2, sort_keys=True)
+            f.write("\n")
+
+
+if __name__ == "__main__":
+    main()
