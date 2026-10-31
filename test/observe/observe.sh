@@ -12,7 +12,7 @@ ch() {
   code=${body##*$'\n'}
   body=${body%$'\n'*}
   if [ "$code" != 200 ]; then echo "clickhouse $code for: $1"$'\n'"$body" >&2; return 1; fi
-  printf '%s\n' "$body"
+  [ -n "$body" ] && printf '%s\n' "$body"; return 0
 }
 
 docker compose up -d reference-collector
@@ -39,6 +39,7 @@ sleep 30
 ch "SELECT database, name, engine FROM system.tables WHERE database LIKE 'signoz%' ORDER BY database, name FORMAT TSV" \
   > "$out/tables.tsv"
 while IFS=$'\t' read -r db table engine; do
+  [ -n "$db" ] || continue
   ch "SHOW CREATE TABLE \`$db\`.\`$table\` FORMAT TSVRaw" > "$out/ddl/$db.$table.sql"
   case "$engine" in
     *MergeTree)
