@@ -46,3 +46,7 @@ jobs:
             grep -E '\.go:[0-9]+|FAIL|panic|got |want ' test.out | head -45 | sed 's/^/::error::/'
             exit 1
           }
+      - name: Benchmark
+        run: |
+          cd components/exporter/fusescopeclickhouseexporter
+          go test -run '^$' -bench . -benchmem -count 3 | grep Benchmark | sed 's/^/::notice::/'
