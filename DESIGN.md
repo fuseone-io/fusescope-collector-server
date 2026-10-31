@@ -138,20 +138,20 @@ and the parity suite, and reads the upstream changelog for renamed component typ
 ## 9. Phases
 
 Parity with the existing collector comes first: FuseScope installations run on ClickHouse
-today, so each step can be validated against production traffic before the engine is in
-production. Every step runs in **shadow mode** before it takes real traffic: the new collector
-receives a copy of the traffic and writes to a separate ClickHouse database or test cluster,
-never to production tables, and the parity suite (§7) compares both table by table.
+today. Phases 1–5 are each gated by the parity suite (§7) in CI: the same corpus through both
+collectors must produce identical rows. Real traffic comes once, in **shadow mode** before the
+cutover: the new collector receives a copy of production traffic and writes to a separate
+ClickHouse, never to production tables, and the parity suite compares both table by table.
 
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
 | 0 · Skeleton | distribution from upstream components, CI, configs, ADRs | done: binary builds, configs validate, licenses and vulnerabilities checked |
-| 1 · Traces in ClickHouse | `fusescope_clickhouse` traces into the existing schema; parity suite; shadow deployment | parity green on traces over a week of shadow traffic |
-| 2 · Logs in ClickHouse | logs in the same exporter | parity green on logs in shadow |
-| 3 · Metrics in ClickHouse | metrics in the same exporter | parity green on metrics in shadow |
-| 4 · APM metrics | service RED metrics under the names the Services page queries | Services, service map and APM alerts match in shadow |
-| 5 · Managed processing | `fusescope_opamp`; log pipelines, span mapper, LLM pricing, tail sampling | pipelines and mappings configured in the UI apply identically in shadow |
-| 6 · Cutover | new collector takes production traffic signal by signal; old one retired | 30 days in production without the old collector |
+| 1 · Traces in ClickHouse | `fusescope_clickhouse` traces into the existing schema; parity suite | parity green on traces |
+| 2 · Logs in ClickHouse | logs in the same exporter | parity green on logs |
+| 3 · Metrics in ClickHouse | metrics in the same exporter | parity green on metrics |
+| 4 · APM metrics | service RED metrics under the names the Services page queries | parity green; Services, service map and APM alerts match |
+| 5 · Managed processing | `fusescope_opamp`; log pipelines, span mapper, LLM pricing, tail sampling | pipelines and mappings configured in the UI apply identically in parity |
+| 6 · Shadow and cutover | shadow deployment on production traffic, then the new collector takes it signal by signal; old one retired | parity green over a week of shadow traffic; 30 days in production without the old collector |
 | 7 · Engine | gateway → engine with mTLS and tokens, dual-write, load benchmark | engine dual-write runs on this collector |
 | 8 · New installations | `fusescope-schema`, migration guide, Helm chart | a fresh installation and a SigNoz migration both run without the AGPL collector |
 
