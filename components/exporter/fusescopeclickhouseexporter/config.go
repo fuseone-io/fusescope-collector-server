@@ -14,6 +14,8 @@ import (
 	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+
+	"github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter/internal/metadata"
 )
 
 const minTLSVersion = "1.3"
@@ -46,14 +48,6 @@ func createDefaultConfig() *Config {
 	tls := configtls.NewDefaultClientConfig()
 	tls.MinVersion = minTLSVersion
 
-	queue := exporterhelper.NewDefaultQueueConfig()
-	queue.NumConsumers = 4
-	batch := exporterhelper.NewDefaultBatchConfig()
-	batch.FlushTimeout = time.Second
-	batch.MinSize = 20_000
-	batch.MaxSize = 100_000
-	queue.Batch = configoptional.Some(batch)
-
 	timeout := exporterhelper.NewDefaultTimeoutConfig()
 	timeout.Timeout = 30 * time.Second
 
@@ -64,7 +58,7 @@ func createDefaultConfig() *Config {
 		MaxConnections: 8,
 		Traces:         SignalConfig{Database: "signoz_traces"},
 		TimeoutConfig:  timeout,
-		QueueConfig:    configoptional.Some(queue),
+		QueueConfig:    metadata.NewDefaultSendingQueueConfig(),
 		RetryConfig:    configretry.NewDefaultBackOffConfig(),
 	}
 }
