@@ -4,8 +4,8 @@
 # that received data.
 #   observe.sh <out_dir>
 set -euo pipefail
-cd "$(dirname "$0")"
 out=$(realpath -m "${1:-out}")
+cd "$(dirname "$0")"
 ch() {
   local body code
   body=$(curl -s -w '\n%{http_code}' --data-binary "$1" "http://localhost:8123/")
