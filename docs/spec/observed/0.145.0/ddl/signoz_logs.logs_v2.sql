@@ -49,4 +49,3 @@ PARTITION BY (toDate(timestamp / 1000000000), _retention_days, _retention_days_c
 ORDER BY (ts_bucket_start, resource_fingerprint, severity_text, timestamp, id)
 TTL toDateTime(timestamp / 1000000000) + toIntervalDay(_retention_days)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1, object_serialization_version = 'v3', object_shared_data_serialization_version = 'advanced'
-

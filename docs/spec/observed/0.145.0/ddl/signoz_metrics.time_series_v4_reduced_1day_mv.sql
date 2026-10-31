@@ -33,4 +33,3 @@ AS SELECT
     __normalized,
     inserted_at_unix_milli
 FROM signoz_metrics.time_series_v4_reduced
-

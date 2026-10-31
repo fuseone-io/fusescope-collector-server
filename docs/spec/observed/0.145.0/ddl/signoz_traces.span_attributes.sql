@@ -12,4 +12,3 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{rep
 ORDER BY (tagKey, tagType, dataType, stringTagValue, float64TagValue, isColumn)
 TTL toDateTime(timestamp) + toIntervalSecond(172800)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1, allow_nullable_key = 1
-

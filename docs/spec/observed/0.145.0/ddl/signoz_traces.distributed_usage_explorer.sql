@@ -5,4 +5,3 @@ CREATE TABLE signoz_traces.distributed_usage_explorer
     `count` UInt64 CODEC(T64, ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'usage_explorer', cityHash64(rand()))
-

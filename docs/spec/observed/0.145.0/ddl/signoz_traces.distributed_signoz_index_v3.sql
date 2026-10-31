@@ -111,4 +111,3 @@ CREATE TABLE signoz_traces.distributed_signoz_index_v3
     `attribute_number_signoz$$gen_ai$$usage$$cache_write$$input_tokens$$cost_exists` Bool DEFAULT if(mapContains(attributes_number, 'signoz.gen_ai.usage.cache_write.input_tokens.cost') != 0, true, false) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'signoz_index_v3', cityHash64(trace_id))
-

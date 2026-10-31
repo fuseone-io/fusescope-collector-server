@@ -12,4 +12,3 @@ ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{r
 PARTITION BY toDate(release_time / 1000000000)
 ORDER BY (signal, column_name, column_type, field_context, field_name, version)
 SETTINGS index_granularity = 8192
-

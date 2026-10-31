@@ -1,10 +1,9 @@
-{"name":"deployment.environment","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"host.name","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"k8s.cluster.name","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"k8s.namespace.name","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"k8s.pod.name","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"service.name","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"service.namespace","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"service.version","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-{"name":"telemetry.sdk.language","datatype":"string","timestamp":"2026-10-31 21:52:06"}
-
+{"name":"deployment.environment","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"host.name","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"k8s.cluster.name","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"k8s.namespace.name","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"k8s.pod.name","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"service.name","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"service.namespace","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"service.version","datatype":"string","timestamp":"2026-10-31 21:57:36"}
+{"name":"telemetry.sdk.language","datatype":"string","timestamp":"2026-10-31 21:57:36"}

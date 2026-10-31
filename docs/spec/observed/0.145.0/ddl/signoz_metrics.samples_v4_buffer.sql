@@ -17,4 +17,3 @@ PARTITION BY toDate(unix_milli / 1000)
 ORDER BY (env, temporality, metric_name, fingerprint, unix_milli)
 TTL toDateTime(unix_milli / 1000) + toIntervalSecond(90000)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
-

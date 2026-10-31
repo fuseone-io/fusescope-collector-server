@@ -47,4 +47,3 @@ FROM
         bucket_unix_milli
 )
 WHERE (bucket_unix_milli >= (toUnixTimestamp(now() - toIntervalMinute(35)) * 1000)) AND ((bucket_unix_milli + 300000) <= (toUnixTimestamp(now() - toIntervalMinute(12)) * 1000))
-

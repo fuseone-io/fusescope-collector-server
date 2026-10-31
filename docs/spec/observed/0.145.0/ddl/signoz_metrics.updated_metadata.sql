@@ -11,4 +11,3 @@ CREATE TABLE signoz_metrics.updated_metadata
 ENGINE = ReplicatedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 ORDER BY metric_name
 SETTINGS index_granularity = 8192
-

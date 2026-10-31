@@ -11,4 +11,3 @@ CREATE TABLE signoz_metrics.distributed_samples_v4_reduced_sum_60s
     `computed_at` DateTime DEFAULT now() CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'samples_v4_reduced_sum_60s', cityHash64(env, temporality, metric_name, reduced_fingerprint))
-

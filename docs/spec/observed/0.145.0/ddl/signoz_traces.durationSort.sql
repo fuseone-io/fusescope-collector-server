@@ -43,4 +43,3 @@ PARTITION BY toDate(timestamp)
 ORDER BY (durationNano, timestamp)
 TTL toDateTime(timestamp) + toIntervalSecond(1296000)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
-

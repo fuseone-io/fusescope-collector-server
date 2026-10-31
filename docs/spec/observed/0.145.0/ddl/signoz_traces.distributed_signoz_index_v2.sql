@@ -37,4 +37,3 @@ CREATE TABLE signoz_traces.distributed_signoz_index_v2
     `spanKind` String CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'signoz_index_v2', cityHash64(traceID))
-

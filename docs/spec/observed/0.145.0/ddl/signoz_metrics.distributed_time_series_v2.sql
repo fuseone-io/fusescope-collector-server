@@ -11,4 +11,3 @@ CREATE TABLE signoz_metrics.distributed_time_series_v2
     `is_monotonic` Bool DEFAULT false CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v2', cityHash64(metric_name, fingerprint))
-

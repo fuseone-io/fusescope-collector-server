@@ -34,4 +34,3 @@
 {"tables":"signoz_traces.distributed_tag_attributes_v2,signoz_traces.tag_attributes_v2","statement":"INSERT INTO signoz_traces.distributed_tag_attributes_v2"}
 {"tables":"signoz_traces.distributed_traces_v3_resource","statement":"INSERT INTO signoz_traces.distributed_traces_v3_resource"}
 {"tables":"signoz_traces.distributed_traces_v3_resource,signoz_traces.traces_v3_resource","statement":"INSERT INTO signoz_traces.distributed_traces_v3_resource"}
-

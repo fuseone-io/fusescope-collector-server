@@ -5,4 +5,3 @@ CREATE TABLE signoz_traces.distributed_signoz_spans
     `model` String CODEC(ZSTD(9))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'signoz_spans', cityHash64(traceID))
-

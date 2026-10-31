@@ -12,4 +12,3 @@ CREATE TABLE signoz_meter.distributed_samples
     `value` Float64 CODEC(Gorilla(8), ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_meter', 'samples', cityHash64(temporality, metric_name, fingerprint))
-

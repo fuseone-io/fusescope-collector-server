@@ -11,4 +11,3 @@ CREATE TABLE signoz_traces.distributed_dependency_graph_minutes_v2
     `k8s_namespace_name` LowCardinality(String) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'dependency_graph_minutes_v2', cityHash64(rand()))
-

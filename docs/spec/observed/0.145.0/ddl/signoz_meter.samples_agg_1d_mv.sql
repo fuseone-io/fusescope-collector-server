@@ -41,4 +41,3 @@ GROUP BY
     is_monotonic,
     labels,
     unix_milli
-

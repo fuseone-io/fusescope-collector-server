@@ -12,4 +12,3 @@ CREATE TABLE signoz_analytics.distributed_rule_state_history_v0
     `labels` String CODEC(ZSTD(5))
 )
 ENGINE = Distributed('cluster', 'signoz_analytics', 'rule_state_history_v0', cityHash64(rule_id, rule_name, fingerprint))
-

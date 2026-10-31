@@ -8,4 +8,3 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{rep
 ORDER BY (name, datatype)
 TTL timestamp + toIntervalDay(15)
 SETTINGS index_granularity = 8192
-

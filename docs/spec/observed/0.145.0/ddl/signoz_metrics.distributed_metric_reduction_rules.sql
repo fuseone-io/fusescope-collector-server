@@ -8,4 +8,3 @@ CREATE TABLE signoz_metrics.distributed_metric_reduction_rules
     `updated_at` DateTime64(3) DEFAULT now64(3) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'metric_reduction_rules', cityHash64(metric_name))
-

@@ -14,4 +14,3 @@ PARTITION BY toDate(unix_milli / 1000)
 ORDER BY (tag_key, tag_type, tag_data_type, string_value, number_value)
 TTL toDateTime(unix_milli / 1000) + toIntervalSecond(1296000)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1, allow_nullable_key = 1
-

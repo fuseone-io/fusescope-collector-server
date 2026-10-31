@@ -9,4 +9,3 @@ CREATE TABLE signoz_metadata.distributed_column_evolution_metadata
     `release_time` SimpleAggregateFunction(min, Float64) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metadata', 'column_evolution_metadata', cityHash64(signal, column_name))
-

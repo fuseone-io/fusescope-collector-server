@@ -22,4 +22,3 @@
 {"unix_milli":1793480400000,"tag_key":"severity_text","tag_type":"logfield","tag_data_type":"string","string_value":"INFO","number_value":null}
 {"unix_milli":1793480400000,"tag_key":"severity_text","tag_type":"logfield","tag_data_type":"string","string_value":"WARN","number_value":null}
 {"unix_milli":1793480400000,"tag_key":"telemetry.sdk.language","tag_type":"resource","tag_data_type":"string","string_value":"go","number_value":null}
-

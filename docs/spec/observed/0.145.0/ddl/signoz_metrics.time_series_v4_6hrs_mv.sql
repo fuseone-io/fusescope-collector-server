@@ -31,4 +31,3 @@ AS SELECT
     resource_attrs,
     __normalized
 FROM signoz_metrics.time_series_v4
-

@@ -13,4 +13,3 @@ CREATE TABLE signoz_traces.distributed_signoz_error_index_v2
     `resourceTagsMap` Map(LowCardinality(String), String) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'signoz_error_index_v2', cityHash64(groupID))
-

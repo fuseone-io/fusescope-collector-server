@@ -7,4 +7,3 @@ CREATE TABLE signoz_metadata.distributed_field_keys
     `last_seen` UInt64 CODEC(DoubleDelta, LZ4)
 )
 ENGINE = Distributed('cluster', 'signoz_metadata', 'field_keys', cityHash64(signal, field_context, field_name))
-

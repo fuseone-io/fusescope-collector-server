@@ -10,4 +10,3 @@ CREATE TABLE signoz_metrics.metric_reduction_rules
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', updated_at)
 ORDER BY metric_name
 SETTINGS index_granularity = 8192
-

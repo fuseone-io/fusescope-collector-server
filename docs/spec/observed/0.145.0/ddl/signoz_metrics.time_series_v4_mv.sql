@@ -34,4 +34,3 @@ AS SELECT
     inserted_at_unix_milli
 FROM signoz_metrics.time_series_v4_buffer
 WHERE (is_reduced = false) AND (reduced_fingerprint = 0)
-

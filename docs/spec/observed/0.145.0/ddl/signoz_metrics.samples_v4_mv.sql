@@ -20,4 +20,3 @@ AS SELECT
     inserted_at_unix_milli
 FROM signoz_metrics.samples_v4_buffer
 WHERE reduced_fingerprint = 0
-

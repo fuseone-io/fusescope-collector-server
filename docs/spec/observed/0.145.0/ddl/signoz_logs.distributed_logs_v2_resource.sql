@@ -7,4 +7,3 @@ CREATE TABLE signoz_logs.distributed_logs_v2_resource
     `_retention_days_cold` UInt16 DEFAULT 0
 )
 ENGINE = Distributed('cluster', 'signoz_logs', 'logs_v2_resource', cityHash64(labels, fingerprint))
-

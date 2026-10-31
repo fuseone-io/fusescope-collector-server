@@ -16,4 +16,3 @@ CREATE TABLE signoz_metrics.distributed_time_series_v4_1day
     `__normalized` Bool DEFAULT true CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_1day', cityHash64(env, temporality, metric_name, fingerprint))
-

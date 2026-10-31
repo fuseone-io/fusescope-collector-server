@@ -9,4 +9,3 @@ CREATE TABLE signoz_traces.distributed_span_attributes
     `isColumn` Bool CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'span_attributes', cityHash64(rand()))
-

@@ -51,4 +51,3 @@ GROUP BY
     metric_name,
     reduced_fingerprint,
     bucket_unix_milli
-

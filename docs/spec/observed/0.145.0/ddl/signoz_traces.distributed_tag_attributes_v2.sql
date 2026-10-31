@@ -8,4 +8,3 @@ CREATE TABLE signoz_traces.distributed_tag_attributes_v2
     `number_value` Nullable(Float64) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'tag_attributes_v2', cityHash64(rand()))
-

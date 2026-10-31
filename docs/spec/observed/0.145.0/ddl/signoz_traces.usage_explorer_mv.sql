@@ -12,4 +12,3 @@ FROM signoz_traces.signoz_index_v2
 GROUP BY
     timestamp,
     serviceName
-

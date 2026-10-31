@@ -30,4 +30,3 @@ GROUP BY
     metric_name,
     fingerprint,
     unix_milli
-

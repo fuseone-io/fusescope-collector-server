@@ -10,4 +10,3 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{rep
 PRIMARY KEY migration_id
 ORDER BY migration_id
 SETTINGS index_granularity = 8192
-

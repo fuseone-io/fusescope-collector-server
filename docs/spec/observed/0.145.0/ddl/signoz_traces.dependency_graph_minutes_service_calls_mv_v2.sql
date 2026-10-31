@@ -29,4 +29,3 @@ GROUP BY
     deployment_environment,
     k8s_cluster_name,
     k8s_namespace_name
-

@@ -8,4 +8,3 @@ AS SELECT DISTINCT
     `resource_string_service$$name` AS serviceName
 FROM signoz_traces.signoz_index_v3
 WHERE parent_span_id = ''
-

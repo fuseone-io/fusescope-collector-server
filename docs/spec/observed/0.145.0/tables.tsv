@@ -133,4 +133,3 @@ signoz_traces	traces_v3_resource	ReplicatedReplacingMergeTree
 signoz_traces	usage	ReplicatedMergeTree
 signoz_traces	usage_explorer	ReplicatedSummingMergeTree
 signoz_traces	usage_explorer_mv	MaterializedView
-

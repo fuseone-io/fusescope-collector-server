@@ -9,4 +9,3 @@ CREATE TABLE signoz_metrics.distributed_updated_metadata
     `created_at` Int64 CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'updated_metadata', cityHash64(metric_name))
-

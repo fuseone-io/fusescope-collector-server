@@ -8,4 +8,3 @@ CREATE TABLE signoz_metadata.distributed_attributes_metadata
     `attributes` Map(LowCardinality(String), String)
 )
 ENGINE = Distributed('cluster', 'signoz_metadata', 'attributes_metadata', cityHash64(data_source, resource_fingerprint, attrs_fingerprint))
-

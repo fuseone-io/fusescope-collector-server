@@ -105,13 +105,13 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525120000000",
+              "endTimeUnixNano": "1793483855120000000",
               "events": [],
               "kind": 2,
               "links": [],
               "name": "GET /cart",
               "spanId": "b7ad6b7169203331",
-              "startTimeUnixNano": "1793483525000000000",
+              "startTimeUnixNano": "1793483855000000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
@@ -148,14 +148,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525030000000",
+              "endTimeUnixNano": "1793483855030000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "SELECT cart",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "00f067aa0ba902b7",
-              "startTimeUnixNano": "1793483525010000000",
+              "startTimeUnixNano": "1793483855010000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
@@ -168,7 +168,7 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525060000000",
+              "endTimeUnixNano": "1793483855060000000",
               "events": [
                 {
                   "attributes": [
@@ -192,7 +192,7 @@
                     }
                   ],
                   "name": "exception",
-                  "timeUnixNano": "1793483525040000000"
+                  "timeUnixNano": "1793483855040000000"
                 },
                 {
                   "attributes": [
@@ -204,7 +204,7 @@
                     }
                   ],
                   "name": "retry",
-                  "timeUnixNano": "1793483525055000000"
+                  "timeUnixNano": "1793483855055000000"
                 }
               ],
               "kind": 1,
@@ -212,7 +212,7 @@
               "name": "applyDiscount",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "53995c3f42cd8ad8",
-              "startTimeUnixNano": "1793483525035000000",
+              "startTimeUnixNano": "1793483855035000000",
               "status": {
                 "code": 2,
                 "message": "discount expired"
@@ -312,7 +312,7 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525070000000",
+              "endTimeUnixNano": "1793483855070000000",
               "events": [],
               "kind": 1,
               "links": [
@@ -332,7 +332,7 @@
               "name": "typed-attributes",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "1a2b3c4d5e6f7081",
-              "startTimeUnixNano": "1793483525061000000",
+              "startTimeUnixNano": "1793483855061000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
@@ -357,14 +357,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525075000000",
+              "endTimeUnixNano": "1793483855075000000",
               "events": [],
               "kind": 4,
               "links": [],
               "name": "orders publish",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "2b3c4d5e6f708192",
-              "startTimeUnixNano": "1793483525071000000",
+              "startTimeUnixNano": "1793483855071000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             }
@@ -435,14 +435,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525115000000",
+              "endTimeUnixNano": "1793483855115000000",
               "events": [],
               "kind": 2,
               "links": [],
               "name": "POST /charge",
               "parentSpanId": "00f067aa0ba902b7",
               "spanId": "3c4d5e6f708192a3",
-              "startTimeUnixNano": "1793483525080000000",
+              "startTimeUnixNano": "1793483855080000000",
               "status": {
                 "code": 2
               },
@@ -469,17 +469,485 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793483525260000000",
+              "endTimeUnixNano": "1793483855260000000",
               "events": [],
               "kind": 5,
               "links": [],
               "name": "orders process",
               "spanId": "4d5e6f708192a3b4",
-              "startTimeUnixNano": "1793483525200000000",
+              "startTimeUnixNano": "1793483855200000000",
               "status": {
                 "code": 1
               },
               "traceId": "4bf92f3577b34da6a3ce929d0e0e4736"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "inventory"
+            }
+          },
+          {
+            "key": "k8s.namespace.name",
+            "value": {
+              "stringValue": "shop"
+            }
+          },
+          {
+            "key": "k8s.deployment.name",
+            "value": {
+              "stringValue": "inventory"
+            }
+          },
+          {
+            "key": "k8s.node.name",
+            "value": {
+              "stringValue": "node-4"
+            }
+          },
+          {
+            "key": "container.name",
+            "value": {
+              "stringValue": "inventory"
+            }
+          },
+          {
+            "key": "cloud.region",
+            "value": {
+              "stringValue": "us-east-1"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "node-4"
+            }
+          },
+          {
+            "key": "process.pid",
+            "value": {
+              "intValue": "4242"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "attributes": [
+              {
+                "key": "scope.attr",
+                "value": {
+                  "stringValue": "x"
+                }
+              }
+            ],
+            "name": "probe"
+          },
+          "spans": [
+            {
+              "attributes": [
+                {
+                  "key": "http.method",
+                  "value": {
+                    "stringValue": "GET"
+                  }
+                },
+                {
+                  "key": "http.url",
+                  "value": {
+                    "stringValue": "http://legacy.example.com/a?b=1"
+                  }
+                },
+                {
+                  "key": "http.status_code",
+                  "value": {
+                    "intValue": "404"
+                  }
+                },
+                {
+                  "key": "http.host",
+                  "value": {
+                    "stringValue": "legacy.example.com"
+                  }
+                },
+                {
+                  "key": "http.target",
+                  "value": {
+                    "stringValue": "/a"
+                  }
+                },
+                {
+                  "key": "net.host.name",
+                  "value": {
+                    "stringValue": "legacy-host"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1793483855050000000",
+              "events": [],
+              "flags": 769,
+              "kind": 2,
+              "links": [],
+              "name": "GET /legacy",
+              "spanId": "00000000c0ffee00",
+              "startTimeUnixNano": "1793483855000000000",
+              "status": {},
+              "traceId": "5ce0e9a56015fec5aadfa328ae398115",
+              "traceState": "vendor=a"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "http.request.method",
+                  "value": {
+                    "stringValue": "PUT"
+                  }
+                },
+                {
+                  "key": "url.full",
+                  "value": {
+                    "stringValue": "https://api.partner.com/v1/items"
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "api.partner.com"
+                  }
+                },
+                {
+                  "key": "http.response.status_code",
+                  "value": {
+                    "intValue": "201"
+                  }
+                },
+                {
+                  "key": "peer.service",
+                  "value": {
+                    "stringValue": "partner-api"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1793483855020000000",
+              "events": [],
+              "flags": 257,
+              "kind": 3,
+              "links": [],
+              "name": "GET upstream",
+              "parentSpanId": "00000000c0ffee00",
+              "spanId": "00000000c0ffee01",
+              "startTimeUnixNano": "1793483855005000000",
+              "status": {},
+              "traceId": "5ce0e9a56015fec5aadfa328ae398115"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "http.method",
+                  "value": {
+                    "stringValue": "POST"
+                  }
+                },
+                {
+                  "key": "http.url",
+                  "value": {
+                    "stringValue": "http://old.partner.com/x"
+                  }
+                },
+                {
+                  "key": "net.peer.name",
+                  "value": {
+                    "stringValue": "old.partner.com"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1793483855030000000",
+              "events": [],
+              "kind": 3,
+              "links": [],
+              "name": "legacy client",
+              "parentSpanId": "00000000c0ffee00",
+              "spanId": "00000000c0ffee02",
+              "startTimeUnixNano": "1793483855021000000",
+              "status": {},
+              "traceId": "5ce0e9a56015fec5aadfa328ae398115"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "db.system",
+                  "value": {
+                    "stringValue": "mysql"
+                  }
+                },
+                {
+                  "key": "db.name",
+                  "value": {
+                    "stringValue": "legacy_db"
+                  }
+                },
+                {
+                  "key": "db.operation",
+                  "value": {
+                    "stringValue": "UPDATE"
+                  }
+                },
+                {
+                  "key": "db.statement",
+                  "value": {
+                    "stringValue": "UPDATE stock SET n = n - 1"
+                  }
+                },
+                {
+                  "key": "net.peer.name",
+                  "value": {
+                    "stringValue": "mysql.internal"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1793483855040000000",
+              "events": [],
+              "kind": 3,
+              "links": [],
+              "name": "UPDATE stock",
+              "parentSpanId": "00000000c0ffee00",
+              "spanId": "00000000c0ffee03",
+              "startTimeUnixNano": "1793483855031000000",
+              "status": {},
+              "traceId": "5ce0e9a56015fec5aadfa328ae398115"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "db.system.name",
+                  "value": {
+                    "stringValue": "mysql"
+                  }
+                },
+                {
+                  "key": "db.namespace",
+                  "value": {
+                    "stringValue": "current_db"
+                  }
+                },
+                {
+                  "key": "db.operation.name",
+                  "value": {
+                    "stringValue": "SELECT"
+                  }
+                },
+                {
+                  "key": "rpc.service",
+                  "value": {
+                    "stringValue": "Stock"
+                  }
+                },
+                {
+                  "key": "rpc.method",
+                  "value": {
+                    "stringValue": "Get"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1793483855045000000",
+              "events": [],
+              "kind": 3,
+              "links": [],
+              "name": "SELECT stock",
+              "parentSpanId": "00000000c0ffee00",
+              "spanId": "00000000c0ffee04",
+              "startTimeUnixNano": "1793483855041000000",
+              "status": {
+                "code": 1,
+                "message": "ignored for ok"
+              },
+              "traceId": "5ce0e9a56015fec5aadfa328ae398115"
+            },
+            {
+              "attributes": [],
+              "endTimeUnixNano": "1793483855049000000",
+              "events": [
+                {
+                  "attributes": [
+                    {
+                      "key": "exception.type",
+                      "value": {
+                        "stringValue": "Boom"
+                      }
+                    },
+                    {
+                      "key": "exception.message",
+                      "value": {
+                        "stringValue": "boom"
+                      }
+                    },
+                    {
+                      "key": "exception.escaped",
+                      "value": {
+                        "boolValue": true
+                      }
+                    }
+                  ],
+                  "name": "exception",
+                  "timeUnixNano": "1793483855047000000"
+                },
+                {
+                  "attributes": [
+                    {
+                      "key": "exception.message",
+                      "value": {
+                        "stringValue": "message only"
+                      }
+                    }
+                  ],
+                  "name": "exception",
+                  "timeUnixNano": "1793483855048000000"
+                },
+                {
+                  "attributes": [],
+                  "name": "plain",
+                  "timeUnixNano": "1793483855048000000"
+                }
+              ],
+              "kind": 1,
+              "links": [],
+              "name": "escaped",
+              "parentSpanId": "00000000c0ffee00",
+              "spanId": "00000000c0ffee05",
+              "startTimeUnixNano": "1793483855046000000",
+              "status": {
+                "code": 2,
+                "message": "boom"
+              },
+              "traceId": "5ce0e9a56015fec5aadfa328ae398115"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "solo"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "observe/corpus",
+            "version": "1.0.0"
+          },
+          "spans": [
+            {
+              "attributes": [],
+              "endTimeUnixNano": "1793483855301000000",
+              "events": [],
+              "kind": 1,
+              "links": [],
+              "name": "probe-resource",
+              "spanId": "0000000000000001",
+              "startTimeUnixNano": "1793483855300000000",
+              "status": {},
+              "traceId": "00000000000000000000000000000001"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "node-3"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "observe/corpus",
+            "version": "1.0.0"
+          },
+          "spans": [
+            {
+              "attributes": [],
+              "endTimeUnixNano": "1793483855301000000",
+              "events": [],
+              "kind": 1,
+              "links": [],
+              "name": "probe-resource",
+              "spanId": "0000000000000002",
+              "startTimeUnixNano": "1793483855300000000",
+              "status": {},
+              "traceId": "00000000000000000000000000000002"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "batch"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "node-5"
+            }
+          },
+          {
+            "key": "process.pid",
+            "value": {
+              "intValue": "7"
+            }
+          },
+          {
+            "key": "os.type",
+            "value": {
+              "stringValue": "linux"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "observe/corpus",
+            "version": "1.0.0"
+          },
+          "spans": [
+            {
+              "attributes": [],
+              "endTimeUnixNano": "1793483855301000000",
+              "events": [],
+              "kind": 1,
+              "links": [],
+              "name": "probe-resource",
+              "spanId": "0000000000000004",
+              "startTimeUnixNano": "1793483855300000000",
+              "status": {},
+              "traceId": "00000000000000000000000000000004"
             }
           ]
         }

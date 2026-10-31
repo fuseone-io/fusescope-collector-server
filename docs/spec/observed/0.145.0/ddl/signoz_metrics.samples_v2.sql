@@ -10,4 +10,3 @@ PARTITION BY toDate(timestamp_ms / 1000)
 ORDER BY (metric_name, fingerprint, timestamp_ms)
 TTL toDateTime(timestamp_ms / 1000) + toIntervalSecond(2592000)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
-

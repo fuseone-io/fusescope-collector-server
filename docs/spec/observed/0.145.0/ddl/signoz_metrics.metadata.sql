@@ -18,4 +18,3 @@ PARTITION BY toDate(last_reported_unix_milli / 1000)
 ORDER BY (temporality, metric_name, attr_name, attr_type, attr_datatype, attr_string_value)
 TTL toDateTime(last_reported_unix_milli / 1000) + toIntervalSecond(2592000)
 SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192
-

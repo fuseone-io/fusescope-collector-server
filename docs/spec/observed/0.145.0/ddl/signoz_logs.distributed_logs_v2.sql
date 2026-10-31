@@ -27,4 +27,3 @@ CREATE TABLE signoz_logs.distributed_logs_v2
     `created_at` DateTime64(3) DEFAULT now64(3) CODEC(Delta(8), ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_logs', 'logs_v2', cityHash64(id))
-

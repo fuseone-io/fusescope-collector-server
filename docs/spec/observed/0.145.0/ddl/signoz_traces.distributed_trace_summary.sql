@@ -6,4 +6,3 @@ CREATE TABLE signoz_traces.distributed_trace_summary
     `num_spans` SimpleAggregateFunction(sum, UInt64) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'trace_summary', cityHash64(trace_id))
-

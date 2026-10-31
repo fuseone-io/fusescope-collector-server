@@ -70,4 +70,3 @@ PRIMARY KEY (serviceName, hasError, toStartOfHour(timestamp), name)
 ORDER BY (serviceName, hasError, toStartOfHour(timestamp), name, timestamp)
 TTL toDateTime(timestamp) + toIntervalSecond(1296000)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
-

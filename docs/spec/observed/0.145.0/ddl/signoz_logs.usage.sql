@@ -10,4 +10,3 @@ ENGINE = ReplicatedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 ORDER BY (tenant, collector_id, exporter_id, timestamp)
 TTL timestamp + toIntervalDay(3)
 SETTINGS index_granularity = 8192
-

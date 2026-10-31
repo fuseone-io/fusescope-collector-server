@@ -15,4 +15,3 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{rep
 PARTITION BY toDate(timestamp_ms / 1000)
 ORDER BY (metric_name, fingerprint)
 SETTINGS index_granularity = 8192
-

@@ -5,4 +5,3 @@ CREATE TABLE signoz_traces.distributed_traces_v3_resource
     `seen_at_ts_bucket_start` Int64 CODEC(Delta(8), ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'traces_v3_resource', cityHash64(labels, fingerprint))
-

@@ -12,4 +12,3 @@ AS SELECT
     toUInt64(count()) AS num_spans
 FROM signoz_traces.signoz_index_v3
 GROUP BY trace_id
-

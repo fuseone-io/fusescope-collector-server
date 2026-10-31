@@ -12,4 +12,3 @@ CREATE TABLE signoz_metrics.distributed_samples_v4_agg_30m
     `count` SimpleAggregateFunction(sum, UInt64) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'samples_v4_agg_30m', cityHash64(env, temporality, metric_name, fingerprint))
-

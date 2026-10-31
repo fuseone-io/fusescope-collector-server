@@ -17,4 +17,3 @@ PARTITION BY toDate(unix_milli / 1000)
 ORDER BY (rule_id, unix_milli)
 TTL toDateTime(unix_milli / 1000) + toIntervalDay(_retention_days)
 SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192
-

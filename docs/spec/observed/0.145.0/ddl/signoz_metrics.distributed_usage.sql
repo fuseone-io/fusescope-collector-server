@@ -7,4 +7,3 @@ CREATE TABLE signoz_metrics.distributed_usage
     `data` String CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'usage', cityHash64(rand()))
-

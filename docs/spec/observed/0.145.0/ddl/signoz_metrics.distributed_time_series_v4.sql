@@ -17,4 +17,3 @@ CREATE TABLE signoz_metrics.distributed_time_series_v4
     `inserted_at_unix_milli` Int64 CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4', cityHash64(env, temporality, metric_name, fingerprint))
-

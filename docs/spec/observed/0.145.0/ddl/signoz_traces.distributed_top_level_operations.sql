@@ -5,4 +5,3 @@ CREATE TABLE signoz_traces.distributed_top_level_operations
     `time` DateTime DEFAULT now() CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_traces', 'top_level_operations', cityHash64(rand()))
-

@@ -10,4 +10,3 @@ CREATE TABLE signoz_metrics.distributed_samples_v4
     `inserted_at_unix_milli` Int64 CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'samples_v4', cityHash64(env, temporality, metric_name, fingerprint))
-

@@ -7,4 +7,3 @@ CREATE TABLE signoz_analytics.distributed_schema_migrations_v2
     `updated_at` DateTime64(9)
 )
 ENGINE = Distributed('cluster', 'signoz_analytics', 'schema_migrations_v2', rand())
-

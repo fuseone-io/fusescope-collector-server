@@ -15,4 +15,3 @@ PARTITION BY toDate(timestamp)
 ORDER BY (timestamp, src, dest, deployment_environment, k8s_cluster_name, k8s_namespace_name)
 TTL toDateTime(timestamp) + toIntervalSecond(1296000)
 SETTINGS index_granularity = 8192
-

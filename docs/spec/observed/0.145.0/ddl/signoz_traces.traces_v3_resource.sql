@@ -11,4 +11,3 @@ PARTITION BY toDate(seen_at_ts_bucket_start)
 ORDER BY (labels, fingerprint, seen_at_ts_bucket_start)
 TTL (toDateTime(seen_at_ts_bucket_start) + toIntervalSecond(1296000)) + toIntervalSecond(1800)
 SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192
-

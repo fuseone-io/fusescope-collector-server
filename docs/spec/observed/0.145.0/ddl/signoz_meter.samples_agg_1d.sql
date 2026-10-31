@@ -20,4 +20,3 @@ PARTITION BY toYYYYMM(toDateTime(intDiv(unix_milli, 1000)))
 ORDER BY (temporality, metric_name, fingerprint, toDayOfMonth(toDateTime(intDiv(unix_milli, 1000))))
 TTL toDateTime(intDiv(unix_milli, 1000)) + toIntervalYear(1)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
-

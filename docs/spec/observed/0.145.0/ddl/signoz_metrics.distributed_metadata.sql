@@ -14,4 +14,3 @@ CREATE TABLE signoz_metrics.distributed_metadata
     `last_reported_unix_milli` SimpleAggregateFunction(max, UInt64) CODEC(ZSTD(1))
 )
 ENGINE = Distributed('cluster', 'signoz_metrics', 'metadata', rand())
-

@@ -9,4 +9,3 @@ PARTITION BY toDate(timestamp)
 ORDER BY traceID
 TTL toDateTime(timestamp) + toIntervalSecond(1296000)
 SETTINGS index_granularity = 1024, ttl_only_drop_parts = 1
-

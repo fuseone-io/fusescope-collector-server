@@ -11,4 +11,3 @@ PARTITION BY toDate(last_seen / 1000000000)
 ORDER BY (signal, field_context, field_name, field_data_type)
 TTL toDateTime(last_seen / 1000000000) + toIntervalSecond(1296000)
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
-
