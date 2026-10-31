@@ -206,6 +206,9 @@ def probe_spans(t0):
             "rcoll.sub": "nested",
             "rcoll": "leaf",
         }, t0),
+        span(TRACE_C, next(ids), root, "three-hours-old", 1, -3 * 3600 * 1000, -3 * 3600 * 1000 + 5, {
+            "old.attr": "old",
+        }, t0),
         span(TRACE_C, next(ids), root, "lengths", 1, 50, 51,
              {f"len.{n}": "x" * n for n in (128, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 2048, 4096)}, t0),
         span(TRACE_C, next(ids), root, "strings", 0, 52, 53, {
