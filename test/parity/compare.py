@@ -24,11 +24,11 @@ def load(path, table):
     drop = IGNORED["*"] | IGNORED.get(table, set())
     rows = collections.Counter()
     # Aggregate-function states (dependency_graph_minutes_v2) are raw bytes.
-    with open(path, encoding="utf-8", errors="backslashreplace") as f:
+    with open(path, encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             if line.strip():
-                row = {k: v for k, v in json.loads(line).items() if k not in drop}
-                rows[json.dumps(row, sort_keys=True, ensure_ascii=False)] += 1
+                row = {k: v for k, v in json.loads(line, strict=False).items() if k not in drop}
+                rows[json.dumps(row, sort_keys=True)] += 1
     return rows
 
 
