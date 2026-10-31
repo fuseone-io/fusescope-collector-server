@@ -104,15 +104,15 @@ func (e *tracesEncoder) encode(td ptrace.Traces) {
 		var res resourceInfo
 		res, e.buf = newResourceInfo(rs.Resource(), e.buf)
 		for _, kv := range res.attrs {
-			e.addKey(kv.key, tagResource, dataString, now)
+			e.addKey(kv.key, tagResource, dataString)
 		}
 		for _, ss := range rs.ScopeSpans().All() {
 			scope := ss.Scope()
 			scopeJSON := e.scopeJSON(scope)
-			e.addKey("scope.name", tagScope, dataString, now)
-			e.addKey("scope.version", tagScope, dataString, now)
+			e.addKey("scope.name", tagScope, dataString)
+			e.addKey("scope.version", tagScope, dataString)
 			walkLeaves("", scope.Attributes(), func(k string, v pcommon.Value) {
-				e.addKey(k, tagScope, leafType(v), now)
+				e.addKey(k, tagScope, leafType(v))
 			})
 			for _, span := range ss.Spans().All() {
 				e.appendSpan(&res, scope, scopeJSON, span, now)
@@ -159,7 +159,7 @@ func (e *tracesEncoder) appendSpan(res *resourceInfo, scope pcommon.Instrumentat
 	e.appendErrors(res, span)
 }
 
-func (e *tracesEncoder) addKey(key string, t tagType, dt dataType, now time.Time) {
+func (e *tracesEncoder) addKey(key string, t tagType, dt dataType) {
 	k := keyRow{key: key, tagType: t, dataType: dt}
 	if _, ok := e.seenKeys[k]; ok {
 		return
@@ -169,7 +169,6 @@ func (e *tracesEncoder) addKey(key string, t tagType, dt dataType, now time.Time
 	e.keys.tagType.Append(tagTypeNames[t])
 	e.keys.dataType.Append(dt.String())
 	e.keys.isColumn.Append(false)
-	e.keys.timestamp.Append(now)
 }
 
 func (e *tracesEncoder) addValueTag(hour int64, key string, t tagType, v pcommon.Value) {

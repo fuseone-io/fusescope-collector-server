@@ -183,8 +183,9 @@ skipped, for `tag` and `spanfield` alike, while the key still reaches `span_attr
 ## 7. `span_attributes_keys`
 
 One row per distinct `(tagKey, tagType, dataType)` with `tagType` `tag`, `resource` or `scope`
-(including `scope.name`, `scope.version`) and `isColumn = false` [obs]. `timestamp` is the insert
-time; its 15-day TTL expires keys that stop arriving.
+(including `scope.name`, `scope.version`) and `isColumn = false` [obs]. The Distributed table has
+no `timestamp`; the local table defaults it to the insert time, and its 15-day TTL expires keys that
+stop arriving [obs `ddl/signoz_traces.distributed_span_attributes_keys.sql`].
 
 ## 8. Still to observe
 

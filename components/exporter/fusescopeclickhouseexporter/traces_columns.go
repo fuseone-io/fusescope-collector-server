@@ -216,11 +216,10 @@ func (c *tagColumns) input() proto.Input {
 
 // keyColumns is one block of span_attributes_keys (§7).
 type keyColumns struct {
-	tagKey    *proto.ColLowCardinality[string]
-	tagType   proto.ColEnum
-	dataType  proto.ColEnum
-	isColumn  proto.ColBool
-	timestamp proto.ColDateTime
+	tagKey   *proto.ColLowCardinality[string]
+	tagType  proto.ColEnum
+	dataType proto.ColEnum
+	isColumn proto.ColBool
 }
 
 func newKeyColumns() *keyColumns {
@@ -233,6 +232,5 @@ func (c *keyColumns) input() proto.Input {
 		{Name: "tagType", Data: &c.tagType},
 		{Name: "dataType", Data: &c.dataType},
 		{Name: "isColumn", Data: &c.isColumn},
-		{Name: "timestamp", Data: &c.timestamp},
 	}
 }

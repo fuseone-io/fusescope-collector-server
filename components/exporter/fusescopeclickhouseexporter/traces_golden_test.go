@@ -259,3 +259,23 @@ func nest(flat map[string]any) map[string]any {
 	}
 	return out
 }
+
+func TestInsertedColumnsExistInDistributedTables(t *testing.T) {
+	enc := newTracesEncoder()
+	column := regexp.MustCompile("(?m)^\\s+`([^`]+)` ")
+	for _, tbl := range tracesTables {
+		b, err := os.ReadFile(filepath.Join(observed, "ddl", "signoz_traces."+tbl.name+".sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		have := map[string]bool{}
+		for _, m := range column.FindAllStringSubmatch(string(b), -1) {
+			have[m[1]] = true
+		}
+		for _, col := range tbl.input(enc) {
+			if !have[col.Name] {
+				t.Errorf("%s has no column %q", tbl.name, col.Name)
+			}
+		}
+	}
+}

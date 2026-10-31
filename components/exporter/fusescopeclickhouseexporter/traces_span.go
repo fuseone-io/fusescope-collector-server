@@ -179,7 +179,7 @@ func (e *tracesEncoder) appendSpanAttributes(m pcommon.Map, t rowTimes) {
 			c.attributesString.Keys.Append(k)
 			c.attributesString.Values.Append(v.AsString())
 		}
-		e.addKey(k, tagSpan, leafType(v), t.now)
+		e.addKey(k, tagSpan, leafType(v))
 		e.addValueTag(t.hour, k, tagSpan, v)
 	})
 	endRow(c.attributesString)
