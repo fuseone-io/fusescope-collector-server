@@ -1,0 +1,28 @@
+fusescope_clickhouse:
+  endpoint: testing.invalid:9440
+  password_file: testdata/password
+fusescope_clickhouse/full:
+  endpoint: clickhouse:9440
+  username: collector
+  password_file: /etc/fusescope/clickhouse-password
+  dial_timeout: 2s
+  max_connections: 16
+  timeout: 10s
+  tls:
+    ca_file: /etc/fusescope/ca.pem
+  traces:
+    database: shadow_traces
+fusescope_clickhouse/insecure:
+  endpoint: clickhouse:9000
+  tls:
+    insecure: true
+fusescope_clickhouse/bad_database:
+  endpoint: clickhouse:9440
+  traces:
+    database: "x; DROP TABLE y"
+fusescope_clickhouse/old_tls:
+  endpoint: clickhouse:9440
+  tls:
+    min_version: "1.2"
+fusescope_clickhouse/no_port:
+  endpoint: clickhouse

@@ -1,0 +1,19 @@
+display_name: FuseScope ClickHouse Exporter
+type: fusescope_clickhouse
+github_project: fuseone-io/fusescope-collector-server
+
+sending_queue:
+  support: default
+
+status:
+  disable_codecov_badge: true
+  class: exporter
+  stability:
+    alpha: [traces]
+  distributions: []
+
+tests:
+  config:
+    endpoint: "testing.invalid:9440"
+    password_file: "testdata/password"
+  skip_lifecycle: true
