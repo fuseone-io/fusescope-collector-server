@@ -2,6 +2,7 @@ OCB_VERSION ?= v0.164.0
 OCB ?= $(shell go env GOPATH)/bin/builder
 BUILD_DIR := _build
 BINARY := $(BUILD_DIR)/fusescope-collector
+COMPONENTS := $(patsubst %/go.mod,%,$(wildcard components/*/*/go.mod))
 LICENSES_ALLOWED := Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 
 # Placeholder values so `validate` can check the example configs offline.
@@ -11,7 +12,7 @@ VALIDATE_ENV := INGEST_TOKENS_FILE=/dev/null ENGINE_TOKEN_FILE=/dev/null GATEWAY
 	GATEWAY_ENDPOINT=gateway:4317 GATEWAY_CA_FILE=/dev/null AGENT_CERT_FILE=/dev/null \
 	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node HOST_ROOT_PATH=/ KUBELET_AUTH_TYPE=none
 
-.PHONY: build validate licenses vuln clean install-ocb
+.PHONY: build validate licenses vuln clean install-ocb components components-gen
 
 install-ocb:
 	go install go.opentelemetry.io/collector/cmd/builder@$(OCB_VERSION)
@@ -30,6 +31,14 @@ licenses: $(BINARY)
 
 vuln: $(BINARY)
 	scripts/govulncheck.sh $(BINARY)
+
+components:
+	@for d in $(COMPONENTS); do echo ">> $$d"; \
+	  (cd $$d && test -z "$$(gofmt -l .)" && go mod tidy -diff && go vet ./... && go test -race ./...) || { gofmt -l $$d; exit 1; }; \
+	done
+
+components-gen:
+	@for d in $(COMPONENTS); do (cd $$d && go run go.opentelemetry.io/collector/cmd/mdatagen@$(OCB_VERSION) metadata.yaml) || exit 1; done
 
 clean:
 	rm -rf $(BUILD_DIR)
