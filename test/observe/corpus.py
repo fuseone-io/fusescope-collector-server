@@ -193,6 +193,19 @@ def probe_spans(t0):
             "db.operation": "DELETE",
             "db.operation.name": "INSERT",
         }, t0),
+        span(TRACE_C, next(ids), root, "external-host", 3, 50, 51, {
+            "http.request.method": "GET",
+            "url.full": "https://url-host.example.com/" + "p" * 300,
+            "server.address": "address-host.example.com",
+        }, t0),
+        span(TRACE_C, next(ids), root, "external-url-only", 3, 50, 51, {
+            "http.request.method": "GET",
+            "url.full": "https://only-url.example.com:8443/x",
+        }, t0),
+        span(TRACE_C, next(ids), root, "collision-reversed", 1, 50, 51, {
+            "rcoll.sub": "nested",
+            "rcoll": "leaf",
+        }, t0),
         span(TRACE_C, next(ids), root, "lengths", 1, 50, 51,
              {f"len.{n}": "x" * n for n in (128, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 2048, 4096)}, t0),
         span(TRACE_C, next(ids), root, "strings", 0, 52, 53, {
