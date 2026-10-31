@@ -11,6 +11,7 @@ ch() {
   body=$(curl -s -w '\n%{http_code}' --data-binary "$1" "http://localhost:8123/")
   code=${body##*$'\n'}
   body=${body%$'\n'*}
+  body=${body%$'\n'}
   if [ "$code" != 200 ]; then echo "clickhouse $code for: $1"$'\n'"$body" >&2; return 1; fi
   [ -n "$body" ] && printf '%s\n' "$body"; return 0
 }

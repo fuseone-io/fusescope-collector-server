@@ -57,6 +57,22 @@ PAYMENT = {
     "telemetry.sdk.language": "java",
 }
 SCOPE = {"name": "observe/corpus", "version": "1.0.0"}
+# Probe resources: which attributes enter the resource fingerprint, and in what order.
+PROBE_RESOURCES = [
+    {"service.name": "solo"},
+    {"host.name": "node-3"},
+    {
+        "service.name": "inventory",
+        "k8s.namespace.name": "shop",
+        "k8s.deployment.name": "inventory",
+        "k8s.node.name": "node-4",
+        "container.name": "inventory",
+        "cloud.region": "us-east-1",
+        "host.name": "node-4",
+        "process.pid": 4242,
+    },
+    {"service.name": "batch", "host.name": "node-5", "process.pid": 7, "os.type": "linux"},
+]
 
 TRACE_A = "0af7651916cd43dd8448eb211c80319c"
 TRACE_B = "4bf92f3577b34da6a3ce929d0e0e4736"
@@ -71,7 +87,7 @@ S_ROOT, S_DB, S_ERR, S_LINK, S_PROD, S_PAY, S_CONS = (
 )
 
 
-def span(trace, sid, parent, name, kind, start, end, a, t0, status=None, events=(), links=()):
+def span(trace, sid, parent, name, kind, start, end, a, t0, status=None, events=(), links=(), flags=None, state=None):
     s = {
         "traceId": trace,
         "spanId": sid,
@@ -88,7 +104,62 @@ def span(trace, sid, parent, name, kind, start, end, a, t0, status=None, events=
     }
     if parent:
         s["parentSpanId"] = parent
+    if flags is not None:
+        s["flags"] = flags
+    if state:
+        s["traceState"] = state
     return s
+
+
+TRACE_C = "5ce0e9a56015fec5aadfa328ae398115"
+
+
+def probe_spans(t0):
+    """Spans that pin derived columns: legacy vs current semconv, remote flags, escaped errors."""
+    ids = iter(f"{i:016x}" for i in range(0xC0FFEE00, 0xC0FFEE40))
+    root = next(ids)
+    return [
+        span(TRACE_C, root, None, "GET /legacy", 2, 0, 50, {
+            "http.method": "GET",
+            "http.url": "http://legacy.example.com/a?b=1",
+            "http.status_code": 404,
+            "http.host": "legacy.example.com",
+            "http.target": "/a",
+            "net.host.name": "legacy-host",
+        }, t0, flags=0x301, state="vendor=a"),
+        span(TRACE_C, next(ids), root, "GET upstream", 3, 5, 20, {
+            "http.request.method": "PUT",
+            "url.full": "https://api.partner.com/v1/items",
+            "server.address": "api.partner.com",
+            "http.response.status_code": 201,
+            "peer.service": "partner-api",
+        }, t0, flags=0x101),
+        span(TRACE_C, next(ids), root, "legacy client", 3, 21, 30, {
+            "http.method": "POST",
+            "http.url": "http://old.partner.com/x",
+            "net.peer.name": "old.partner.com",
+        }, t0),
+        span(TRACE_C, next(ids), root, "UPDATE stock", 3, 31, 40, {
+            "db.system": "mysql",
+            "db.name": "legacy_db",
+            "db.operation": "UPDATE",
+            "db.statement": "UPDATE stock SET n = n - 1",
+            "net.peer.name": "mysql.internal",
+        }, t0),
+        span(TRACE_C, next(ids), root, "SELECT stock", 3, 41, 45, {
+            "db.system.name": "mysql",
+            "db.namespace": "current_db",
+            "db.operation.name": "SELECT",
+            "rpc.service": "Stock",
+            "rpc.method": "Get",
+        }, t0, status={"code": 1, "message": "ignored for ok"}),
+        span(TRACE_C, next(ids), root, "escaped", 1, 46, 49, {}, t0,
+             status={"code": 2, "message": "boom"}, events=[
+                 (47, "exception", {"exception.type": "Boom", "exception.message": "boom", "exception.escaped": True}),
+                 (48, "exception", {"exception.message": "message only"}),
+                 (48, "plain", {}),
+             ]),
+    ]
 
 
 def traces(t0):
@@ -151,6 +222,12 @@ def traces(t0):
     return {"resourceSpans": [
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeSpans": [{"scope": SCOPE, "spans": checkout_spans}]},
         {"resource": {"attributes": attrs(PAYMENT)}, "scopeSpans": [{"scope": SCOPE, "spans": payment_spans}]},
+        {"resource": {"attributes": attrs(PROBE_RESOURCES[2])}, "scopeSpans": [
+            {"scope": {"name": "probe", "attributes": attrs({"scope.attr": "x"})}, "spans": probe_spans(t0)}]},
+    ] + [
+        {"resource": {"attributes": attrs(r)}, "scopeSpans": [{"scope": SCOPE, "spans": [
+            span(f"{i + 1:032x}", f"{i + 1:016x}", None, "probe-resource", 1, 300, 301, {}, t0)]}]}
+        for i, r in enumerate(PROBE_RESOURCES) if i != 2
     ]}
 
 
