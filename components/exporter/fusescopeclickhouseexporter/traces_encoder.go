@@ -202,10 +202,14 @@ func (e *tracesEncoder) addTag(r tagRow) {
 	if len(r.str) > maxTagValueLen {
 		return
 	}
-	if _, ok := e.seenTags[r]; ok {
+	// Deduplicated per batch without the hour: the first span carrying a value
+	// decides its bucket (§6).
+	seen := r
+	seen.hour = 0
+	if _, ok := e.seenTags[seen]; ok {
 		return
 	}
-	e.seenTags[r] = struct{}{}
+	e.seenTags[seen] = struct{}{}
 	e.tags.unixMilli.Append(r.hour)
 	e.tags.tagKey.Append(r.key)
 	e.tags.tagType.Append(tagTypeNames[r.tagType])

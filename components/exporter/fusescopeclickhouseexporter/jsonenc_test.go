@@ -26,7 +26,7 @@ func TestAppendJSONStringMatchesEncodingJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := appendJSONString(nil, s); string(got) != string(want) {
-			t.Errorf("appendJSONString(%q) = %s, want %s", s, got, want)
+			t.Errorf("appendJSONString(%q) = %q, want %q", s, got, want)
 		}
 	}
 }

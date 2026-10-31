@@ -165,7 +165,9 @@ distinct resource once per batch.
 
 ## 6. `tag_attributes_v2`
 
-`unix_milli` is the hour bucket. One row per distinct value [obs]:
+`unix_milli` is the hour bucket. Rows are deduplicated per batch by key, type and value, without
+the hour, so the first span carrying a value decides its bucket [obs span `three-hours-old`: only
+its new values land in its own hour]:
 
 | `tag_type` | Keys | `string_value` / `number_value` |
 |---|---|---|
