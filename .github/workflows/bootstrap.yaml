@@ -25,8 +25,11 @@ jobs:
           cache: false
       - name: Generate metadata and module sums
         run: |
-          make components-gen
-          for d in components/*/*/; do (cd "$d" && go mod tidy && gofmt -w .); done
+          set -o pipefail
+          { make components-gen && for d in components/*/*/; do (cd "$d" && go mod tidy && gofmt -w .) || exit 1; done; } 2>&1 | tee gen.out || {
+            tail -40 gen.out | sed 's/^/::error::/'
+            exit 1
+          }
       - name: Commit generated files
         run: |
           git config user.name "github-actions[bot]"
