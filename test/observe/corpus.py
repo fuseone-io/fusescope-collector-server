@@ -343,7 +343,9 @@ def logs(t0):
     no_times = rec(111, 9, "INFO", "no time at all", {})
     del no_times["timeUnixNano"], no_times["observedTimeUnixNano"]
     probes += [no_time, no_times]
+    first_old = rec(-5 * 3600 * 1000, 9, "INFO", "five hours old, first in batch", {"first.old": "yes"})
     return {"resourceLogs": [
+        {"resource": {"attributes": attrs(PROBE_RESOURCES[0])}, "scopeLogs": [{"scope": SCOPE, "logRecords": [first_old]}]},
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeLogs": [{"scope": SCOPE, "logRecords": records}]},
         {"resource": {"attributes": attrs(PROBE_RESOURCES[2])}, "scopeLogs": [
             {"scope": {"name": "probe", "attributes": attrs({"scope.attr": "x", "scope.n": 2})}, "logRecords": probes}]},
