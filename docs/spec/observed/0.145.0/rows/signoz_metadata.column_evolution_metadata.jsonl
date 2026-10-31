@@ -1,5 +1,5 @@
-{"signal":"logs","column_name":"resource","column_type":"JSON()","field_context":"resource","field_name":"__all__","version":1,"release_time":1793484854331958800}
+{"signal":"logs","column_name":"resource","column_type":"JSON()","field_context":"resource","field_name":"__all__","version":1,"release_time":1793484997500926700}
 {"signal":"logs","column_name":"resources_string","column_type":"Map(LowCardinality(String), Float64)","field_context":"resource","field_name":"__all__","version":0,"release_time":0}
-{"signal":"traces","column_name":"attributes","column_type":"JSON()","field_context":"attribute","field_name":"__all__","version":1,"release_time":1793484854331960300}
-{"signal":"traces","column_name":"resource","column_type":"JSON()","field_context":"resource","field_name":"__all__","version":1,"release_time":1793484854331959800}
+{"signal":"traces","column_name":"attributes","column_type":"JSON()","field_context":"attribute","field_name":"__all__","version":1,"release_time":1793484997500928000}
+{"signal":"traces","column_name":"resource","column_type":"JSON()","field_context":"resource","field_name":"__all__","version":1,"release_time":1793484997500927500}
 {"signal":"traces","column_name":"resources_string","column_type":"Map(LowCardinality(String), Float64)","field_context":"resource","field_name":"__all__","version":0,"release_time":0}
