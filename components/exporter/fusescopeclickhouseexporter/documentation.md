@@ -4,23 +4,23 @@
 
 ## Sending Queue
 
-**Support:** This component uses the default QueueBatch configuration.
+**Support:** This component overrides the default QueueBatch configuration.
 
 ```yaml
 sending_queue:
-    enabled: true              # default
+    enabled: true              # OVERRIDE
     wait_for_result: false     # default
     sizer: requests            # default
     queue_size: 1000           # default
     block_on_overflow: false   # default
     storage: null              # default
-    num_consumers: 10          # default
+    num_consumers: 4           # OVERRIDE
     batch:
-        enabled: true          # FEATURE(pkg.exporterhelper.queueBatchEnabled)
-        flush_timeout: 200ms   # default
-        sizer: items           # default
-        min_size: 8192         # default
-        max_size: 0            # default
+        enabled: true          # OVERRIDE
+        flush_timeout: 1s      # OVERRIDE
+        sizer: items           # OVERRIDE
+        min_size: 20000        # OVERRIDE
+        max_size: 100000       # OVERRIDE
         partition:
             metadata_keys: []  # default
 ```
