@@ -35,8 +35,8 @@ jobs:
         if: always()
         run: |
           [ -f "$RUNNER_TEMP/parity/report.md" ] && cat "$RUNNER_TEMP/parity/report.md" >> "$GITHUB_STEP_SUMMARY"
-          [ -f "$RUNNER_TEMP/parity/report.md" ] && grep -E 'DIFF|only in' "$RUNNER_TEMP/parity/report.md" | head -40 | sed 's/^/::error::/' || true
-          [ -s parity.err ] && tail -30 parity.err | sed 's/^/::error::/' || true
+          [ -f "$RUNNER_TEMP/parity/report.md" ] && grep -E 'DIFF|only in' "$RUNNER_TEMP/parity/report.md" | head -9 | sed 's/^/::error::/' || true
+          [ -s parity.err ] && grep -v -E '^ *(Container|Network|Image|#[0-9]|Volume)' parity.err | tail -8 | sed 's/^/::error::/' || true
       - name: Collector logs on failure
         if: failure()
         run: docker compose -f test/parity/compose.yaml logs --tail 80 candidate-collector | sed 's/^/::error::/' | tail -40

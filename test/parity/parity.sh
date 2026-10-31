@@ -22,7 +22,7 @@ ch() {
 docker compose up -d --build reference-collector candidate-collector
 for port in 13133 23133/health/status; do
   for _ in $(seq 120); do curl -sf "localhost:$port" >/dev/null && break; sleep 2; done
-  curl -sf "localhost:$port" >/dev/null
+  curl -sf "localhost:$port" >/dev/null || { echo "health localhost:$port: $(curl -s -w ' %{http_code}' "localhost:$port")" >&2; exit 1; }
 done
 
 t0=$(( $(date +%s) * 1000000000 ))
@@ -42,4 +42,4 @@ for side in reference:18123 candidate:28123; do
     ch "$port" "SELECT * FROM signoz_traces.$t FORMAT JSONEachRow" > "$out/$name/$t.jsonl"
   done
 done
-python3 -I compare.py "$out" "${tables[@]}"
+python3 -I compare.py "$out" "${tables[@]}" || { echo "parity: differences, see report" >&2; exit 1; }
