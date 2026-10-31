@@ -27,6 +27,8 @@ jobs:
       REFERENCE_VERSION: ${{ inputs.reference_version || '0.145.0' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Observe
@@ -41,4 +43,4 @@ jobs:
           git add docs/spec/observed
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "docs(spec): observe fusescope-otel-collector $REFERENCE_VERSION" || exit 0
-          git push
+          git push origin HEAD:${{ github.ref_name }}
