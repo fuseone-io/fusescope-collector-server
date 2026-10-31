@@ -137,10 +137,23 @@ and the parity suite, and reads the upstream changelog for renamed component typ
 
 ## 9. Phases
 
+Parity with the existing collector comes first: FuseScope installations run on ClickHouse
+today, so each step can be validated against production traffic before the engine is in
+production. Every step runs in **shadow mode** before it takes real traffic: the new collector
+receives a copy of the traffic and writes to a separate ClickHouse database or test cluster,
+never to production tables, and the parity suite (§7) compares both table by table.
+
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
-| 0 · Skeleton | distribution from upstream components, CI, configs, ADRs | binary builds, configs validate, licenses and vulnerabilities checked |
-| 1 · Engine path | gateway → engine with mTLS and tokens, load benchmark | engine phase 1 dual-write runs on this collector |
-| 2 · ClickHouse | `fusescope_clickhouse`, `fusescope-schema`, parity suite | parity suite green on traces, logs and metrics |
-| 3 · Managed processing | log pipelines, span mapper, LLM pricing, APM metrics, `fusescope_opamp` | FuseScope UI features work unchanged on this collector |
-| 4 · Replacement | migration guide, Helm chart, deprecation of the AGPL collector | an existing installation switches collectors without data changes |
+| 0 · Skeleton | distribution from upstream components, CI, configs, ADRs | done: binary builds, configs validate, licenses and vulnerabilities checked |
+| 1 · Traces in ClickHouse | `fusescope_clickhouse` traces into the existing schema; parity suite; shadow deployment | parity green on traces over a week of shadow traffic |
+| 2 · Logs in ClickHouse | logs in the same exporter | parity green on logs in shadow |
+| 3 · Metrics in ClickHouse | metrics in the same exporter | parity green on metrics in shadow |
+| 4 · APM metrics | service RED metrics under the names the Services page queries | Services, service map and APM alerts match in shadow |
+| 5 · Managed processing | `fusescope_opamp`; log pipelines, span mapper, LLM pricing, tail sampling | pipelines and mappings configured in the UI apply identically in shadow |
+| 6 · Cutover | new collector takes production traffic signal by signal; old one retired | 30 days in production without the old collector |
+| 7 · Engine | gateway → engine with mTLS and tokens, dual-write, load benchmark | engine dual-write runs on this collector |
+| 8 · New installations | `fusescope-schema`, migration guide, Helm chart | a fresh installation and a SigNoz migration both run without the AGPL collector |
+
+`fusescope-schema` waits until phase 8: existing clusters already have the schema, which the
+exporter writes into as it is.

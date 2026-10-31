@@ -9,9 +9,9 @@ Read [DESIGN.md](DESIGN.md) first. Decisions are in [docs/adr](docs/adr).
 
 ## Status
 
-Phase 0: the distribution builds from upstream components and the example configurations
-validate. FuseScope components (ClickHouse exporter, managed processors, OpAMP) are planned in
-DESIGN.md §3.2.
+Phase 0 done: the distribution builds from upstream components and the example configurations
+validate. Next is parity with the existing collector on ClickHouse, step by step in shadow mode; see
+DESIGN.md §9.
 
 ## Build
 
