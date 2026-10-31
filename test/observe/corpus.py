@@ -72,7 +72,11 @@ PROBE_RESOURCES = [
         "process.pid": 4242,
     },
     {"service.name": "batch", "host.name": "node-5", "process.pid": 7, "os.type": "linux"},
+    {"service.name": "edge", "k8s.cluster.name": "east", "cloud.region": "eu-west-1",
+     "deployment.environment.name": "staging", "k8s.pod.name": "edge-1", "host.name": "node-6"},
 ]
+ESCAPES = "<a href=\"x\">&amp;</a> ção ✓   \t tab"
+LONG = "0123456789" * 600
 
 TRACE_A = "0af7651916cd43dd8448eb211c80319c"
 TRACE_B = "4bf92f3577b34da6a3ce929d0e0e4736"
@@ -159,6 +163,29 @@ def probe_spans(t0):
                  (48, "exception", {"exception.message": "message only"}),
                  (48, "plain", {}),
              ]),
+        span(TRACE_C, next(ids), root, "precedence", 3, 50, 51, {
+            "http.request.method": "PATCH",
+            "http.method": "DELETE",
+            "url.full": "https://new.example.com/p",
+            "http.url": "https://old.example.com/p",
+            "server.address": "new.example.com",
+            "net.peer.name": "old.example.com",
+            "http.host": "host.example.com",
+            "http.response.status_code": 202,
+            "http.status_code": 410,
+            "db.namespace": "new_db",
+            "db.name": "old_db",
+            "db.operation.name": "INSERT",
+            "db.operation": "DELETE",
+        }, t0),
+        span(TRACE_C, next(ids), root, "strings", 0, 52, 53, {
+            "escapes": ESCAPES,
+            "long.value": LONG,
+            "coll": "leaf",
+            "coll.sub": "nested",
+        }, t0, status={"code": 0, "message": "unset with message"}, events=[
+            (52, "exception", {"exception.type": "Esc<&>", "exception.message": ESCAPES, "exception.stacktrace": LONG}),
+        ], links=[(TRACE_A, S_ROOT, {})], state="k=" + ESCAPES),
     ]
 
 
