@@ -1,0 +1,34 @@
+name: tmp-report
+on:
+  push:
+    branches: [feat/skeleton]
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        step: [build, validate, licenses, vuln, image]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: run
+        run: |
+          set +e
+          case "${{ matrix.step }}" in
+            build) make build > out.txt 2>&1 ;;
+            validate) make build > /dev/null 2>&1; make validate > out.txt 2>&1 ;;
+            licenses) make build > /dev/null 2>&1; make licenses > out.txt 2>&1 ;;
+            vuln) make build > /dev/null 2>&1; make vuln > out.txt 2>&1 ;;
+            image) docker build -t c . > out.txt 2>&1 ;;
+          esac
+          rc=$?
+          [ $rc -eq 0 ] && exit 0
+          msg=$(grep -vE '^\s*$' out.txt | tail -40 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=${{ matrix.step }}::${msg}"
+          exit 1
