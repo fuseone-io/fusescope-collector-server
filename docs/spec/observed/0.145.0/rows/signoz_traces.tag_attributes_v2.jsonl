@@ -1,3 +1,5 @@
+{"unix_milli":1793473200000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"three-hours-old","number_value":null}
+{"unix_milli":1793473200000,"tag_key":"old.attr","tag_type":"tag","tag_data_type":"string","string_value":"old","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"attr.bool","tag_type":"tag","tag_data_type":"bool","string_value":"","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"attr.bytes","tag_type":"tag","tag_data_type":"string","string_value":"AAFmdXNlc2NvcGU=","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"attr.double","tag_type":"tag","tag_data_type":"float64","string_value":"","number_value":3.25}
