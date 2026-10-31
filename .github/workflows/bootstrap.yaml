@@ -1,0 +1,44 @@
+name: bootstrap
+
+on:
+  push:
+    branches:
+      - feat/clickhouse-traces-exporter
+    paths:
+      - components/**
+      - .github/workflows/bootstrap.yaml
+
+permissions:
+  contents: write
+
+jobs:
+  generate-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: false
+      - name: Generate metadata and module sums
+        run: |
+          make components-gen
+          for d in components/*/*/; do (cd "$d" && go mod tidy && gofmt -w .); done
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(components): generate metadata and module sums"
+          git push origin "HEAD:${{ github.ref_name }}"
+      - name: Test
+        run: |
+          set -o pipefail
+          make components 2>&1 | tee test.out || {
+            grep -E '\.go:[0-9]+|FAIL|panic|got |want ' test.out | head -45 | sed 's/^/::error::/'
+            exit 1
+          }
