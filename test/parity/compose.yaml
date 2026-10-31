@@ -1,0 +1,94 @@
+name: parity
+
+# The reference collector and the candidate each write to their own ClickHouse.
+# Both ClickHouse servers answer to "clickhouse" on their own network, so both
+# collectors run the configuration they would use in production.
+
+x-reference-image: &reference-image ghcr.io/fuseone-io/fusescope-otel-collector:${REFERENCE_VERSION:-0.145.0}
+x-reference-env: &reference-env
+  SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: tcp://clickhouse:9000
+  SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER: cluster
+  SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION: "true"
+  SIGNOZ_OTEL_COLLECTOR_TIMEOUT: 10m
+x-clickhouse: &clickhouse
+  image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-25.12.5}
+  environment:
+    CLICKHOUSE_SKIP_USER_SETUP: "1"
+  volumes:
+    - ../observe/clickhouse/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+x-migrator: &migrator
+  image: *reference-image
+  environment: *reference-env
+  entrypoint: [/bin/sh, -c]
+  command:
+    - /fusescope-otel-collector migrate bootstrap && /fusescope-otel-collector migrate sync up && /fusescope-otel-collector migrate async up
+
+networks:
+  reference: {}
+  candidate: {}
+
+services:
+  clickhouse-reference:
+    <<: *clickhouse
+    networks:
+      reference:
+        aliases: [clickhouse]
+    ports:
+      - "18123:8123"
+
+  clickhouse-candidate:
+    <<: *clickhouse
+    networks:
+      candidate:
+        aliases: [clickhouse]
+    ports:
+      - "28123:8123"
+
+  migrator-reference:
+    <<: *migrator
+    networks: [reference]
+    depends_on:
+      clickhouse-reference:
+        condition: service_healthy
+
+  migrator-candidate:
+    <<: *migrator
+    networks: [candidate]
+    depends_on:
+      clickhouse-candidate:
+        condition: service_healthy
+
+  reference-collector:
+    image: *reference-image
+    environment: *reference-env
+    entrypoint: [/fusescope-otel-collector]
+    command: [--config=/etc/reference-collector.yaml]
+    volumes:
+      - ../observe/reference-collector.yaml:/etc/reference-collector.yaml:ro
+    networks: [reference]
+    ports:
+      - "14318:4318"
+      - "13133:13133"
+    depends_on:
+      migrator-reference:
+        condition: service_completed_successfully
+
+  candidate-collector:
+    build:
+      context: ../..
+    image: fusescope-collector:parity
+    command: [--config=/etc/candidate-collector.yaml]
+    volumes:
+      - ./candidate-collector.yaml:/etc/candidate-collector.yaml:ro
+    networks: [candidate]
+    ports:
+      - "24318:4318"
+      - "23133:13133"
+    depends_on:
+      migrator-candidate:
+        condition: service_completed_successfully

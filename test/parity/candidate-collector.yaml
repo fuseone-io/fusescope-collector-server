@@ -1,0 +1,32 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+      status:
+        enabled: true
+        path: /health/status
+      config:
+        enabled: false
+
+exporters:
+  fusescope_clickhouse:
+    endpoint: clickhouse:9000
+    tls:
+      insecure: true
+    sending_queue:
+      batch:
+        flush_timeout: 1s
+
+service:
+  extensions: [healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [fusescope_clickhouse]

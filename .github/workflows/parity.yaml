@@ -1,0 +1,42 @@
+name: parity
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_version:
+        description: fusescope-otel-collector image tag to compare against
+        default: "0.145.0"
+  pull_request:
+    paths:
+      - components/**
+      - builder-config.yaml
+      - Dockerfile
+      - test/**
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  traces:
+    runs-on: ubuntu-latest
+    env:
+      REFERENCE_VERSION: ${{ inputs.reference_version || '0.145.0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare reference and candidate
+        run: test/parity/parity.sh "$RUNNER_TEMP/parity" 2> parity.err
+      - name: Report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/parity/report.md" ] && cat "$RUNNER_TEMP/parity/report.md" >> "$GITHUB_STEP_SUMMARY"
+          [ -f "$RUNNER_TEMP/parity/report.md" ] && grep -E 'DIFF|only in' "$RUNNER_TEMP/parity/report.md" | head -40 | sed 's/^/::error::/' || true
+          [ -s parity.err ] && tail -30 parity.err | sed 's/^/::error::/' || true
+      - name: Collector logs on failure
+        if: failure()
+        run: docker compose -f test/parity/compose.yaml logs --tail 80 candidate-collector | sed 's/^/::error::/' | tail -40
