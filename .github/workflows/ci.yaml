@@ -28,12 +28,7 @@ jobs:
       - name: Check dependency licenses
         run: make licenses
       - name: Check known vulnerabilities
-        run: |
-          set -o pipefail
-          make vuln 2>&1 | tee vuln.txt || {
-            echo "::error title=govulncheck::$(grep -E '^(Vulnerability|  Found in|  Fixed in|    Found in|    Fixed in)' vuln.txt | head -30 | awk '{printf "%s%%0A", $0}')"
-            exit 1
-          }
+        run: make vuln
 
   image:
     runs-on: ubuntu-latest

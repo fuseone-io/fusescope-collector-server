@@ -29,7 +29,7 @@ licenses: $(BINARY)
 	cd $(BUILD_DIR) && go run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(LICENSES_ALLOWED) --ignore=github.com/fuseone-io/fusescope-collector-server
 
 vuln: $(BINARY)
-	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary $(BINARY)
+	scripts/govulncheck.sh $(BINARY)
 
 clean:
 	rm -rf $(BUILD_DIR)

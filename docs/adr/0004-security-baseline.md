@@ -15,6 +15,9 @@
   bound to `localhost` by default.
 - Distroless, non-root, read-only root filesystem images.
 - CI blocks on unpinned modules, licenses outside the allow-list and known vulnerabilities.
+  A vulnerability with a fix is fixed by bumping the module (`replaces` in
+  `builder-config.yaml`); one without a fix may be accepted only in `.govulncheck-allow`
+  with the reason, what removes it and a revisit date.
 
 ## Consequences
 

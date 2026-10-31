@@ -52,3 +52,8 @@ providers:
   - gomod: go.opentelemetry.io/collector/confmap/provider/envprovider v1.70.0
   - gomod: go.opentelemetry.io/collector/confmap/provider/fileprovider v1.70.0
   - gomod: go.opentelemetry.io/collector/confmap/provider/yamlprovider v1.70.0
+
+# Security fixes ahead of upstream. Remove each line once upstream requires the
+# fixed version itself; `make vuln` lists what is still needed.
+replaces:
+  - golang.org/x/net => golang.org/x/net v0.62.0
