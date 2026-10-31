@@ -9,7 +9,7 @@ VALIDATE_ENV := INGEST_TOKENS_FILE=/dev/null ENGINE_TOKEN_FILE=/dev/null GATEWAY
 	TLS_CERT_FILE=/dev/null TLS_KEY_FILE=/dev/null ENGINE_ENDPOINT=engine:4317 \
 	ENGINE_CA_FILE=/dev/null ENGINE_CLIENT_CERT_FILE=/dev/null ENGINE_CLIENT_KEY_FILE=/dev/null \
 	GATEWAY_ENDPOINT=gateway:4317 GATEWAY_CA_FILE=/dev/null AGENT_CERT_FILE=/dev/null \
-	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node HOST_ROOT_PATH=/
+	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node HOST_ROOT_PATH=/ KUBELET_AUTH_TYPE=none
 
 .PHONY: build validate licenses vuln clean install-ocb
 
