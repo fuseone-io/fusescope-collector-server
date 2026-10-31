@@ -35,7 +35,7 @@ receivers:
       - type: container
   host_metrics:
     collection_interval: 30s
-    root_path: /hostfs
+    root_path: ${env:HOST_ROOT_PATH:-/hostfs}
     scrapers:
       cpu: {}
       memory: {}

@@ -9,7 +9,7 @@ VALIDATE_ENV := INGEST_TOKENS_FILE=/dev/null ENGINE_TOKEN_FILE=/dev/null GATEWAY
 	TLS_CERT_FILE=/dev/null TLS_KEY_FILE=/dev/null ENGINE_ENDPOINT=engine:4317 \
 	ENGINE_CA_FILE=/dev/null ENGINE_CLIENT_CERT_FILE=/dev/null ENGINE_CLIENT_KEY_FILE=/dev/null \
 	GATEWAY_ENDPOINT=gateway:4317 GATEWAY_CA_FILE=/dev/null AGENT_CERT_FILE=/dev/null \
-	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node
+	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node HOST_ROOT_PATH=/
 
 .PHONY: build validate licenses vuln clean install-ocb
 
@@ -26,7 +26,7 @@ $(BINARY):
 	$(MAKE) build
 
 licenses: $(BINARY)
-	cd $(BUILD_DIR) && go run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(LICENSES_ALLOWED)
+	cd $(BUILD_DIR) && go run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(LICENSES_ALLOWED) --ignore=github.com/fuseone-io/fusescope-collector-server
 
 vuln: $(BINARY)
 	cd $(BUILD_DIR) && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
