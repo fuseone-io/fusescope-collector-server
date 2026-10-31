@@ -7,6 +7,7 @@ on:
     paths:
       - components/**
       - .github/workflows/bootstrap.yaml
+      - Makefile
 
 permissions:
   contents: write
