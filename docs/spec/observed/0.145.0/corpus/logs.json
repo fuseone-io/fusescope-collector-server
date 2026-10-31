@@ -75,11 +75,11 @@
                 "stringValue": "cart loaded"
               },
               "flags": 1,
-              "observedTimeUnixNano": "1793483371006000000",
+              "observedTimeUnixNano": "1793483525006000000",
               "severityNumber": 9,
               "severityText": "INFO",
               "spanId": "b7ad6b7169203331",
-              "timeUnixNano": "1793483371005000000",
+              "timeUnixNano": "1793483525005000000",
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
             {
@@ -101,11 +101,11 @@
                 "stringValue": "discount expired"
               },
               "flags": 1,
-              "observedTimeUnixNano": "1793483371042000000",
+              "observedTimeUnixNano": "1793483525042000000",
               "severityNumber": 17,
               "severityText": "ERROR",
               "spanId": "53995c3f42cd8ad8",
-              "timeUnixNano": "1793483371041000000",
+              "timeUnixNano": "1793483525041000000",
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
             {
@@ -141,10 +141,10 @@
                   ]
                 }
               },
-              "observedTimeUnixNano": "1793483371091000000",
+              "observedTimeUnixNano": "1793483525091000000",
               "severityNumber": 13,
               "severityText": "WARN",
-              "timeUnixNano": "1793483371090000000"
+              "timeUnixNano": "1793483525090000000"
             },
             {
               "attributes": [
@@ -164,18 +164,18 @@
               "body": {
                 "stringValue": "debug without severity text"
               },
-              "observedTimeUnixNano": "1793483371096000000",
+              "observedTimeUnixNano": "1793483525096000000",
               "severityNumber": 5,
-              "timeUnixNano": "1793483371095000000"
+              "timeUnixNano": "1793483525095000000"
             },
             {
               "attributes": [],
               "body": {
                 "stringValue": ""
               },
-              "observedTimeUnixNano": "1793483371097000000",
+              "observedTimeUnixNano": "1793483525097000000",
               "severityNumber": 0,
-              "timeUnixNano": "1793483371096000000"
+              "timeUnixNano": "1793483525096000000"
             }
           ],
           "scope": {
