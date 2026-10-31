@@ -34,7 +34,7 @@ computed by ClickHouse and are not sent.
 | Value | Rule | Source |
 |---|---|---|
 | `ts_bucket_start` | `floor(start_unix_seconds / 1800) * 1800` | obs: two runs, 21:52:05 and 21:57:35 → `1793482200` |
-| hour bucket | `floor(start_unix_ms / 3600000) * 3600000` | obs `tag_attributes_v2.unix_milli` |
+| hour bucket | `floor(start_unix_ms / 3600000) * 3600000`, from the span start, not ingest time | obs `tag_attributes_v2.unix_milli`, span `three-hours-old` |
 | `inserted_at` | wall clock at insert, millisecond precision | obs |
 | resource attribute value | every resource value is stringified (int `4242` → `"4242"`) | obs `resources_string`, `labels`, `resource` |
 
