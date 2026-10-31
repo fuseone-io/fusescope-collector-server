@@ -1,0 +1,7 @@
+{"name":"attr.bool","datatype":"bool","timestamp":"2026-10-31 21:49:32"}
+{"name":"attr.double","datatype":"float64","timestamp":"2026-10-31 21:49:32"}
+{"name":"cart.items","datatype":"float64","timestamp":"2026-10-31 21:49:32"}
+{"name":"code.function","datatype":"string","timestamp":"2026-10-31 21:49:32"}
+{"name":"exception.type","datatype":"string","timestamp":"2026-10-31 21:49:32"}
+{"name":"payment.provider","datatype":"string","timestamp":"2026-10-31 21:49:32"}
+

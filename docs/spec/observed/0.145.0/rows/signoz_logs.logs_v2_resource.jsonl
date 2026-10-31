@@ -1,0 +1,2 @@
+{"labels":"{\"deployment.environment\":\"prod\",\"host.name\":\"node-1\",\"k8s.cluster.name\":\"main\",\"k8s.namespace.name\":\"shop\",\"k8s.pod.name\":\"checkout-7d9f\",\"service.name\":\"checkout\",\"service.namespace\":\"shop\",\"service.version\":\"1.2.3\",\"telemetry.sdk.language\":\"go\"}","fingerprint":"k8s.cluster.name=main;service.namespace=shop;service.name=checkout;deployment.environment=prod;k8s.pod.name=checkout-7d9f;hash=15535700492459560036","seen_at_ts_bucket_start":1793482200,"_retention_days":15,"_retention_days_cold":0}
+

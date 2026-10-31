@@ -1,0 +1,248 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "checkout"
+            }
+          },
+          {
+            "key": "service.namespace",
+            "value": {
+              "stringValue": "shop"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "1.2.3"
+            }
+          },
+          {
+            "key": "deployment.environment",
+            "value": {
+              "stringValue": "prod"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "node-1"
+            }
+          },
+          {
+            "key": "k8s.cluster.name",
+            "value": {
+              "stringValue": "main"
+            }
+          },
+          {
+            "key": "k8s.namespace.name",
+            "value": {
+              "stringValue": "shop"
+            }
+          },
+          {
+            "key": "k8s.pod.name",
+            "value": {
+              "stringValue": "checkout-7d9f"
+            }
+          },
+          {
+            "key": "telemetry.sdk.language",
+            "value": {
+              "stringValue": "go"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "description": "Memory in use.",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asInt": "1048576",
+                    "attributes": [
+                      {
+                        "key": "state",
+                        "value": {
+                          "stringValue": "used"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793483311000000000",
+                    "timeUnixNano": "1793483371000000000"
+                  }
+                ]
+              },
+              "name": "system.memory.usage",
+              "unit": "By"
+            },
+            {
+              "name": "http.server.request.count",
+              "sum": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "asInt": "42",
+                    "attributes": [
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/cart"
+                        }
+                      },
+                      {
+                        "key": "http.response.status_code",
+                        "value": {
+                          "intValue": "200"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793483311000000000",
+                    "timeUnixNano": "1793483371000000000"
+                  }
+                ],
+                "isMonotonic": true
+              },
+              "unit": "{request}"
+            },
+            {
+              "name": "queue.depth.change",
+              "sum": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "asDouble": -2.5,
+                    "attributes": [
+                      {
+                        "key": "queue",
+                        "value": {
+                          "stringValue": "orders"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793483311000000000",
+                    "timeUnixNano": "1793483371000000000"
+                  }
+                ],
+                "isMonotonic": false
+              },
+              "unit": "{item}"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/cart"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      "1",
+                      "2",
+                      "2",
+                      "1"
+                    ],
+                    "count": "6",
+                    "explicitBounds": [
+                      0.025,
+                      0.1,
+                      0.25
+                    ],
+                    "max": 0.4,
+                    "min": 0.01,
+                    "startTimeUnixNano": "1793483311000000000",
+                    "sum": 0.73,
+                    "timeUnixNano": "1793483371000000000"
+                  }
+                ]
+              },
+              "name": "http.server.request.duration",
+              "unit": "s"
+            },
+            {
+              "exponentialHistogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "rpc.method",
+                        "value": {
+                          "stringValue": "Charge"
+                        }
+                      }
+                    ],
+                    "count": "5",
+                    "max": 6.0,
+                    "min": 0.5,
+                    "negative": {
+                      "bucketCounts": [],
+                      "offset": 0
+                    },
+                    "positive": {
+                      "bucketCounts": [
+                        "1",
+                        "0",
+                        "2",
+                        "1"
+                      ],
+                      "offset": 1
+                    },
+                    "scale": 2,
+                    "startTimeUnixNano": "1793483311000000000",
+                    "sum": 12.5,
+                    "timeUnixNano": "1793483371000000000",
+                    "zeroCount": "1"
+                  }
+                ]
+              },
+              "name": "rpc.server.duration",
+              "unit": "ms"
+            },
+            {
+              "name": "go.gc.pause",
+              "summary": {
+                "dataPoints": [
+                  {
+                    "count": "10",
+                    "quantileValues": [
+                      {
+                        "quantile": 0.5,
+                        "value": 0.001
+                      },
+                      {
+                        "quantile": 0.99,
+                        "value": 0.008
+                      }
+                    ],
+                    "startTimeUnixNano": "1793483311000000000",
+                    "sum": 0.02,
+                    "timeUnixNano": "1793483371000000000"
+                  }
+                ]
+              },
+              "unit": "s"
+            }
+          ],
+          "scope": {
+            "name": "observe/corpus",
+            "version": "1.0.0"
+          }
+        }
+      ]
+    }
+  ]
+}

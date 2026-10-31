@@ -1,0 +1,189 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "checkout"
+            }
+          },
+          {
+            "key": "service.namespace",
+            "value": {
+              "stringValue": "shop"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "1.2.3"
+            }
+          },
+          {
+            "key": "deployment.environment",
+            "value": {
+              "stringValue": "prod"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "node-1"
+            }
+          },
+          {
+            "key": "k8s.cluster.name",
+            "value": {
+              "stringValue": "main"
+            }
+          },
+          {
+            "key": "k8s.namespace.name",
+            "value": {
+              "stringValue": "shop"
+            }
+          },
+          {
+            "key": "k8s.pod.name",
+            "value": {
+              "stringValue": "checkout-7d9f"
+            }
+          },
+          {
+            "key": "telemetry.sdk.language",
+            "value": {
+              "stringValue": "go"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "attributes": [
+                {
+                  "key": "cart.items",
+                  "value": {
+                    "intValue": "3"
+                  }
+                }
+              ],
+              "body": {
+                "stringValue": "cart loaded"
+              },
+              "flags": 1,
+              "observedTimeUnixNano": "1793483371006000000",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "spanId": "b7ad6b7169203331",
+              "timeUnixNano": "1793483371005000000",
+              "traceId": "0af7651916cd43dd8448eb211c80319c"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "exception.type",
+                  "value": {
+                    "stringValue": "DiscountExpiredError"
+                  }
+                },
+                {
+                  "key": "code.function",
+                  "value": {
+                    "stringValue": "applyDiscount"
+                  }
+                }
+              ],
+              "body": {
+                "stringValue": "discount expired"
+              },
+              "flags": 1,
+              "observedTimeUnixNano": "1793483371042000000",
+              "severityNumber": 17,
+              "severityText": "ERROR",
+              "spanId": "53995c3f42cd8ad8",
+              "timeUnixNano": "1793483371041000000",
+              "traceId": "0af7651916cd43dd8448eb211c80319c"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "payment.provider",
+                  "value": {
+                    "stringValue": "acme"
+                  }
+                }
+              ],
+              "body": {
+                "kvlistValue": {
+                  "values": [
+                    {
+                      "key": "event",
+                      "value": {
+                        "stringValue": "slow_charge"
+                      }
+                    },
+                    {
+                      "key": "duration_ms",
+                      "value": {
+                        "intValue": "35"
+                      }
+                    },
+                    {
+                      "key": "ok",
+                      "value": {
+                        "boolValue": false
+                      }
+                    }
+                  ]
+                }
+              },
+              "observedTimeUnixNano": "1793483371091000000",
+              "severityNumber": 13,
+              "severityText": "WARN",
+              "timeUnixNano": "1793483371090000000"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "attr.double",
+                  "value": {
+                    "doubleValue": 0.5
+                  }
+                },
+                {
+                  "key": "attr.bool",
+                  "value": {
+                    "boolValue": true
+                  }
+                }
+              ],
+              "body": {
+                "stringValue": "debug without severity text"
+              },
+              "observedTimeUnixNano": "1793483371096000000",
+              "severityNumber": 5,
+              "timeUnixNano": "1793483371095000000"
+            },
+            {
+              "attributes": [],
+              "body": {
+                "stringValue": ""
+              },
+              "observedTimeUnixNano": "1793483371097000000",
+              "severityNumber": 0,
+              "timeUnixNano": "1793483371096000000"
+            }
+          ],
+          "scope": {
+            "name": "observe/corpus",
+            "version": "1.0.0"
+          }
+        }
+      ]
+    }
+  ]
+}
