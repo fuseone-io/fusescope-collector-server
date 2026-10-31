@@ -36,6 +36,11 @@ sleep 30
   echo "clickhouse: $(ch 'SELECT version()')"
 } > "$out/run.yaml"
 
+ch "SYSTEM FLUSH LOGS" >/dev/null
+ch "SELECT DISTINCT arrayStringConcat(tables, ',') AS tables, replaceRegexpAll(query, '(?is)\\s+(VALUES|FORMAT)\\s.*$', '') AS statement
+    FROM system.query_log WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND has(databases, 'system') = 0
+    ORDER BY tables, statement FORMAT JSONEachRow" > "$out/inserts.jsonl"
+
 ch "SELECT database, name, engine FROM system.tables WHERE database LIKE 'signoz%' ORDER BY database, name FORMAT TSV" \
   > "$out/tables.tsv"
 while IFS=$'\t' read -r db table engine; do
