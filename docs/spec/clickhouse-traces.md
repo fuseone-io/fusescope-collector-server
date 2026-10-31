@@ -50,17 +50,18 @@ traces and logs alike [obs `traces_v3_resource`, `logs_v2_resource`]:
 - **hash**: FNV-1a 64 over the resource attributes sorted by key, each written as
   `key 0xFF value 0xFF` with values stringified. Verified on all 6 observed trace resources and
   the observed log resource.
-- **prefix**: the identifying attributes present, in this order, from all 6 observations:
-  1. `k8s.cluster.name`, else `cloud.region`;
-  2. `service.namespace`, else `k8s.namespace.name`;
-  3. `service.name`;
-  4. `deployment.environment`;
-  5. `k8s.pod.name`, else `host.name`;
-  6. `container.name`.
+- **prefix**: `key=value;` for each identifying attribute present, in this order (from all 7
+  observed resources):
+  1. `cloud.region`;
+  2. `k8s.cluster.name`;
+  3. `service.namespace`, else `k8s.namespace.name`;
+  4. `service.name`;
+  5. `deployment.environment`;
+  6. `k8s.pod.name`, else `host.name`;
+  7. `container.name`.
 
-  Not prefixed: `k8s.deployment.name`, `k8s.node.name`, `service.version`, `process.pid`,
-  `os.type`, `telemetry.sdk.language`. Open: precedence when `k8s.cluster.name` and
-  `cloud.region` both exist, and `deployment.environment.name`. Probe before Phase 1 exits.
+  Not prefixed: `deployment.environment.name`, `k8s.deployment.name`, `k8s.node.name`,
+  `service.version`, `process.pid`, `os.type`, `telemetry.sdk.language`.
 - The backend selects fingerprints from the resource table and filters on
   `resource_fingerprint IN (…)` [be]. A matching hash is still required so both collectors write
   one fingerprint per resource during shadow and cutover.
@@ -79,8 +80,10 @@ Span attributes [obs span `typed-attributes`]:
 | kvlist | flattened | each leaf as `parent.child`, typed by the leaf |
 
 `attributes` (JSON column) holds the same attributes as a nested object, split on `.`, with
-original types (arrays as arrays, bytes as base64). Key collisions (`a` and `a.b`) are not
-observed yet. `attributes_promoted` is always `{}` [obs].
+original types (arrays as arrays, bytes as base64). When a key is both a leaf and a prefix of
+another key (`a` and `a.b`), the leaf is absent from the JSON column in either order; the map
+columns keep both [obs spans `strings`, `collision-reversed`]. `attributes_promoted` is always
+`{}` [obs].
 
 `resource` is the nested form of `resources_string`. `scope` is
 `{"name", "version", "attributes": <nested>}` [obs].
@@ -100,21 +103,23 @@ http_method, http_host, db_name, db_operation, has_error, is_remote, inserted_at
 | `trace_id`, `span_id`, `parent_span_id` | lowercase hex; `parent_span_id` empty for roots |
 | `trace_state` | as received |
 | `flags` | raw OTLP `flags` (`0x301` → `769`) |
-| `kind` / `kind_string` | 1 `Internal`, 2 `Server`, 3 `Client`, 4 `Producer`, 5 `Consumer` (0 not observed) |
+| `kind` / `kind_string` | 0 `Unspecified`, 1 `Internal`, 2 `Server`, 3 `Client`, 4 `Producer`, 5 `Consumer` |
 | `duration_nano` | end − start |
 | `status_code` / `status_code_string` | 0 `Unset`, 1 `Ok`, 2 `Error` |
-| `status_message` | as received, kept for `Ok` too |
+| `status_message` | as received, for every status code |
 | `has_error` | `status_code == 2` |
 | `is_remote` | `yes` / `no` from bit `0x200` when bit `0x100` is set, else `unknown` |
-| `response_status_code` | `http.response.status_code`, else `http.status_code`, as decimal string |
-| `http_method` | `http.request.method`, else `http.method` |
-| `http_url` | `url.full`, else `http.url` |
-| `http_host` | `server.address`, else `http.host`, else `net.peer.name` (any span kind; `net.host.name` ignored) |
-| `external_http_method`, `external_http_url` | Client spans with an HTTP method only: the method, and the host (`server.address`, else `net.peer.name`) |
-| `db_name` | `db.namespace`, else `db.name` |
-| `db_operation` | `db.operation.name`, else `db.operation` |
+| `response_status_code` | from `http.response.status_code` / `http.status_code`, as decimal string |
+| `http_method` | from `http.request.method` / `http.method` |
+| `http_url` | from `url.full` / `http.url` |
+| `http_host` | from `server.address` / `http.host` / `net.peer.name`; with none of them, the hostname of `http_url` (port stripped); `net.host.name` ignored |
+| `external_http_method`, `external_http_url` | Client spans with an HTTP method only: `http_method`, and the hostname of `http_url` (port stripped) |
+| `db_name` | from `db.namespace` / `db.name` |
+| `db_operation` | from `db.operation.name` / `db.operation` |
 
-Precedence between a current and a legacy key on the same span is assumed, not observed.
+When several keys of one row are present, the one that comes **last in the span's attribute
+order** wins, whether current or legacy [obs spans `precedence`, `precedence-reversed`,
+`external-host`, `external-url-only`].
 
 **`events`**: one compact JSON string per event, fields in this order [obs span `escaped`]:
 
@@ -124,6 +129,9 @@ Precedence between a current and a legacy key on the same span is assumed, not o
 
 - `attributeMap` values are stringified and keys are sorted; the field is omitted when the
   event has no attributes.
+- Strings use Go `encoding/json` escaping: `<`, `>`, `&` as `<`, `>`, `&`;
+  U+2028/U+2029 escaped; other non-ASCII verbatim [obs span `strings`]. The same applies to
+  `links` and to `labels` (§5).
 - `isError` is present (`true`) only for events named `exception`, with or without
   `exception.type`.
 
@@ -166,7 +174,9 @@ distinct resource once per batch.
 | `scope` | `scope.name`, `scope.version`, scope attributes | `string_value` |
 | `spanfield` | `name`, `kind`, `kind_string`, `status_code`, `status_code_string`, `http_url`, `http_method`, `http_host`, `external_http_url`, `external_http_method`, `db_name`, `db_operation`, `response_status_code`, `is_remote`, `has_error` | as in §3; empty values skipped; `has_error` bool, no value |
 
-`tag_data_type` is `string`, `float64` or `bool`. Value length limits are not observed yet.
+`tag_data_type` is `string`, `float64` or `bool`. String values longer than 256 bytes are
+skipped, for `tag` and `spanfield` alike, while the key still reaches `span_attributes_keys`
+[obs spans `lengths`, `external-host`]. The limit is assumed for `resource` and `scope` too.
 
 ## 7. `span_attributes_keys`
 
@@ -177,10 +187,6 @@ time; its 15-day TTL expires keys that stop arriving.
 ## 8. Still to observe
 
 - `low_cardinal_exception_grouping: true`;
-- span kind 0;
-- JSON key collisions;
-- value length limits;
-- non-UTF-8 strings;
-- legacy-vs-current precedence on one span;
-- the fingerprint prefix cases in §2.1;
+- NaN and infinite doubles;
+- `external_http_url` for a client span with an HTTP method but no URL;
 - insert settings on the Distributed tables (sync vs async insert).
