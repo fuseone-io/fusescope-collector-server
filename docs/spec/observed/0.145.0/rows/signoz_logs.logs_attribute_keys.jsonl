@@ -1,6 +1,6 @@
-{"name":"attr.bool","datatype":"bool","timestamp":"2026-10-31 22:12:14"}
-{"name":"attr.double","datatype":"float64","timestamp":"2026-10-31 22:12:14"}
-{"name":"cart.items","datatype":"float64","timestamp":"2026-10-31 22:12:14"}
-{"name":"code.function","datatype":"string","timestamp":"2026-10-31 22:12:14"}
-{"name":"exception.type","datatype":"string","timestamp":"2026-10-31 22:12:14"}
-{"name":"payment.provider","datatype":"string","timestamp":"2026-10-31 22:12:14"}
+{"name":"attr.bool","datatype":"bool","timestamp":"2026-10-31 22:15:00"}
+{"name":"attr.double","datatype":"float64","timestamp":"2026-10-31 22:15:00"}
+{"name":"cart.items","datatype":"float64","timestamp":"2026-10-31 22:15:00"}
+{"name":"code.function","datatype":"string","timestamp":"2026-10-31 22:15:00"}
+{"name":"exception.type","datatype":"string","timestamp":"2026-10-31 22:15:00"}
+{"name":"payment.provider","datatype":"string","timestamp":"2026-10-31 22:15:00"}

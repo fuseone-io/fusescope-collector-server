@@ -29,9 +29,11 @@
 {"unix_milli":1793484000000,"tag_key":"db.system.name","tag_type":"tag","tag_data_type":"string","string_value":"postgresql","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_name","tag_type":"spanfield","tag_data_type":"string","string_value":"current_db","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_name","tag_type":"spanfield","tag_data_type":"string","string_value":"legacy_db","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"db_name","tag_type":"spanfield","tag_data_type":"string","string_value":"new_db","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_name","tag_type":"spanfield","tag_data_type":"string","string_value":"old_db","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_name","tag_type":"spanfield","tag_data_type":"string","string_value":"shop","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_operation","tag_type":"spanfield","tag_data_type":"string","string_value":"DELETE","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"db_operation","tag_type":"spanfield","tag_data_type":"string","string_value":"INSERT","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_operation","tag_type":"spanfield","tag_data_type":"string","string_value":"SELECT","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"db_operation","tag_type":"spanfield","tag_data_type":"string","string_value":"UPDATE","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"deployment.environment","tag_type":"resource","tag_data_type":"string","string_value":"prod","number_value":null}
@@ -39,9 +41,11 @@
 {"unix_milli":1793484000000,"tag_key":"discount.code","tag_type":"tag","tag_data_type":"string","string_value":"FALL25","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"escapes","tag_type":"tag","tag_data_type":"string","string_value":"<a href=\"x\">&amp;<\/a> ção ✓ \u2028 \t tab","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"external_http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"DELETE","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"external_http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"PATCH","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"external_http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"POST","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"external_http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"PUT","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"external_http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"api.partner.com","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"external_http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"new.example.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"external_http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"old.example.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"external_http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"old.partner.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"has_error","tag_type":"spanfield","tag_data_type":"bool","string_value":"","number_value":null}
@@ -77,15 +81,18 @@
 {"unix_milli":1793484000000,"tag_key":"http_host","tag_type":"spanfield","tag_data_type":"string","string_value":"host.example.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_host","tag_type":"spanfield","tag_data_type":"string","string_value":"legacy.example.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_host","tag_type":"spanfield","tag_data_type":"string","string_value":"mysql.internal","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"http_host","tag_type":"spanfield","tag_data_type":"string","string_value":"new.example.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_host","tag_type":"spanfield","tag_data_type":"string","string_value":"old.partner.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_host","tag_type":"spanfield","tag_data_type":"string","string_value":"shop.example.com","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"DELETE","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"GET","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"PATCH","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"POST","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_method","tag_type":"spanfield","tag_data_type":"string","string_value":"PUT","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"http:\/\/legacy.example.com\/a?b=1","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"http:\/\/old.partner.com\/x","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"https:\/\/api.partner.com\/v1\/items","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"https:\/\/new.example.com\/p","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"https:\/\/old.example.com\/p","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"http_url","tag_type":"spanfield","tag_data_type":"string","string_value":"https:\/\/shop.example.com\/cart?id=42","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"is_remote","tag_type":"spanfield","tag_data_type":"string","string_value":"no","number_value":null}
@@ -110,6 +117,9 @@
 {"unix_milli":1793484000000,"tag_key":"kind_string","tag_type":"spanfield","tag_data_type":"string","string_value":"Producer","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"kind_string","tag_type":"spanfield","tag_data_type":"string","string_value":"Server","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"kind_string","tag_type":"spanfield","tag_data_type":"string","string_value":"Unspecified","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"len.128","tag_type":"tag","tag_data_type":"string","string_value":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"len.255","tag_type":"tag","tag_data_type":"string","string_value":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"len.256","tag_type":"tag","tag_data_type":"string","string_value":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"messaging.destination.name","tag_type":"tag","tag_data_type":"string","string_value":"orders","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"messaging.operation.type","tag_type":"tag","tag_data_type":"string","string_value":"process","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"messaging.operation.type","tag_type":"tag","tag_data_type":"string","string_value":"send","number_value":null}
@@ -124,9 +134,11 @@
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"applyDiscount","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"escaped","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"legacy client","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"lengths","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"orders process","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"orders publish","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"precedence","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"precedence-reversed","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"probe-resource","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"strings","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"name","tag_type":"spanfield","tag_data_type":"string","string_value":"typed-attributes","number_value":null}
@@ -140,6 +152,7 @@
 {"unix_milli":1793484000000,"tag_key":"process.pid","tag_type":"resource","tag_data_type":"string","string_value":"7","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"response_status_code","tag_type":"spanfield","tag_data_type":"string","string_value":"200","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"response_status_code","tag_type":"spanfield","tag_data_type":"string","string_value":"201","number_value":null}
+{"unix_milli":1793484000000,"tag_key":"response_status_code","tag_type":"spanfield","tag_data_type":"string","string_value":"202","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"response_status_code","tag_type":"spanfield","tag_data_type":"string","string_value":"404","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"response_status_code","tag_type":"spanfield","tag_data_type":"string","string_value":"410","number_value":null}
 {"unix_milli":1793484000000,"tag_key":"response_status_code","tag_type":"spanfield","tag_data_type":"string","string_value":"500","number_value":null}
