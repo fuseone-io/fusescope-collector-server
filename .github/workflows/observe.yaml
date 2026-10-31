@@ -30,11 +30,11 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Observe
-        run: test/observe/observe.sh "docs/spec/observed/$REFERENCE_VERSION"
+        run: test/observe/observe.sh "docs/spec/observed/$REFERENCE_VERSION" 2> >(tee observe.err >&2)
       - name: Report failure
         if: failure()
         run: |
-          msg=$(cd test/observe && docker compose logs --tail 60 2>&1 | tail -60 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          msg=$( (cat observe.err 2>/dev/null; cd test/observe && docker compose logs --tail 20 reference-collector 2>&1) | tail -60 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=observe::$msg"
       - name: Commit observations
         run: |

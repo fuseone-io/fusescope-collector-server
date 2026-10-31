@@ -6,7 +6,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 out=$(realpath -m "${1:-out}")
-ch() { curl -sf --data-binary "$1" "http://localhost:8123/"; }
+ch() {
+  local body code
+  body=$(curl -s -w '\n%{http_code}' --data-binary "$1" "http://localhost:8123/")
+  code=${body##*$'\n'}
+  body=${body%$'\n'*}
+  if [ "$code" != 200 ]; then echo "clickhouse $code for: $1"$'\n'"$body" >&2; return 1; fi
+  printf '%s\n' "$body"
+}
 
 docker compose up -d reference-collector
 for _ in $(seq 120); do curl -sf localhost:13133 >/dev/null && break; sleep 2; done
@@ -16,8 +23,10 @@ t0=$(( $(date +%s) * 1000000000 ))
 rm -rf "$out" && mkdir -p "$out/ddl" "$out/rows"
 python3 -I corpus.py "$t0" "$out/corpus"
 for signal in traces logs metrics; do
-  curl -sf -X POST -H 'Content-Type: application/json' \
-    --data-binary @"$out/corpus/$signal.json" "localhost:4318/v1/$signal" >/dev/null
+  code=$(curl -s -o "$out/$signal.response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    --data-binary @"$out/corpus/$signal.json" "localhost:4318/v1/$signal")
+  if [ "$code" != 200 ]; then echo "POST /v1/$signal: $code $(cat "$out/$signal.response")" >&2; exit 1; fi
+  rm "$out/$signal.response"
 done
 sleep 30
 
@@ -35,7 +44,8 @@ while IFS=$'\t' read -r db table engine; do
     *MergeTree)
       rows=$(ch "SELECT count() FROM \`$db\`.\`$table\`")
       if [ "$rows" -gt 0 ]; then
-        ch "SELECT * FROM \`$db\`.\`$table\` ORDER BY ALL LIMIT 1000 FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl"
+        ch "SELECT * FROM \`$db\`.\`$table\` ORDER BY ALL LIMIT 1000 FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl" 2>/dev/null \
+          || ch "SELECT * FROM \`$db\`.\`$table\` LIMIT 1000 FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl"
       fi
       ;;
   esac
