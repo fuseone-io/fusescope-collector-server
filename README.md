@@ -1,3 +1,44 @@
 # fusescope-collector-server
 
-FuseScope distribution of the OpenTelemetry Collector.
+FuseScope distribution of the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/),
+built from upstream components with the OpenTelemetry Collector Builder. It writes to
+ClickHouse in the SigNoz-compatible schema, to [fusescope-engine](https://github.com/fuseone-io/fusescope-engine),
+or to both during a migration.
+
+Read [DESIGN.md](DESIGN.md) first. Decisions are in [docs/adr](docs/adr).
+
+## Status
+
+Phase 0: the distribution builds from upstream components and the example configurations
+validate. FuseScope components (ClickHouse exporter, managed processors, OpAMP) are planned in
+DESIGN.md §3.2.
+
+## Build
+
+Requires Go 1.26.
+
+```sh
+make build      # installs ocb and builds _build/fusescope-collector
+make validate   # validates every file in config/
+make licenses   # checks dependency licenses against the allow-list
+make vuln       # govulncheck
+docker build -t fusescope-collector .
+```
+
+## Configurations
+
+| File | Mode |
+|---|---|
+| [`config/gateway-engine.yaml`](config/gateway-engine.yaml) | gateway: authenticated OTLP in, fusescope-engine out |
+| [`config/agent-kubernetes.yaml`](config/agent-kubernetes.yaml) | agent: node, pod and log collection to a gateway |
+
+Both expect TLS material and tokens as mounted files; see the `${env:…}` references in each.
+
+## Upgrading upstream
+
+See [docs/upgrading.md](docs/upgrading.md).
+
+## License
+
+Apache-2.0. See [NOTICE](NOTICE) and [ADR 0005](docs/adr/0005-license-policy.md). Nothing here
+is derived from `fusescope-otel-collector` (AGPL-3.0); see [ADR 0002](docs/adr/0002-clean-room.md).

@@ -1,0 +1,7 @@
+# Vulnerabilities accepted in the built binary. One per line:
+# <OSV id> # <why the exposure is acceptable>; <what removes it>; revisit <YYYY-MM-DD>
+# A vulnerability with a fixed version is never listed here: bump the module
+# (builder-config.yaml `replaces`) instead.
+GO-2026-5932 # golang.org/x/crypto/openpgp is linked by an upstream dependency; no collector configuration path calls it and no fix exists; removed when upstream drops the import; revisit 2027-01-31
+GO-2022-0646 # aws-sdk-go v1 s3crypto, linked by an upstream receiver; we never create S3 encryption clients and no v1 fix exists; removed when upstream moves to aws-sdk-go-v2; revisit 2027-01-31
+GO-2022-0635 # aws-sdk-go v1 s3crypto, same exposure and removal as GO-2022-0646; revisit 2027-01-31

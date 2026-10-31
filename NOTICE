@@ -1,0 +1,8 @@
+FuseScope Collector
+Copyright 2026 FuseOne
+
+This product is a distribution of the OpenTelemetry Collector
+(https://github.com/open-telemetry/opentelemetry-collector and
+https://github.com/open-telemetry/opentelemetry-collector-contrib),
+licensed under the Apache License, Version 2.0, and includes its components
+as unmodified Go module dependencies.

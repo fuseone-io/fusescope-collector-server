@@ -1,0 +1,100 @@
+# Agent mode (DaemonSet): collects node, pod and log telemetry and sends it to
+# a gateway over mTLS. It accepts no traffic from outside the node.
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: ${env:HEALTH_ENDPOINT:-localhost:13133}
+      status:
+        enabled: true
+        path: /health/status
+      config:
+        enabled: false
+  bearertokenauth/gateway:
+    scheme: Bearer
+    filename: ${env:GATEWAY_TOKEN_FILE}
+  file_storage/checkpoints:
+    directory: ${env:STATE_DIR:-/var/lib/fusescope-collector/state}
+    create_directory: true
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: ${env:OTLP_GRPC_ENDPOINT:-localhost:4317}
+        max_recv_msg_size_mib: 16
+      http:
+        endpoint: ${env:OTLP_HTTP_ENDPOINT:-localhost:4318}
+  file_log/pods:
+    include: [/var/log/pods/*/*/*.log]
+    exclude: [/var/log/pods/*/fusescope-collector*/*.log]
+    start_at: end
+    include_file_path: true
+    storage: file_storage/checkpoints
+    operators:
+      - type: container
+  host_metrics:
+    collection_interval: 30s
+    root_path: ${env:HOST_ROOT_PATH:-/hostfs}
+    scrapers:
+      cpu: {}
+      memory: {}
+      load: {}
+      filesystem: {}
+      network: {}
+  kubelet_stats:
+    collection_interval: 30s
+    auth_type: ${env:KUBELET_AUTH_TYPE:-serviceAccount}
+    endpoint: https://${env:K8S_NODE_NAME}:10250
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  k8s_attributes:
+    filter:
+      node_from_env_var: K8S_NODE_NAME
+  resource_detection:
+    detectors: [env, system]
+
+exporters:
+  otlp_grpc/gateway:
+    endpoint: ${env:GATEWAY_ENDPOINT}
+    compression: zstd
+    tls:
+      ca_file: ${env:GATEWAY_CA_FILE}
+      cert_file: ${env:AGENT_CERT_FILE}
+      key_file: ${env:AGENT_KEY_FILE}
+      min_version: "1.3"
+    auth:
+      authenticator: bearertokenauth/gateway
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      batch:
+        flush_timeout: 200ms
+
+service:
+  extensions: [healthcheckv2, bearertokenauth/gateway, file_storage/checkpoints]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: localhost
+                port: 8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, k8s_attributes, resource_detection]
+      exporters: [otlp_grpc/gateway]
+    metrics:
+      receivers: [otlp, host_metrics, kubelet_stats]
+      processors: [memory_limiter, k8s_attributes, resource_detection]
+      exporters: [otlp_grpc/gateway]
+    logs:
+      receivers: [otlp, file_log/pods]
+      processors: [memory_limiter, k8s_attributes, resource_detection]
+      exporters: [otlp_grpc/gateway]

@@ -1,0 +1,91 @@
+# Gateway mode: receives OTLP from agents and SDKs and forwards it to the
+# fusescope-engine ingesters. Secrets come only from files mounted at runtime.
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: ${env:HEALTH_ENDPOINT:-localhost:13133}
+      status:
+        enabled: true
+        path: /health/status
+      config:
+        enabled: false
+  bearertokenauth/ingest:
+    scheme: Bearer
+    filename: ${env:INGEST_TOKENS_FILE}
+  bearertokenauth/engine:
+    scheme: Bearer
+    filename: ${env:ENGINE_TOKEN_FILE}
+  file_storage/queue:
+    directory: ${env:QUEUE_DIR:-/var/lib/fusescope-collector/queue}
+    create_directory: true
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: ${env:OTLP_GRPC_ENDPOINT:-0.0.0.0:4317}
+        max_recv_msg_size_mib: 16
+        max_concurrent_streams: 256
+        tls:
+          cert_file: ${env:TLS_CERT_FILE}
+          key_file: ${env:TLS_KEY_FILE}
+          min_version: "1.3"
+        auth:
+          authenticator: bearertokenauth/ingest
+      http:
+        endpoint: ${env:OTLP_HTTP_ENDPOINT:-0.0.0.0:4318}
+        tls:
+          cert_file: ${env:TLS_CERT_FILE}
+          key_file: ${env:TLS_KEY_FILE}
+          min_version: "1.3"
+        auth:
+          authenticator: bearertokenauth/ingest
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+exporters:
+  otlp_grpc/engine:
+    endpoint: ${env:ENGINE_ENDPOINT}
+    compression: zstd
+    tls:
+      ca_file: ${env:ENGINE_CA_FILE}
+      cert_file: ${env:ENGINE_CLIENT_CERT_FILE}
+      key_file: ${env:ENGINE_CLIENT_KEY_FILE}
+      min_version: "1.3"
+    auth:
+      authenticator: bearertokenauth/engine
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      storage: file_storage/queue
+      batch:
+        flush_timeout: 200ms
+
+service:
+  extensions: [healthcheckv2, bearertokenauth/ingest, bearertokenauth/engine, file_storage/queue]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: ${env:METRICS_HOST:-localhost}
+                port: 8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [otlp_grpc/engine]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [otlp_grpc/engine]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [otlp_grpc/engine]
