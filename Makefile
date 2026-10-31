@@ -37,8 +37,16 @@ components:
 	  (cd $$d && test -z "$$(gofmt -l .)" && go mod tidy -diff && go vet ./... && go test -race ./...) || { gofmt -l $$d; exit 1; }; \
 	done
 
-components-gen:
-	@for d in $(COMPONENTS); do (cd $$d && go run go.opentelemetry.io/collector/cmd/mdatagen@$(OCB_VERSION) metadata.yaml) || exit 1; done
+# mdatagen's module has replace directives, so `go run …@version` refuses it.
+MDATAGEN := $(CURDIR)/$(BUILD_DIR)/tools/mdatagen
+
+$(MDATAGEN):
+	rm -rf $(BUILD_DIR)/tools/collector
+	git clone -q --depth 1 -b $(OCB_VERSION) https://github.com/open-telemetry/opentelemetry-collector $(BUILD_DIR)/tools/collector
+	cd $(BUILD_DIR)/tools/collector/cmd/mdatagen && go build -o $(MDATAGEN) .
+
+components-gen: $(MDATAGEN)
+	@for d in $(COMPONENTS); do (cd $$d && $(MDATAGEN) metadata.yaml) || exit 1; done
 
 clean:
 	rm -rf $(BUILD_DIR)
