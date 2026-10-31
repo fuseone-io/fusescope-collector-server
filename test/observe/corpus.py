@@ -316,8 +316,37 @@ def logs(t0):
         rec(95, 5, None, "debug without severity text", {"attr.double": 0.5, "attr.bool": True}),
         rec(96, 0, None, "", {}),
     ]
+    probes = [
+        rec(100, 9, "INFO", 42, {"body.kind": "int"}),
+        rec(101, 9, "INFO", 2.5, {"body.kind": "double"}),
+        rec(102, 9, "INFO", True, {"body.kind": "bool"}),
+        rec(103, 9, "INFO", b"\x00\x01raw", {"body.kind": "bytes"}),
+        rec(104, 9, "INFO", ["a", 1, {"k": "v"}], {"body.kind": "array"}),
+        rec(105, 9, "INFO", {"z": 1, "a": {"nested": [1, 2]}, "html": "<&>"}, {"body.kind": "map"}),
+        rec(106, 9, "INFO", "x" * 5000, {"body.kind": "long"}),
+        rec(107, 21, "FATAL", ESCAPES, {
+            "attr.map": {"inner": "value", "n": 1},
+            "attr.int_array": [1, 2, 3],
+            "attr.bytes": b"\x00\x01fusescope",
+            "attr.empty": "",
+            "coll": "leaf",
+            "coll.sub": "nested",
+            "long.value": LONG,
+            "len.256": "y" * 256,
+            "len.257": "y" * 257,
+        }),
+        rec(108, 0, "Warning", "text only severity", {}),
+        rec(-3 * 3600 * 1000, 9, "INFO", "three hours old", {"old.attr": "old"}),
+    ]
+    no_time = rec(110, 9, "INFO", "observed time only", {})
+    del no_time["timeUnixNano"]
+    no_times = rec(111, 9, "INFO", "no time at all", {})
+    del no_times["timeUnixNano"], no_times["observedTimeUnixNano"]
+    probes += [no_time, no_times]
     return {"resourceLogs": [
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeLogs": [{"scope": SCOPE, "logRecords": records}]},
+        {"resource": {"attributes": attrs(PROBE_RESOURCES[2])}, "scopeLogs": [
+            {"scope": {"name": "probe", "attributes": attrs({"scope.attr": "x", "scope.n": 2})}, "logRecords": probes}]},
     ]}
 
 
