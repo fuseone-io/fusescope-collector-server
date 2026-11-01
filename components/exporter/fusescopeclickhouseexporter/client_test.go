@@ -158,16 +158,18 @@ func TestTableTokens(t *testing.T) {
 	}
 }
 
-// helperLogs runs the logs exporter behind the real exporter helper, without a
-// queue, with do in place of ClickHouse.
-func helperLogs(t *testing.T, cfg *Config, do func(context.Context, ch.Query) error) exporter.Logs {
+// helperLogs runs the logs exporter as the factory builds it, with do in place
+// of ClickHouse, and with the default sending queue only if queued.
+func helperLogs(t *testing.T, cfg *Config, queued bool, do func(context.Context, ch.Query) error) exporter.Logs {
 	t.Helper()
 	cfg.Endpoint = "testing.invalid:9440"
-	cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
+	if !queued {
+		cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
+	}
 	x := newLogsExporter(cfg, zap.NewNop())
 	x.do = do
 	ctx := context.Background()
-	exp, err := exporterhelper.NewLogs(ctx, exportertest.NewNopSettings(metadata.Type), cfg, x.push, helperOptions(cfg, x.start, x.shutdown)...)
+	exp, err := newLogs(ctx, exportertest.NewNopSettings(metadata.Type), cfg, x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,6 +236,16 @@ func TestRetries(t *testing.T) {
 			return cfg
 		}, func(context.Context, int) error { return errors.New("connection refused") },
 			true, func(tk []string) bool { return len(tk) > 1 }},
+		// The first attempt counts toward max_elapsed_time: one that uses up the
+		// budget is not retried.
+		{"first attempt exhausts the budget", func() *Config {
+			cfg := fastRetries()
+			cfg.RetryConfig.MaxElapsedTime = 40 * time.Millisecond
+			return cfg
+		}, func(ctx context.Context, _ int) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}, true, func(tk []string) bool { return len(tk) == 1 }},
 		{"permanent error is not retried", fastRetries, func(context.Context, int) error { return permanent },
 			true, func(tk []string) bool { return len(tk) == 1 }},
 		{"retries off", func() *Config {
@@ -247,7 +259,7 @@ func TestRetries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var tokens []string
-			exp := helperLogs(t, tt.cfg(), logsTokens(&mu, &tokens, tt.reply))
+			exp := helperLogs(t, tt.cfg(), false, logsTokens(&mu, &tokens, tt.reply))
 			err := exp.ConsumeLogs(context.Background(), oneLog())
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ConsumeLogs = %v, want error %v", err, tt.wantErr)
@@ -267,7 +279,7 @@ func TestConcurrentConsumesGetDistinctTokens(t *testing.T) {
 	both := make(chan struct{})
 	var arrived sync.WaitGroup
 	arrived.Add(2)
-	exp := helperLogs(t, fastRetries(), logsTokens(&mu, &tokens, func(context.Context, int) error {
+	exp := helperLogs(t, fastRetries(), false, logsTokens(&mu, &tokens, func(context.Context, int) error {
 		arrived.Done()
 		<-both
 		return nil
@@ -286,5 +298,33 @@ func TestConcurrentConsumesGetDistinctTokens(t *testing.T) {
 	wg.Wait()
 	if len(tokens) != 2 || tokens[0] == tokens[1] {
 		t.Fatalf("tokens %q, want two distinct", tokens)
+	}
+}
+
+// Shutting down during an outage stops the retries of queued requests, also
+// with unlimited retries; the helper waits for its queue consumers first.
+func TestShutdownStopsRetries(t *testing.T) {
+	cfg := fastRetries()
+	cfg.RetryConfig.MaxElapsedTime = 0
+	attempted := make(chan struct{}, 1)
+	exp := helperLogs(t, cfg, true, func(context.Context, ch.Query) error {
+		select {
+		case attempted <- struct{}{}:
+		default:
+		}
+		return errors.New("connection refused")
+	})
+	if err := exp.ConsumeLogs(context.Background(), oneLog()); err != nil {
+		t.Fatal(err)
+	}
+	<-attempted
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := exp.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("shutdown took %v during an outage", d)
 	}
 }

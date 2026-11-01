@@ -41,17 +41,19 @@ func (id requestID) random() func([]byte) {
 }
 
 // retry runs attempt until it succeeds, fails permanently or cfg gives up, with
-// the exponential backoff of retry_on_failure. The exporter retries itself,
-// instead of the exporter helper, so that every attempt of a request shares
-// one requestID without the exporter keeping state between push calls.
-func retry(ctx context.Context, cfg configretry.BackOffConfig, logger *zap.Logger, attempt func(context.Context) error) error {
-	err := attempt(ctx)
-	if err == nil || !cfg.Enabled || consumererror.IsPermanent(err) {
-		return err
-	}
+// the exponential backoff of retry_on_failure; stop ends the wait between
+// attempts, as on shutdown. The exporter retries itself, instead of the
+// exporter helper, so that every attempt of a request shares one requestID
+// without the exporter keeping state between push calls.
+func retry(ctx context.Context, cfg configretry.BackOffConfig, logger *zap.Logger, stop <-chan struct{}, attempt func(context.Context) error) error {
+	// The first attempt counts toward max_elapsed_time, as in the exporter helper.
 	var deadline time.Time
 	if cfg.MaxElapsedTime > 0 {
 		deadline = time.Now().Add(cfg.MaxElapsedTime)
+	}
+	err := attempt(ctx)
+	if err == nil || !cfg.Enabled || consumererror.IsPermanent(err) {
+		return err
 	}
 	interval := cfg.InitialInterval
 	for {
@@ -70,6 +72,9 @@ func retry(ctx context.Context, cfg configretry.BackOffConfig, logger *zap.Logge
 		case <-ctx.Done():
 			t.Stop()
 			return fmt.Errorf("request canceled while waiting to retry: %w", err)
+		case <-stop:
+			t.Stop()
+			return fmt.Errorf("exporter shut down while waiting to retry: %w", err)
 		case <-t.C:
 		}
 		if err = attempt(ctx); err == nil || consumererror.IsPermanent(err) {

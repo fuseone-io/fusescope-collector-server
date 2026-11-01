@@ -68,6 +68,9 @@ type signalExporter[E attempter, D any] struct {
 	bodies   []string
 	encoders sync.Pool
 	encode   func(E, D, func() error) error
+	// stopping is closed when the exporter shuts down, to end waits between retries.
+	stopping chan struct{}
+	stopOnce sync.Once
 }
 
 // attempter is an encoder that takes the ingest time and the ID generator of
@@ -83,6 +86,7 @@ func newSignalExporter[E attempter, D any](cfg *Config, database string, logger 
 		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
 		tables:           tables,
 		encode:           encode,
+		stopping:         make(chan struct{}),
 	}
 	x.encoders.New = func() any { return newEncoder() }
 	enc := newEncoder()
@@ -144,11 +148,17 @@ func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) erro
 	return x.clickhouseClient.start(ctx)
 }
 
+// stopRetries ends the retries of requests in flight. It must run before the
+// exporter helper shuts down, as the helper first waits for its queue consumers.
+func (x *signalExporter[E, D]) stopRetries() {
+	x.stopOnce.Do(func() { close(x.stopping) })
+}
+
 // push exports one request, retrying it itself (see retry): every attempt
 // shares the request's identity, bounded by timeout.
 func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	id := newRequestID(time.Now())
-	return retry(ctx, x.cfg.RetryConfig, x.logger, func(ctx context.Context) error {
+	return retry(ctx, x.cfg.RetryConfig, x.logger, x.stopping, func(ctx context.Context) error {
 		if x.cfg.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, x.cfg.Timeout)
