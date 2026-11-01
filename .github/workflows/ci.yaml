@@ -49,4 +49,4 @@ jobs:
       - name: Check generated metadata is current
         run: make components-gen && git diff --exit-code
       - name: Test components
-        run: make components
+        run: set -o pipefail; make components 2>&1 | tee components.out || { grep -E '\.go:[0-9]+|^(FAIL|---|panic)|got |want ' components.out | head -9 | sed 's/^/::error::/'; exit 1; }

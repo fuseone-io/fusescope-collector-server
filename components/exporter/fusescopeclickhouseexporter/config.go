@@ -34,6 +34,7 @@ type Config struct {
 	MaxConnections int32        `mapstructure:"max_connections"`
 	Traces         SignalConfig `mapstructure:"traces"`
 	Logs           SignalConfig `mapstructure:"logs"`
+	Metrics        SignalConfig `mapstructure:"metrics"`
 
 	exporterhelper.TimeoutConfig `mapstructure:",squash"`
 	QueueConfig                  configoptional.Optional[exporterhelper.QueueBatchConfig] `mapstructure:"sending_queue"`
@@ -59,6 +60,7 @@ func createDefaultConfig() *Config {
 		MaxConnections: 8,
 		Traces:         SignalConfig{Database: "signoz_traces"},
 		Logs:           SignalConfig{Database: "signoz_logs"},
+		Metrics:        SignalConfig{Database: "signoz_metrics"},
 		TimeoutConfig:  timeout,
 		QueueConfig:    metadata.NewDefaultSendingQueueConfig(),
 		RetryConfig:    configretry.NewDefaultBackOffConfig(),
@@ -73,7 +75,7 @@ func (cfg *Config) Validate() error {
 	if cfg.Username == "" {
 		errs = append(errs, errors.New("username must not be empty"))
 	}
-	for name, db := range map[string]string{"traces": cfg.Traces.Database, "logs": cfg.Logs.Database} {
+	for name, db := range map[string]string{"traces": cfg.Traces.Database, "logs": cfg.Logs.Database, "metrics": cfg.Metrics.Database} {
 		if !identifier.MatchString(db) {
 			errs = append(errs, fmt.Errorf("%s.database %q is not a valid ClickHouse identifier", name, db))
 		}

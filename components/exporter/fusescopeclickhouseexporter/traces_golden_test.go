@@ -174,6 +174,8 @@ func cell(c proto.ColInput, i int) any {
 		return float64(c.Row(i))
 	case *proto.ColInt8:
 		return float64(c.Row(i))
+	case *proto.ColFloat64:
+		return c.Row(i)
 	case *proto.ColBool:
 		return c.Row(i)
 	case *proto.ColStr:
@@ -274,6 +276,10 @@ func TestInsertedColumnsExistInDistributedTables(t *testing.T) {
 	}
 	for _, tbl := range logsTables {
 		checkColumnsExist(t, "signoz_logs", tbl.name, tbl.input(logs))
+	}
+	metrics := newMetricsEncoder()
+	for _, tbl := range metricsTables {
+		checkColumnsExist(t, "signoz_metrics", tbl.name, tbl.input(metrics))
 	}
 }
 

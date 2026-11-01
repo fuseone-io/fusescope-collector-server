@@ -20,13 +20,32 @@ IGNORED = {
     "signoz_logs.logs_v2": {"id"},
     "signoz_logs.logs_attribute_keys": {"timestamp"},
     "signoz_logs.logs_resource_keys": {"timestamp"},
+    "signoz_metrics.time_series_v4": {"inserted_at_unix_milli"},
+    "signoz_metrics.samples_v4": {"inserted_at_unix_milli"},
+    # Fed from samples_v4_agg_5m with anyLast(last): when a series has two 5m rows in one
+    # 30m bucket, the pick depends on the unordered GROUP BY output, in both collectors.
+    "signoz_metrics.samples_v4_agg_30m": {"last"},
 }
 
 # The corpus record without any timestamp: each collector stamps it with its own ingest time.
 INGEST_TIMED = "no time at all"
 
 
-def load(path, table):
+def series_labels(out, side):
+    """Maps each fingerprint to its series identity: metric fingerprints differ by design
+    (metrics spec §4). Labels alone are not enough: two series can share them and differ in
+    a shadowed attribute (probe.collide_resource), so the attribute maps are part of it."""
+    labels = {}
+    with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                row = json.loads(line, strict=False)
+                labels[row["fingerprint"]] = json.dumps(
+                    [row["labels"]] + [row[k] for k in ("attrs", "scope_attrs", "resource_attrs")], sort_keys=True)
+    return labels
+
+
+def load(path, table, labels):
     drop = IGNORED["*"] | IGNORED.get(table, set())
     rows = collections.Counter()
     # Aggregate-function states (dependency_graph_minutes_v2) are raw bytes.
@@ -37,6 +56,15 @@ def load(path, table):
                 if table == "signoz_logs.logs_v2" and row.get("body") == INGEST_TIMED:
                     for k in ("timestamp", "observed_timestamp", "ts_bucket_start"):
                         row.pop(k, None)
+                if table.startswith("signoz_metrics."):
+                    # The reference also writes span metrics (phase 4); the candidate does not yet.
+                    if str(row.get("metric_name", "")).startswith("signoz_"):
+                        continue
+                    if "fingerprint" in row:
+                        row["fingerprint"] = labels.get(row["fingerprint"], "unknown series")
+                    # The reference's unit for .count metadata is arbitrary (metrics spec §5).
+                    if table == "signoz_metrics.metadata" and str(row.get("metric_name")).endswith(".count"):
+                        row.pop("unit", None)
                 rows[json.dumps(row, sort_keys=True)] += 1
     return rows
 
@@ -44,15 +72,16 @@ def load(path, table):
 def main():
     out, tables = sys.argv[1], sys.argv[2:]
     report, failed = ["# Parity report", ""], False
+    labels = {side: series_labels(out, side) for side in ("reference", "candidate")}
     for table in tables:
-        ref = load(os.path.join(out, "reference", f"{table}.jsonl"), table)
-        cand = load(os.path.join(out, "candidate", f"{table}.jsonl"), table)
+        ref = load(os.path.join(out, "reference", f"{table}.jsonl"), table, labels["reference"])
+        cand = load(os.path.join(out, "candidate", f"{table}.jsonl"), table, labels["candidate"])
         missing, extra = ref - cand, cand - ref
         status = "ok" if not missing and not extra else "DIFF"
         failed |= status == "DIFF"
         report.append(f"- `{table}`: {status} ({sum(ref.values())} reference rows, {sum(cand.values())} candidate rows)")
         for label, rows in (("only in reference", missing), ("only in candidate", extra)):
-            for row in list(rows)[:5]:
+            for row in sorted(rows)[:12]:
                 report.append(f"  - {label}: `{row[:600]}`")
     text = "\n".join(report) + "\n"
     with open(os.path.join(out, "report.md"), "w") as f:

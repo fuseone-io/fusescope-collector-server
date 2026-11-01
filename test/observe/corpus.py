@@ -380,8 +380,62 @@ def metrics(t0):
          "summary": {"dataPoints": [dict(point, count="10", sum=0.02, quantileValues=[
              {"quantile": 0.5, "value": 0.001}, {"quantile": 0.99, "value": 0.008}])]}},
     ]
+    earlier = dict(point, timeUnixNano=t(t0, -30_000))
+    probes = [
+        {"name": "probe.bare", "gauge": {"dataPoints": [dict(point, asDouble=1.0)]}},
+        {"name": "probe.one_attr", "gauge": {"dataPoints": [dict(point, asInt="2", attributes=attrs({"a": "b"}))]}},
+        {"name": "probe.typed_attrs", "gauge": {"dataPoints": [dict(point, asInt="3", attributes=attrs({
+            "i": 7, "d": 1.5, "bool": True, "arr": ["x", "y"], "empty": ""}))]}},
+        {"name": "probe.two_points", "unit": "ms", "description": "Two points of one series.",
+         "gauge": {"dataPoints": [dict(earlier, asDouble=4.0), dict(point, asDouble=5.0)]}},
+        {"name": "probe.no_value", "gauge": {"dataPoints": [dict(point, flags=1)]}},
+        {"name": "probe.nan", "gauge": {"dataPoints": [dict(point, asDouble="NaN")]}},
+        {"name": "probe.monotonic_delta", "sum": {"aggregationTemporality": 1, "isMonotonic": True,
+         "dataPoints": [dict(point, asInt="9")]}},
+        {"name": "probe.cumulative_updown", "sum": {"aggregationTemporality": 2, "isMonotonic": False,
+         "dataPoints": [dict(point, asInt="-4")]}},
+        {"name": "probe.delta_histogram", "unit": "ms", "histogram": {"aggregationTemporality": 1, "dataPoints": [dict(point,
+             count="3", sum=30.0, bucketCounts=["1", "2"], explicitBounds=[10.0])]}},
+        {"name": "probe.histogram_no_minmax", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="0", bucketCounts=[], explicitBounds=[])]}},
+        {"name": "probe.exp_cumulative", "exponentialHistogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="2", sum=3.0, scale=0, zeroCount="0", positive={"offset": 0, "bucketCounts": ["1", "1"]})]}},
+        {"name": "probe.extreme_bounds", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="3", sum=1.0, bucketCounts=["1", "1", "1"], explicitBounds=[0.00001, 1000000.0])]}},
+        {"name": "probe.extreme_quantiles", "summary": {"dataPoints": [dict(point, count="1", sum=1.0, quantileValues=[
+             {"quantile": 0.999, "value": 1.0}, {"quantile": 0.00001, "value": 0.5}, {"quantile": 1.0, "value": 2.0}])]}},
+        {"name": "probe.dotted-Name_with:chars", "gauge": {"dataPoints": [dict(point, asDouble=6.0)]}},
+    ]
     return {"resourceMetrics": [
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeMetrics": [{"scope": SCOPE, "metrics": ms}]},
+        {"resource": {}, "scopeMetrics": [{"scope": {}, "metrics": probes}]},
+        {"resource": {"attributes": attrs({"service.name": "probe-res", "process.pid": 42,
+                                           "deployment.environment.name": "staging"})},
+         "scopeMetrics": [{"scope": {"name": "probe", "version": "2", "attributes": attrs({"scope.n": 3})}, "metrics": [
+             {"name": "probe.three_hours_old", "gauge": {"dataPoints": [
+                 {"startTimeUnixNano": t(t0, -3 * 3600_000 - 1000), "timeUnixNano": t(t0, -3 * 3600_000), "asDouble": 7.0}]}},
+             {"name": "probe.resource_typed", "gauge": {"dataPoints": [dict(point, asDouble=8.0)]}},
+         ]}]},
+        # Keys present at two levels, and attributes named like generated labels.
+        {"resource": {"attributes": attrs({"service.name": "probe-collide", "host.name": "gateway", "zone": "resource"})},
+         "scopeMetrics": [{"scope": {"name": "probe-collide", "attributes": attrs({
+             "zone": "scope", "region": "scope", "__scope.name__": "custom"})}, "metrics": [
+             {"name": "probe.collide_resource", "gauge": {"dataPoints": [
+                 dict(point, asDouble=1.0, attributes=attrs({"host.name": "node-a"})),
+                 dict(point, asDouble=2.0, attributes=attrs({"host.name": "node-b"}))]}},
+             {"name": "probe.collide_le", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+                 count="2", sum=1.0, bucketCounts=["1", "1"], explicitBounds=[1.0], attributes=attrs({"le": "custom"}))]}},
+             {"name": "probe.collide_quantile", "summary": {"dataPoints": [dict(point, count="1", sum=1.0, quantileValues=[
+                 {"quantile": 0.5, "value": 1.0}, {"quantile": 0.9, "value": 2.0}], attributes=attrs({"quantile": "custom"}))]}},
+             {"name": "probe.collide_generated", "gauge": {"dataPoints": [dict(point, asDouble=3.0,
+                 attributes=attrs({"__name__": "custom", "__temporality__": "custom"}))]}},
+             {"name": "probe.collide_scope", "gauge": {"dataPoints": [
+                 dict(point, asDouble=4.0, attributes=attrs({"region": "point-a"})),
+                 dict(point, asDouble=5.0, attributes=attrs({"region": "point-b"}))]}},
+             {"name": "probe.nan_attrs", "gauge": {"dataPoints": [dict(point, asDouble="NaN", attributes=attrs({"k": "v"}))]}},
+             {"name": "probe.no_minmax_attrs", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+                 count="1", bucketCounts=["1"], explicitBounds=[], attributes=attrs({"k": "v"}))]}},
+         ]}]},
     ]}
 
 

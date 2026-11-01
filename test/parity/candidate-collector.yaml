@@ -33,3 +33,6 @@ service:
     logs:
       receivers: [otlp]
       exporters: [fusescope_clickhouse]
+    metrics:
+      receivers: [otlp]
+      exporters: [fusescope_clickhouse]

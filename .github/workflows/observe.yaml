@@ -10,7 +10,7 @@ on:
         default: "0.145.0"
   push:
     branches:
-      - feat/observe-harness
+      - "feat/**"
     paths:
       - test/observe/**
       - .github/workflows/observe.yaml

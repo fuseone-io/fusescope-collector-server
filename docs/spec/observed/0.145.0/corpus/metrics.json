@@ -76,8 +76,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
-                    "timeUnixNano": "1793491177000000000"
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
                   }
                 ]
               },
@@ -105,8 +105,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
-                    "timeUnixNano": "1793491177000000000"
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
                   }
                 ],
                 "isMonotonic": true
@@ -128,8 +128,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
-                    "timeUnixNano": "1793491177000000000"
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
                   }
                 ],
                 "isMonotonic": false
@@ -163,9 +163,9 @@
                     ],
                     "max": 0.4,
                     "min": 0.01,
-                    "startTimeUnixNano": "1793491117000000000",
+                    "startTimeUnixNano": "1793509395000000000",
                     "sum": 0.73,
-                    "timeUnixNano": "1793491177000000000"
+                    "timeUnixNano": "1793509455000000000"
                   }
                 ]
               },
@@ -202,9 +202,9 @@
                       "offset": 1
                     },
                     "scale": 2,
-                    "startTimeUnixNano": "1793491117000000000",
+                    "startTimeUnixNano": "1793509395000000000",
                     "sum": 12.5,
-                    "timeUnixNano": "1793491177000000000",
+                    "timeUnixNano": "1793509455000000000",
                     "zeroCount": "1"
                   }
                 ]
@@ -228,9 +228,9 @@
                         "value": 0.008
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
+                    "startTimeUnixNano": "1793509395000000000",
                     "sum": 0.02,
-                    "timeUnixNano": "1793491177000000000"
+                    "timeUnixNano": "1793509455000000000"
                   }
                 ]
               },
@@ -240,6 +240,610 @@
           "scope": {
             "name": "observe/corpus",
             "version": "1.0.0"
+          }
+        }
+      ]
+    },
+    {
+      "resource": {},
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 1.0,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.bare"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asInt": "2",
+                    "attributes": [
+                      {
+                        "key": "a",
+                        "value": {
+                          "stringValue": "b"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.one_attr"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asInt": "3",
+                    "attributes": [
+                      {
+                        "key": "i",
+                        "value": {
+                          "intValue": "7"
+                        }
+                      },
+                      {
+                        "key": "d",
+                        "value": {
+                          "doubleValue": 1.5
+                        }
+                      },
+                      {
+                        "key": "bool",
+                        "value": {
+                          "boolValue": true
+                        }
+                      },
+                      {
+                        "key": "arr",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "stringValue": "x"
+                              },
+                              {
+                                "stringValue": "y"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "empty",
+                        "value": {
+                          "stringValue": ""
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.typed_attrs"
+            },
+            {
+              "description": "Two points of one series.",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 4.0,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509425000000000"
+                  },
+                  {
+                    "asDouble": 5.0,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.two_points",
+              "unit": "ms"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "flags": 1,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.no_value"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": "NaN",
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.nan"
+            },
+            {
+              "name": "probe.monotonic_delta",
+              "sum": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "asInt": "9",
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ],
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "probe.cumulative_updown",
+              "sum": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "asInt": "-4",
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ],
+                "isMonotonic": false
+              }
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "bucketCounts": [
+                      "1",
+                      "2"
+                    ],
+                    "count": "3",
+                    "explicitBounds": [
+                      10.0
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "sum": 30.0,
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.delta_histogram",
+              "unit": "ms"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "bucketCounts": [],
+                    "count": "0",
+                    "explicitBounds": [],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.histogram_no_minmax"
+            },
+            {
+              "exponentialHistogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "count": "2",
+                    "positive": {
+                      "bucketCounts": [
+                        "1",
+                        "1"
+                      ],
+                      "offset": 0
+                    },
+                    "scale": 0,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "sum": 3.0,
+                    "timeUnixNano": "1793509455000000000",
+                    "zeroCount": "0"
+                  }
+                ]
+              },
+              "name": "probe.exp_cumulative"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "bucketCounts": [
+                      "1",
+                      "1",
+                      "1"
+                    ],
+                    "count": "3",
+                    "explicitBounds": [
+                      1e-05,
+                      1000000.0
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "sum": 1.0,
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.extreme_bounds"
+            },
+            {
+              "name": "probe.extreme_quantiles",
+              "summary": {
+                "dataPoints": [
+                  {
+                    "count": "1",
+                    "quantileValues": [
+                      {
+                        "quantile": 0.999,
+                        "value": 1.0
+                      },
+                      {
+                        "quantile": 1e-05,
+                        "value": 0.5
+                      },
+                      {
+                        "quantile": 1.0,
+                        "value": 2.0
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "sum": 1.0,
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              }
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 6.0,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.dotted-Name_with:chars"
+            }
+          ],
+          "scope": {}
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "probe-res"
+            }
+          },
+          {
+            "key": "process.pid",
+            "value": {
+              "intValue": "42"
+            }
+          },
+          {
+            "key": "deployment.environment.name",
+            "value": {
+              "stringValue": "staging"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 7.0,
+                    "startTimeUnixNano": "1793498654000000000",
+                    "timeUnixNano": "1793498655000000000"
+                  }
+                ]
+              },
+              "name": "probe.three_hours_old"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 8.0,
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.resource_typed"
+            }
+          ],
+          "scope": {
+            "attributes": [
+              {
+                "key": "scope.n",
+                "value": {
+                  "intValue": "3"
+                }
+              }
+            ],
+            "name": "probe",
+            "version": "2"
+          }
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "probe-collide"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "gateway"
+            }
+          },
+          {
+            "key": "zone",
+            "value": {
+              "stringValue": "resource"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 1.0,
+                    "attributes": [
+                      {
+                        "key": "host.name",
+                        "value": {
+                          "stringValue": "node-a"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  },
+                  {
+                    "asDouble": 2.0,
+                    "attributes": [
+                      {
+                        "key": "host.name",
+                        "value": {
+                          "stringValue": "node-b"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_resource"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "le",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      "1",
+                      "1"
+                    ],
+                    "count": "2",
+                    "explicitBounds": [
+                      1.0
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "sum": 1.0,
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_le"
+            },
+            {
+              "name": "probe.collide_quantile",
+              "summary": {
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "quantile",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      }
+                    ],
+                    "count": "1",
+                    "quantileValues": [
+                      {
+                        "quantile": 0.5,
+                        "value": 1.0
+                      },
+                      {
+                        "quantile": 0.9,
+                        "value": 2.0
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "sum": 1.0,
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              }
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 3.0,
+                    "attributes": [
+                      {
+                        "key": "__name__",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      },
+                      {
+                        "key": "__temporality__",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_generated"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 4.0,
+                    "attributes": [
+                      {
+                        "key": "region",
+                        "value": {
+                          "stringValue": "point-a"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  },
+                  {
+                    "asDouble": 5.0,
+                    "attributes": [
+                      {
+                        "key": "region",
+                        "value": {
+                          "stringValue": "point-b"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_scope"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": "NaN",
+                    "attributes": [
+                      {
+                        "key": "k",
+                        "value": {
+                          "stringValue": "v"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.nan_attrs"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "k",
+                        "value": {
+                          "stringValue": "v"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      "1"
+                    ],
+                    "count": "1",
+                    "explicitBounds": [],
+                    "startTimeUnixNano": "1793509395000000000",
+                    "timeUnixNano": "1793509455000000000"
+                  }
+                ]
+              },
+              "name": "probe.no_minmax_attrs"
+            }
+          ],
+          "scope": {
+            "attributes": [
+              {
+                "key": "zone",
+                "value": {
+                  "stringValue": "scope"
+                }
+              },
+              {
+                "key": "region",
+                "value": {
+                  "stringValue": "scope"
+                }
+              },
+              {
+                "key": "__scope.name__",
+                "value": {
+                  "stringValue": "custom"
+                }
+              }
+            ],
+            "name": "probe-collide"
           }
         }
       ]
