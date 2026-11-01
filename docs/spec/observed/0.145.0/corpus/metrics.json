@@ -76,8 +76,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
-                    "timeUnixNano": "1793491177000000000"
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
                   }
                 ]
               },
@@ -105,8 +105,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
-                    "timeUnixNano": "1793491177000000000"
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
                   }
                 ],
                 "isMonotonic": true
@@ -128,8 +128,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
-                    "timeUnixNano": "1793491177000000000"
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
                   }
                 ],
                 "isMonotonic": false
@@ -163,9 +163,9 @@
                     ],
                     "max": 0.4,
                     "min": 0.01,
-                    "startTimeUnixNano": "1793491117000000000",
+                    "startTimeUnixNano": "1793501648000000000",
                     "sum": 0.73,
-                    "timeUnixNano": "1793491177000000000"
+                    "timeUnixNano": "1793501708000000000"
                   }
                 ]
               },
@@ -202,9 +202,9 @@
                       "offset": 1
                     },
                     "scale": 2,
-                    "startTimeUnixNano": "1793491117000000000",
+                    "startTimeUnixNano": "1793501648000000000",
                     "sum": 12.5,
-                    "timeUnixNano": "1793491177000000000",
+                    "timeUnixNano": "1793501708000000000",
                     "zeroCount": "1"
                   }
                 ]
@@ -228,9 +228,9 @@
                         "value": 0.008
                       }
                     ],
-                    "startTimeUnixNano": "1793491117000000000",
+                    "startTimeUnixNano": "1793501648000000000",
                     "sum": 0.02,
-                    "timeUnixNano": "1793491177000000000"
+                    "timeUnixNano": "1793501708000000000"
                   }
                 ]
               },
@@ -241,6 +241,244 @@
             "name": "observe/corpus",
             "version": "1.0.0"
           }
+        }
+      ]
+    },
+    {
+      "resource": {},
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 1.0,
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.bare"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asInt": "2",
+                    "attributes": [
+                      {
+                        "key": "a",
+                        "value": {
+                          "stringValue": "b"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.one_attr"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asInt": "3",
+                    "attributes": [
+                      {
+                        "key": "i",
+                        "value": {
+                          "intValue": "7"
+                        }
+                      },
+                      {
+                        "key": "d",
+                        "value": {
+                          "doubleValue": 1.5
+                        }
+                      },
+                      {
+                        "key": "bool",
+                        "value": {
+                          "boolValue": true
+                        }
+                      },
+                      {
+                        "key": "arr",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "stringValue": "x"
+                              },
+                              {
+                                "stringValue": "y"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "empty",
+                        "value": {
+                          "stringValue": ""
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.typed_attrs"
+            },
+            {
+              "description": "Two points of one series.",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 4.0,
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501678000000000"
+                  },
+                  {
+                    "asDouble": 5.0,
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.two_points",
+              "unit": "ms"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "flags": 1,
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.no_value"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": "NaN",
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.nan"
+            },
+            {
+              "name": "probe.monotonic_delta",
+              "sum": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "asInt": "9",
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ],
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "probe.cumulative_updown",
+              "sum": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "asInt": "-4",
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ],
+                "isMonotonic": false
+              }
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "bucketCounts": [
+                      "1",
+                      "2"
+                    ],
+                    "count": "3",
+                    "explicitBounds": [
+                      10.0
+                    ],
+                    "startTimeUnixNano": "1793501648000000000",
+                    "sum": 30.0,
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.delta_histogram",
+              "unit": "ms"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "bucketCounts": [],
+                    "count": "0",
+                    "explicitBounds": [],
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.histogram_no_minmax"
+            },
+            {
+              "exponentialHistogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "count": "2",
+                    "positive": {
+                      "bucketCounts": [
+                        "1",
+                        "1"
+                      ],
+                      "offset": 0
+                    },
+                    "scale": 0,
+                    "startTimeUnixNano": "1793501648000000000",
+                    "sum": 3.0,
+                    "timeUnixNano": "1793501708000000000",
+                    "zeroCount": "0"
+                  }
+                ]
+              },
+              "name": "probe.exp_cumulative"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 6.0,
+                    "startTimeUnixNano": "1793501648000000000",
+                    "timeUnixNano": "1793501708000000000"
+                  }
+                ]
+              },
+              "name": "probe.dotted-Name_with:chars"
+            }
+          ],
+          "scope": {}
         }
       ]
     }
