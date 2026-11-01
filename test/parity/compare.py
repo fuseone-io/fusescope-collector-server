@@ -20,13 +20,26 @@ IGNORED = {
     "signoz_logs.logs_v2": {"id"},
     "signoz_logs.logs_attribute_keys": {"timestamp"},
     "signoz_logs.logs_resource_keys": {"timestamp"},
+    "signoz_metrics.time_series_v4": {"inserted_at_unix_milli"},
+    "signoz_metrics.samples_v4": {"inserted_at_unix_milli"},
 }
 
 # The corpus record without any timestamp: each collector stamps it with its own ingest time.
 INGEST_TIMED = "no time at all"
 
 
-def load(path, table):
+def series_labels(out, side):
+    """Maps each fingerprint to its labels: metric fingerprints differ by design (metrics spec §4)."""
+    labels = {}
+    with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                row = json.loads(line, strict=False)
+                labels[row["fingerprint"]] = row["labels"]
+    return labels
+
+
+def load(path, table, labels):
     drop = IGNORED["*"] | IGNORED.get(table, set())
     rows = collections.Counter()
     # Aggregate-function states (dependency_graph_minutes_v2) are raw bytes.
@@ -37,6 +50,12 @@ def load(path, table):
                 if table == "signoz_logs.logs_v2" and row.get("body") == INGEST_TIMED:
                     for k in ("timestamp", "observed_timestamp", "ts_bucket_start"):
                         row.pop(k, None)
+                if table.startswith("signoz_metrics."):
+                    # The reference also writes span metrics (phase 4); the candidate does not yet.
+                    if str(row.get("metric_name", "")).startswith("signoz_"):
+                        continue
+                    if "fingerprint" in row:
+                        row["fingerprint"] = labels.get(row["fingerprint"], "unknown series")
                 rows[json.dumps(row, sort_keys=True)] += 1
     return rows
 
@@ -44,9 +63,10 @@ def load(path, table):
 def main():
     out, tables = sys.argv[1], sys.argv[2:]
     report, failed = ["# Parity report", ""], False
+    labels = {side: series_labels(out, side) for side in ("reference", "candidate")}
     for table in tables:
-        ref = load(os.path.join(out, "reference", f"{table}.jsonl"), table)
-        cand = load(os.path.join(out, "candidate", f"{table}.jsonl"), table)
+        ref = load(os.path.join(out, "reference", f"{table}.jsonl"), table, labels["reference"])
+        cand = load(os.path.join(out, "candidate", f"{table}.jsonl"), table, labels["candidate"])
         missing, extra = ref - cand, cand - ref
         status = "ok" if not missing and not extra else "DIFF"
         failed |= status == "DIFF"

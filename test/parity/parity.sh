@@ -10,7 +10,10 @@ tables=(signoz_traces.signoz_index_v3 signoz_traces.signoz_error_index_v2 signoz
   signoz_traces.tag_attributes_v2 signoz_traces.span_attributes_keys signoz_traces.dependency_graph_minutes_v2
   signoz_traces.top_level_operations signoz_traces.trace_summary
   signoz_logs.logs_v2 signoz_logs.logs_v2_resource signoz_logs.tag_attributes_v2
-  signoz_logs.logs_attribute_keys signoz_logs.logs_resource_keys)
+  signoz_logs.logs_attribute_keys signoz_logs.logs_resource_keys
+  signoz_metrics.time_series_v4 signoz_metrics.samples_v4 signoz_metrics.metadata
+  signoz_metrics.samples_v4_agg_5m signoz_metrics.samples_v4_agg_30m
+  signoz_metrics.time_series_v4_6hrs signoz_metrics.time_series_v4_1day signoz_metrics.time_series_v4_1week)
 
 ch() {
   local body code
@@ -32,7 +35,7 @@ t0=$(( $(date +%s) * 1000000000 ))
 rm -rf "$out" && mkdir -p "$out/reference" "$out/candidate"
 python3 -I ../observe/corpus.py "$t0" "$out/corpus"
 for port in 14318 24318; do
-  for signal in traces logs; do
+  for signal in traces logs metrics; do
     code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
       --data-binary @"$out/corpus/$signal.json" "localhost:$port/v1/$signal")
     if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal: $code $(cat "$out/response")" >&2; exit 1; fi
