@@ -172,3 +172,33 @@ func TestOversizedTraceIsSplitWithAWarning(t *testing.T) {
 		t.Errorf("%d warnings about split traces, want 1", n)
 	}
 }
+
+// A pooled encoder keeps no resource or scope of an earlier batch reachable.
+func TestTraceEncoderReleasesDerivedResources(t *testing.T) {
+	batch := func(resources int) ptrace.Traces {
+		td := ptrace.NewTraces()
+		for i := range resources {
+			rs := td.ResourceSpans().AppendEmpty()
+			rs.Resource().Attributes().PutStr("big", strings.Repeat("x", 1<<10))
+			s := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+			s.SetTraceID(pcommon.TraceID{byte(i)})
+		}
+		return td
+	}
+	enc := newTracesEncoder()
+	for _, td := range []ptrace.Traces{batch(100), batch(1)} {
+		if err := enc.encode(td, func() error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		for i, res := range enc.resInfos[:cap(enc.resInfos)] {
+			if res.labels != "" {
+				t.Fatalf("resource %d of a finished batch is still held", i)
+			}
+		}
+		for i, scopes := range enc.scopeJSONs[:cap(enc.scopeJSONs)] {
+			if scopes != nil {
+				t.Fatalf("scopes of resource %d of a finished batch are still held", i)
+			}
+		}
+	}
+}

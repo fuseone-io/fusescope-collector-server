@@ -90,6 +90,7 @@ func (e *tracesEncoder) encode(td ptrace.Traces, emit func() error) error {
 	e.reset()
 	e.begin(emit)
 	e.derive(td)
+	defer e.release()
 	members := e.planChunks(td)
 	if members == nil {
 		e.encodeSpans(td, nil)
@@ -110,9 +111,16 @@ func (e *tracesEncoder) encode(td ptrace.Traces, emit func() error) error {
 	return nil
 }
 
+// release drops the derived resources and scopes, so a pooled encoder holds
+// none of a finished batch.
+func (e *tracesEncoder) release() {
+	clear(e.resInfos)
+	clear(e.scopeJSONs)
+	e.resInfos, e.scopeJSONs = e.resInfos[:0], e.scopeJSONs[:0]
+}
+
 // derive computes each resource and scope once per batch, for every chunk.
 func (e *tracesEncoder) derive(td ptrace.Traces) {
-	e.resInfos, e.scopeJSONs = e.resInfos[:0], e.scopeJSONs[:0]
 	for _, rs := range td.ResourceSpans().All() {
 		var res resourceInfo
 		res, e.buf = newResourceInfo(rs.Resource(), e.buf)
