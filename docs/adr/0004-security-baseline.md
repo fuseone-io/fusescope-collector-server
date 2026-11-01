@@ -1,6 +1,7 @@
 # 0004 · Security baseline
 
-- Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest policy over OpAMP)
+- Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest policy over OpAMP) and
+  [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in)
 - Date: 2026-10-31
 
 ## Decision
