@@ -35,7 +35,7 @@ jobs:
         if: always()
         run: |
           [ -f "$RUNNER_TEMP/parity/report.md" ] && cat "$RUNNER_TEMP/parity/report.md" >> "$GITHUB_STEP_SUMMARY"
-          [ -f "$RUNNER_TEMP/parity/report.md" ] && grep -E '^- ' "$RUNNER_TEMP/parity/report.md" | sed 's/^- /::notice::/' || true
+          [ -f "$RUNNER_TEMP/parity/report.md" ] && echo "::notice::$(grep -E '^- ' "$RUNNER_TEMP/parity/report.md" | sed -E 's/^- `([^`]+)`: ([a-zA-Z]+) \(([0-9]+) reference rows, ([0-9]+) candidate rows\)/\1 \2 \3\/\4/' | tr '\n' ' ')" || true
           [ -f "$RUNNER_TEMP/parity/report.md" ] && grep -E 'DIFF|only in' "$RUNNER_TEMP/parity/report.md" | head -9 | sed 's/^/::error::/' || true
           [ -s parity.err ] && grep -v -E '^ *(Container|Network|Image|#[0-9]|Volume)' parity.err | tail -8 | sed 's/^/::error::/' || true
       - name: Collector logs on failure
