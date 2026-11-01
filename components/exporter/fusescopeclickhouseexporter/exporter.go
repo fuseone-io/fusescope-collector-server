@@ -15,6 +15,7 @@ import (
 	"github.com/ClickHouse/ch-go/proto"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumererror"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 )
@@ -31,40 +32,60 @@ var permanentCodes = []proto.Error{
 	proto.ErrIncorrectNumberOfColumns,
 }
 
-type table struct {
+type table[E any] struct {
 	name  string
-	input func(*tracesEncoder) proto.Input
+	input func(E) proto.Input
 }
 
-// tracesTables is the insert order: idempotent ReplacingMergeTree tables first,
-// so a retry after a partial failure duplicates as little as possible.
-var tracesTables = []table{
-	{"distributed_traces_v3_resource", func(e *tracesEncoder) proto.Input { return e.resources.input() }},
-	{"distributed_tag_attributes_v2", func(e *tracesEncoder) proto.Input { return e.tags.input() }},
+// Insert order: idempotent ReplacingMergeTree tables first, so a retry after a
+// partial failure duplicates as little as possible.
+var tracesTables = []table[*tracesEncoder]{
+	{"distributed_traces_v3_resource", func(e *tracesEncoder) proto.Input { return e.resources.cols.input() }},
+	{"distributed_tag_attributes_v2", func(e *tracesEncoder) proto.Input { return e.tags.cols.input() }},
 	{"distributed_span_attributes_keys", func(e *tracesEncoder) proto.Input { return e.keys.input() }},
 	{"distributed_signoz_error_index_v2", func(e *tracesEncoder) proto.Input { return e.errors.input() }},
 	{"distributed_signoz_index_v3", func(e *tracesEncoder) proto.Input { return e.index.input() }},
 }
 
-type tracesExporter struct {
-	cfg      *Config
-	logger   *zap.Logger
-	pool     *chpool.Pool
-	encoders sync.Pool
-	bodies   []string
+var logsTables = []table[*logsEncoder]{
+	{"distributed_logs_v2_resource", func(e *logsEncoder) proto.Input { return e.resources.cols.input() }},
+	{"distributed_tag_attributes_v2", func(e *logsEncoder) proto.Input { return e.tags.cols.input() }},
+	{"distributed_logs_attribute_keys", func(e *logsEncoder) proto.Input { return e.attrKeys.input() }},
+	{"distributed_logs_resource_keys", func(e *logsEncoder) proto.Input { return e.resKeys.input() }},
+	{"distributed_logs_v2", func(e *logsEncoder) proto.Input { return e.rows.input() }},
 }
 
-func newTracesExporter(cfg *Config, logger *zap.Logger) *tracesExporter {
-	x := &tracesExporter{cfg: cfg, logger: logger}
-	x.encoders.New = func() any { return newTracesEncoder() }
-	enc := newTracesEncoder()
-	for _, t := range tracesTables {
-		x.bodies = append(x.bodies, fmt.Sprintf("INSERT INTO %s.%s %s VALUES", cfg.Traces.Database, t.name, t.input(enc).Columns()))
+// signalExporter encodes a batch of one signal and inserts one block per table.
+type signalExporter[E any, D any] struct {
+	cfg      *Config
+	database string
+	logger   *zap.Logger
+	pool     *chpool.Pool
+	tables   []table[E]
+	bodies   []string
+	encoders sync.Pool
+	encode   func(E, D)
+}
+
+func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E], newEncoder func() E, encode func(E, D)) *signalExporter[E, D] {
+	x := &signalExporter[E, D]{cfg: cfg, database: database, logger: logger, tables: tables, encode: encode}
+	x.encoders.New = func() any { return newEncoder() }
+	enc := newEncoder()
+	for _, t := range tables {
+		x.bodies = append(x.bodies, fmt.Sprintf("INSERT INTO %s.%s %s VALUES", database, t.name, t.input(enc).Columns()))
 	}
 	return x
 }
 
-func (x *tracesExporter) start(ctx context.Context, _ component.Host) error {
+func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
+	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, (*tracesEncoder).encode)
+}
+
+func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
+	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode)
+}
+
+func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
 	opts, err := x.clientOptions(ctx)
 	if err != nil {
 		return err
@@ -77,19 +98,19 @@ func (x *tracesExporter) start(ctx context.Context, _ component.Host) error {
 	return nil
 }
 
-func (x *tracesExporter) shutdown(context.Context) error {
+func (x *signalExporter[E, D]) shutdown(context.Context) error {
 	if x.pool != nil {
 		x.pool.Close()
 	}
 	return nil
 }
 
-func (x *tracesExporter) clientOptions(ctx context.Context) (ch.Options, error) {
+func (x *signalExporter[E, D]) clientOptions(ctx context.Context) (ch.Options, error) {
 	cfg := x.cfg
 	opts := ch.Options{
 		Logger:      x.logger,
 		Address:     cfg.Endpoint,
-		Database:    cfg.Traces.Database,
+		Database:    x.database,
 		User:        cfg.Username,
 		Compression: ch.CompressionLZ4,
 		ClientName:  "fusescope-collector",
@@ -115,17 +136,17 @@ func (x *tracesExporter) clientOptions(ctx context.Context) (ch.Options, error) 
 	return opts, nil
 }
 
-func (x *tracesExporter) pushTraces(ctx context.Context, td ptrace.Traces) error {
-	enc := x.encoders.Get().(*tracesEncoder)
+func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
+	enc := x.encoders.Get().(E)
 	defer x.encoders.Put(enc)
-	enc.encode(td)
-	for i, t := range tracesTables {
+	x.encode(enc, data)
+	for i, t := range x.tables {
 		input := t.input(enc)
 		if input[0].Data.Rows() == 0 {
 			continue
 		}
 		if err := x.pool.Do(ctx, ch.Query{Body: x.bodies[i], Input: input}); err != nil {
-			return classify(fmt.Errorf("insert into %s.%s: %w", x.cfg.Traces.Database, t.name, err))
+			return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
 		}
 	}
 	return nil

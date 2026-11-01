@@ -179,8 +179,8 @@ func (e *tracesEncoder) appendSpanAttributes(m pcommon.Map, t rowTimes) {
 			c.attributesString.Keys.Append(k)
 			c.attributesString.Values.Append(v.AsString())
 		}
-		e.addKey(k, tagSpan, leafType(v))
-		e.addValueTag(t.hour, k, tagSpan, v)
+		e.addKey(k, tagAttribute, leafType(v))
+		e.tags.addValue(t.hour, k, tagAttribute, v)
 	})
 	endRow(c.attributesString)
 	endRow(c.attributesNumber)
@@ -188,21 +188,21 @@ func (e *tracesEncoder) appendSpanAttributes(m pcommon.Map, t rowTimes) {
 }
 
 func (e *tracesEncoder) appendSpanFieldTags(hour int64, span ptrace.Span, d *spanDerived) {
-	e.addStringTag(hour, "name", tagSpanField, span.Name())
-	e.addNumberTag(hour, "kind", float64(span.Kind()))
-	e.addStringTag(hour, "kind_string", tagSpanField, kindName(span.Kind()))
-	e.addNumberTag(hour, "status_code", float64(span.Status().Code()))
-	e.addStringTag(hour, "status_code_string", tagSpanField, statusName(span.Status().Code()))
-	e.addStringTag(hour, "http_url", tagSpanField, d.url)
-	e.addStringTag(hour, "http_method", tagSpanField, d.method)
-	e.addStringTag(hour, "http_host", tagSpanField, d.host)
-	e.addStringTag(hour, "external_http_url", tagSpanField, d.externalURL)
-	e.addStringTag(hour, "external_http_method", tagSpanField, d.externalMethod)
-	e.addStringTag(hour, "db_name", tagSpanField, d.dbName)
-	e.addStringTag(hour, "db_operation", tagSpanField, d.dbOperation)
-	e.addStringTag(hour, "response_status_code", tagSpanField, d.statusCode)
-	e.addStringTag(hour, "is_remote", tagSpanField, isRemote(span.Flags()))
-	e.addTag(tagRow{hour: hour, key: "has_error", tagType: tagSpanField, dataType: dataBool})
+	e.tags.addString(hour, "name", tagSpanField, span.Name())
+	e.tags.addNumber(hour, "kind", tagSpanField, float64(span.Kind()))
+	e.tags.addString(hour, "kind_string", tagSpanField, kindName(span.Kind()))
+	e.tags.addNumber(hour, "status_code", tagSpanField, float64(span.Status().Code()))
+	e.tags.addString(hour, "status_code_string", tagSpanField, statusName(span.Status().Code()))
+	e.tags.addString(hour, "http_url", tagSpanField, d.url)
+	e.tags.addString(hour, "http_method", tagSpanField, d.method)
+	e.tags.addString(hour, "http_host", tagSpanField, d.host)
+	e.tags.addString(hour, "external_http_url", tagSpanField, d.externalURL)
+	e.tags.addString(hour, "external_http_method", tagSpanField, d.externalMethod)
+	e.tags.addString(hour, "db_name", tagSpanField, d.dbName)
+	e.tags.addString(hour, "db_operation", tagSpanField, d.dbOperation)
+	e.tags.addString(hour, "response_status_code", tagSpanField, d.statusCode)
+	e.tags.addString(hour, "is_remote", tagSpanField, isRemote(span.Flags()))
+	e.tags.add(tagRow{hour: hour, key: "has_error", tagType: tagSpanField, dataType: dataBool})
 }
 
 func (e *tracesEncoder) appendEventJSON(dst []byte, ev ptrace.SpanEvent) []byte {

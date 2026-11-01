@@ -33,6 +33,7 @@ type Config struct {
 	// MaxConnections bounds concurrent inserts towards ClickHouse.
 	MaxConnections int32        `mapstructure:"max_connections"`
 	Traces         SignalConfig `mapstructure:"traces"`
+	Logs           SignalConfig `mapstructure:"logs"`
 
 	exporterhelper.TimeoutConfig `mapstructure:",squash"`
 	QueueConfig                  configoptional.Optional[exporterhelper.QueueBatchConfig] `mapstructure:"sending_queue"`
@@ -57,6 +58,7 @@ func createDefaultConfig() *Config {
 		DialTimeout:    5 * time.Second,
 		MaxConnections: 8,
 		Traces:         SignalConfig{Database: "signoz_traces"},
+		Logs:           SignalConfig{Database: "signoz_logs"},
 		TimeoutConfig:  timeout,
 		QueueConfig:    metadata.NewDefaultSendingQueueConfig(),
 		RetryConfig:    configretry.NewDefaultBackOffConfig(),
@@ -71,8 +73,10 @@ func (cfg *Config) Validate() error {
 	if cfg.Username == "" {
 		errs = append(errs, errors.New("username must not be empty"))
 	}
-	if !identifier.MatchString(cfg.Traces.Database) {
-		errs = append(errs, fmt.Errorf("traces.database %q is not a valid ClickHouse identifier", cfg.Traces.Database))
+	for name, db := range map[string]string{"traces": cfg.Traces.Database, "logs": cfg.Logs.Database} {
+		if !identifier.MatchString(db) {
+			errs = append(errs, fmt.Errorf("%s.database %q is not a valid ClickHouse identifier", name, db))
+		}
 	}
 	if !cfg.TLS.Insecure && cfg.TLS.MinVersion != "" && cfg.TLS.MinVersion < minTLSVersion {
 		errs = append(errs, fmt.Errorf("tls.min_version must be at least %s", minTLSVersion))

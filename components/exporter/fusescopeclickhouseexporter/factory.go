@@ -20,18 +20,29 @@ func NewFactory() exporter.Factory {
 		metadata.Type,
 		func() component.Config { return createDefaultConfig() },
 		exporter.WithTraces(createTraces, metadata.TracesStability),
+		exporter.WithLogs(createLogs, metadata.LogsStability),
 	)
 }
 
 func createTraces(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Traces, error) {
 	c := cfg.(*Config)
 	x := newTracesExporter(c, set.Logger)
-	return exporterhelper.NewTraces(ctx, set, cfg, x.pushTraces,
-		exporterhelper.WithStart(x.start),
-		exporterhelper.WithShutdown(x.shutdown),
+	return exporterhelper.NewTraces(ctx, set, cfg, x.push, helperOptions(c, x.start, x.shutdown)...)
+}
+
+func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Logs, error) {
+	c := cfg.(*Config)
+	x := newLogsExporter(c, set.Logger)
+	return exporterhelper.NewLogs(ctx, set, cfg, x.push, helperOptions(c, x.start, x.shutdown)...)
+}
+
+func helperOptions(c *Config, start component.StartFunc, shutdown component.ShutdownFunc) []exporterhelper.Option {
+	return []exporterhelper.Option{
+		exporterhelper.WithStart(start),
+		exporterhelper.WithShutdown(shutdown),
 		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
 		exporterhelper.WithTimeout(c.TimeoutConfig),
 		exporterhelper.WithRetry(c.RetryConfig),
 		exporterhelper.WithQueue(c.QueueConfig),
-	)
+	}
 }

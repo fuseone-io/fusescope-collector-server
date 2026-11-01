@@ -37,32 +37,37 @@ func TestTracesMatchObservedRows(t *testing.T) {
 	}{
 		{"signoz_index_v3", enc.index.input(), func(r row) string { return fmt.Sprint(r["trace_id"], r["span_id"]) }, []string{"inserted_at"}},
 		{"signoz_error_index_v2", enc.errors.input(), func(r row) string { return fmt.Sprint(r["spanID"], r["timestamp"], r["exceptionMessage"]) }, []string{"errorID"}},
-		{"traces_v3_resource", enc.resources.input(), func(r row) string { return fmt.Sprint(r["fingerprint"], r["seen_at_ts_bucket_start"]) }, nil},
-		{"tag_attributes_v2", enc.tags.input(), func(r row) string { return fmt.Sprint(r) }, nil},
+		{"traces_v3_resource", enc.resources.cols.input(), func(r row) string { return fmt.Sprint(r["fingerprint"], r["seen_at_ts_bucket_start"]) }, nil},
+		{"tag_attributes_v2", enc.tags.cols.input(), func(r row) string { return fmt.Sprint(r) }, nil},
 		{"span_attributes_keys", enc.keys.input(), func(r row) string { return fmt.Sprint(r["tagKey"], r["tagType"], r["dataType"]) }, []string{"timestamp"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.table, func(t *testing.T) {
-			want := indexRows(t, readObserved(t, tt.table), tt.key, tt.ignore)
+			want := indexRows(t, readObserved(t, "signoz_traces", tt.table), tt.key, tt.ignore)
 			got := indexRows(t, blockRows(tt.input), tt.key, tt.ignore)
-			for k, w := range want {
-				g, ok := got[k]
-				if !ok {
-					t.Errorf("missing row %s", k)
-					continue
-				}
-				for col, wv := range w {
-					if gv := g[col]; !reflect.DeepEqual(gv, wv) {
-						t.Errorf("row %s column %s:\n got  %#v\n want %#v", k, col, gv, wv)
-					}
-				}
-			}
-			for k := range got {
-				if _, ok := want[k]; !ok {
-					t.Errorf("unexpected row %s", k)
-				}
-			}
+			compareRows(t, want, got)
 		})
+	}
+}
+
+func compareRows(t *testing.T, want, got map[string]row) {
+	t.Helper()
+	for k, w := range want {
+		g, ok := got[k]
+		if !ok {
+			t.Errorf("missing row %s", k)
+			continue
+		}
+		for col, wv := range w {
+			if gv := g[col]; !reflect.DeepEqual(gv, wv) {
+				t.Errorf("row %s column %s:\n got  %#v\n want %#v", k, col, gv, wv)
+			}
+		}
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok {
+			t.Errorf("unexpected row %s", k)
+		}
 	}
 }
 
@@ -93,9 +98,9 @@ func encodeObservedCorpus(t *testing.T) *tracesEncoder {
 	return enc
 }
 
-func readObserved(t *testing.T, table string) []row {
+func readObserved(t *testing.T, db, table string) []row {
 	t.Helper()
-	f, err := os.Open(filepath.Join(observed, "rows", "signoz_traces."+table+".jsonl"))
+	f, err := os.Open(filepath.Join(observed, "rows", db+"."+table+".jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +165,8 @@ func cell(c proto.ColInput, i int) any {
 	case *proto.ColUInt64:
 		return float64(c.Row(i))
 	case *proto.ColUInt32:
+		return float64(c.Row(i))
+	case *proto.ColUInt8:
 		return float64(c.Row(i))
 	case *proto.ColInt64:
 		return float64(c.Row(i))
@@ -261,21 +268,28 @@ func nest(flat map[string]any) map[string]any {
 }
 
 func TestInsertedColumnsExistInDistributedTables(t *testing.T) {
-	enc := newTracesEncoder()
-	column := regexp.MustCompile("(?m)^\\s+`([^`]+)` ")
+	traces, logs := newTracesEncoder(), newLogsEncoder()
 	for _, tbl := range tracesTables {
-		b, err := os.ReadFile(filepath.Join(observed, "ddl", "signoz_traces."+tbl.name+".sql"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		have := map[string]bool{}
-		for _, m := range column.FindAllStringSubmatch(string(b), -1) {
-			have[m[1]] = true
-		}
-		for _, col := range tbl.input(enc) {
-			if !have[col.Name] {
-				t.Errorf("%s has no column %q", tbl.name, col.Name)
-			}
+		checkColumnsExist(t, "signoz_traces", tbl.name, tbl.input(traces))
+	}
+	for _, tbl := range logsTables {
+		checkColumnsExist(t, "signoz_logs", tbl.name, tbl.input(logs))
+	}
+}
+
+func checkColumnsExist(t *testing.T, db, table string, input proto.Input) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(observed, "ddl", db+"."+table+".sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, m := range regexp.MustCompile("(?m)^\\s+`([^`]+)` ").FindAllStringSubmatch(string(b), -1) {
+		have[m[1]] = true
+	}
+	for _, col := range input {
+		if !have[col.Name] {
+			t.Errorf("%s.%s has no column %q", db, table, col.Name)
 		}
 	}
 }
