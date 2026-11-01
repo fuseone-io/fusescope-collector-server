@@ -11,6 +11,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // Every log record and span copies its resource, so a large resource over many
@@ -139,5 +141,34 @@ func TestTraceChunksKeepTracesWhole(t *testing.T) {
 	}
 	if total != 20 {
 		t.Errorf("%d spans written, want 20", total)
+	}
+}
+
+// A trace larger than a chunk is split, keeping every span, and the loss of
+// its derived parent-child rows is reported.
+func TestOversizedTraceIsSplitWithAWarning(t *testing.T) {
+	td := ptrace.NewTraces()
+	rs := td.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("big", strings.Repeat("x", 64<<10))
+	spans := rs.ScopeSpans().AppendEmpty().Spans()
+	for i := range 20 {
+		s := spans.AppendEmpty()
+		s.SetTraceID(pcommon.TraceID{1})
+		s.SetSpanID(pcommon.SpanID{byte(i + 1)})
+	}
+	core, logs := observer.New(zap.WarnLevel)
+	enc := newTracesEncoder()
+	enc.logger = zap.New(core)
+	enc.maxChunkBytes = 1 << 20
+	total := 0
+	if err := enc.encode(td, func() error { total += enc.index.spanID.Rows(); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	total += enc.index.spanID.Rows()
+	if total != 20 {
+		t.Errorf("%d spans written, want 20", total)
+	}
+	if n := logs.FilterMessageSnippet("split").Len(); n != 1 {
+		t.Errorf("%d warnings about split traces, want 1", n)
 	}
 }

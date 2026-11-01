@@ -34,8 +34,9 @@ computed by ClickHouse and are not sent.
 far beyond the request. When those copies, plus 256 bytes per span, pass 256 MiB, the batch is
 inserted in chunks into every table. A chunk holds whole traces, assigned in order of first
 appearance: `dependency_graph_minutes_service_calls_mv_v2` joins a parent span and its child
-within one inserted block, so splitting a trace would lose its service-call edges. Only a trace
-larger than a chunk is split. The per-batch
+within one inserted block (as does the sub-root operations view), so splitting a trace would
+lose its service-call edges. Only a trace larger than a chunk is split, keeping every span; a
+warning reports how many, since their derived parent-child rows may be missing. The per-batch
 deduplication of §6 and §7 then applies per chunk: a later chunk can repeat a tag or key row,
 which the `ReplacingMergeTree` merges. The reference's limits were not observed.
 

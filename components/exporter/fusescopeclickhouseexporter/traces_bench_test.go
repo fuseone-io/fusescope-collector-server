@@ -117,3 +117,25 @@ func TestEncodeMaxBatch(t *testing.T) {
 		}
 	}
 }
+
+// Many one-span resources over the chunk size: chunking must not derive each
+// resource once per chunk.
+func BenchmarkEncodeTracesChunked(b *testing.B) {
+	td := ptrace.NewTraces()
+	for i := range 20_000 {
+		rs := td.ResourceSpans().AppendEmpty()
+		rs.Resource().Attributes().PutStr("service.name", fmt.Sprintf("svc-%d", i%50))
+		rs.Resource().Attributes().PutStr("host.name", fmt.Sprintf("node-%d", i))
+		s := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+		s.SetTraceID(pcommon.TraceID{byte(i), byte(i >> 8), 1})
+		s.SetSpanID(pcommon.SpanID{byte(i), byte(i >> 8), 2})
+	}
+	enc := newTracesEncoder()
+	enc.maxChunkBytes = 1 << 20
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = enc.encode(td, func() error { return nil })
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*20_000), "ns/span")
+}

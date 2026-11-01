@@ -97,7 +97,12 @@ func newSignalExporter[E attempter, D any](cfg *Config, database string, logger 
 }
 
 func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
-	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, (*tracesEncoder).encode)
+	newEncoder := func() *tracesEncoder {
+		e := newTracesEncoder()
+		e.logger = logger
+		return e
+	}
+	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newEncoder, (*tracesEncoder).encode)
 }
 
 func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
