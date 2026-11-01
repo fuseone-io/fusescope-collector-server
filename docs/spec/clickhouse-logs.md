@@ -70,7 +70,9 @@ value), with these differences:
 
 `logs_attribute_keys` holds record attribute keys with datatype `string`, `float64` or `bool`, by the
 same typing as §3; kvlists are `string`. `logs_resource_keys` holds resource keys, always
-`string`. Scope attributes appear in neither [obs].
+`string`. Scope attributes appear in neither [obs]. Across batches both tables behave as
+traces §7: the reference skips keys an earlier batch wrote, the exporter repeats them, and the
+`ReplacingMergeTree` merges the repeats [parity].
 
 ## 6. Still to observe
 

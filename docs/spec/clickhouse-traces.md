@@ -193,6 +193,11 @@ One row per distinct `(tagKey, tagType, dataType)` with `tagType` `tag`, `resour
 no `timestamp`; the local table defaults it to the insert time, and its 15-day TTL expires keys that
 stop arriving [obs `ddl/signoz_traces.distributed_span_attributes_keys.sql`].
 
+Across batches the reference does not write a key again that an earlier batch wrote; the
+exporter deduplicates per batch only and repeats it. The table is a `ReplacingMergeTree`, so
+both converge to the same rows, and the parity suite compares such tables with `FINAL`
+[parity: protobuf probes sent as a second batch].
+
 ## 8. Still to observe
 
 - `low_cardinal_exception_grouping: true`;

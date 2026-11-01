@@ -36,29 +36,40 @@ done
 t0=$(( $(date +%s) * 1000000000 ))
 rm -rf "$out" && mkdir -p "$out/reference" "$out/candidate"
 python3 -I ../observe/corpus.py "$t0" "$out/corpus"
-# send_corpus PORT posts the whole corpus. Within the 1s flush, each signal
-# reaches the exporter as one batch, so a second call resends the same batches.
+# send_corpus PORT... posts the whole corpus. The protobuf probes go 3s after the
+# JSON, past both collectors' 1s flush: a batch holding both would let the probes'
+# tag values dedupe against older spans (traces spec §4) on one side only. Each
+# call thus produces the same batches, and a second call resends them.
 send_corpus() {
-  local port=$1 signal code
-  for signal in traces logs metrics; do
-    code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-      --data-binary @"$out/corpus/$signal.json" "localhost:$port/v1/$signal")
-    if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal: $code $(cat "$out/response")" >&2; exit 1; fi
+  local port signal code
+  for port in "$@"; do
+    for signal in traces logs metrics; do
+      code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        --data-binary @"$out/corpus/$signal.json" "localhost:$port/v1/$signal")
+      if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal: $code $(cat "$out/response")" >&2; exit 1; fi
+    done
   done
-  for signal in traces logs; do
-    code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/x-protobuf' \
-      --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:$port/v1/$signal")
-    if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal (invalid UTF-8): $code $(cat "$out/response")" >&2; exit 1; fi
+  sleep 3
+  for port in "$@"; do
+    for signal in traces logs; do
+      code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/x-protobuf' \
+        --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:$port/v1/$signal")
+      if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal (invalid UTF-8): $code $(cat "$out/response")" >&2; exit 1; fi
+    done
   done
   rm -f "$out/response"
 }
-for port in 14318 24318; do send_corpus "$port"; done
+send_corpus 14318 24318
 sleep 20
 
 for side in reference:18123 candidate:28123; do
   name=${side%%:*} port=${side##*:}
   for t in "${tables[@]}"; do
-    ch "$port" "SELECT * FROM $t FORMAT JSONEachRow" > "$out/$name/$t.jsonl"
+    # Rows a ReplacingMergeTree merges away are compared merged: the reference also
+    # skips keys it wrote in an earlier batch, the candidate repeats them.
+    engine=$(ch "$port" "SELECT engine FROM system.tables WHERE database = '${t%%.*}' AND name = '${t#*.}'")
+    final=; case $engine in *ReplacingMergeTree) final=FINAL;; esac
+    ch "$port" "SELECT * FROM $t $final FORMAT JSONEachRow" > "$out/$name/$t.jsonl"
   done
 done
 python3 -I compare.py "$out" "${tables[@]}" || { echo "parity: differences, see report" >&2; exit 1; }
