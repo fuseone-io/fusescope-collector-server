@@ -127,9 +127,11 @@ series, and 100,000 gauge points with distinct attributes under a 1 MiB resource
 copies of it. The sending queue counts data points, not this expansion. The reference's limits
 were not observed; the exporter enforces its own, on estimated encoded bytes:
 
-- **Per point, 16 MiB**: derived series × (6 × (attribute bytes + metric name) + attribute
-  bytes + 256), where attribute bytes are those of the resource, scope and point, and 6 is the
-  worst case of JSON escaping in `labels`. A point above it is dropped before any row is built;
+- **Per point, 16 MiB**: derived series × (6 × (attribute bytes + metric name) + 2 × attribute
+  bytes + 256 + metadata rows × (metric name + description + 256)), where attribute bytes are
+  those of the resource, scope and point, 6 is the worst case of JSON escaping in `labels`, and
+  metadata rows are the resource, scope and point attributes plus two, each copying the
+  description. A point above it is dropped before any row is built;
   the rest of the batch is written and a warning reports `dropped_points`.
 - **Per chunk, 256 MiB**: bytes of the samples, series and metadata rows built so far, after
   deduplication, so repeated points of the same series cost one series row. Above it, the rows
