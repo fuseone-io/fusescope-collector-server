@@ -69,7 +69,7 @@ func BenchmarkEncodeTraces(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		enc.encode(td)
+		_ = enc.encode(td, nil)
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
 }
@@ -96,7 +96,7 @@ func BenchmarkEncodeLogs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		enc.encode(ld)
+		_ = enc.encode(ld, nil)
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/record")
 }
@@ -105,11 +105,11 @@ func BenchmarkEncodeLogs(b *testing.B) {
 // checks that reusing the encoder for a smaller batch leaves no rows behind.
 func TestEncodeMaxBatch(t *testing.T) {
 	enc := newTracesEncoder()
-	enc.encode(syntheticTraces(100_000))
+	_ = enc.encode(syntheticTraces(100_000), nil)
 	if got := enc.index.input()[0].Data.Rows(); got != 100_000 {
 		t.Fatalf("index rows = %d, want 100000", got)
 	}
-	enc.encode(syntheticTraces(10))
+	_ = enc.encode(syntheticTraces(10), nil)
 	for _, col := range enc.index.input() {
 		if got := col.Data.Rows(); got != 10 {
 			t.Fatalf("column %s has %d rows after reuse, want 10", col.Name, got)

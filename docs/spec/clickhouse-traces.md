@@ -29,6 +29,13 @@ The exporter never writes the MV targets. The Distributed sharding key is `cityH
 (`resource_string_*`, `attribute_string_*`, `*_exists`, `created_at`, camelCase aliases) are
 computed by ClickHouse and are not sent.
 
+**Chunks (deliberate difference).** Every span copies its resource into `resources_string` and
+`resource`, and its scope into `scope_string`, so a large resource over many small spans expands
+far beyond the request. When those copies, plus 256 bytes per span, pass 256 MiB, the rows built
+so far are inserted into every table and encoding goes on with empty blocks. The per-batch
+deduplication of §6 and §7 then applies per chunk: a later chunk can repeat a tag or key row,
+which the `ReplacingMergeTree` merges. The reference's limits were not observed.
+
 ## 2. Shared derivations
 
 | Value | Rule | Source |

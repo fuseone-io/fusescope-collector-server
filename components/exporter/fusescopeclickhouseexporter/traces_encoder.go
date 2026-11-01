@@ -21,6 +21,8 @@ type keyRow struct {
 // tracesEncoder turns ptrace.Traces into one column block per table. It is
 // reused across batches and is not safe for concurrent use.
 type tracesEncoder struct {
+	chunker
+
 	index      *indexColumns
 	eventsData *proto.ColStr
 	errors     *errorColumns
@@ -44,6 +46,7 @@ func (e *tracesEncoder) setAttempt(now time.Time, random func([]byte)) {
 
 func newTracesEncoder() *tracesEncoder {
 	e := &tracesEncoder{
+		chunker:    newChunker(),
 		index:      newIndexColumns(),
 		eventsData: new(proto.ColStr),
 		errors:     newErrorColumns(),
@@ -67,8 +70,12 @@ func (e *tracesEncoder) reset() {
 	clear(e.seenKeys)
 }
 
-func (e *tracesEncoder) encode(td ptrace.Traces) {
+// encode builds the rows of td, inserting a chunk through emit whenever the
+// copies of resources and scopes exceed maxChunkBytes; the last chunk is left
+// for the caller. It returns the first error of emit.
+func (e *tracesEncoder) encode(td ptrace.Traces, emit func() error) error {
 	e.reset()
+	e.begin(emit)
 	now := e.now()
 	for _, rs := range td.ResourceSpans().All() {
 		var res resourceInfo
@@ -86,9 +93,14 @@ func (e *tracesEncoder) encode(td ptrace.Traces) {
 			})
 			for _, span := range ss.Spans().All() {
 				e.appendSpan(&res, scope, scopeJSON, span, now)
+				// resources_string and resource each copy the resource, scope_string the scope.
+				if !e.add(2*len(res.labels)+len(scopeJSON), e.reset) {
+					return e.err
+				}
 			}
 		}
 	}
+	return nil
 }
 
 func (e *tracesEncoder) scopeJSON(scope pcommon.InstrumentationScope) string {

@@ -106,7 +106,7 @@ func encodeObservedCorpus(t *testing.T) *tracesEncoder {
 	extra.ResourceSpans().MoveAndAppendTo(td.ResourceSpans())
 	enc := newTracesEncoder()
 	enc.now = func() time.Time { return time.Unix(0, 0) }
-	enc.encode(td)
+	_ = enc.encode(td, nil)
 	return enc
 }
 
