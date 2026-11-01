@@ -43,8 +43,9 @@ and nothing related to credentials arrives over OpAMP.
    OpAMP, valid only against the backend that issued it, and never used by an exporter.
 5. **Phasing.** The ingress tier, forwarding OTLP to the existing collector, can ship
    independently of ClickHouse parity (DESIGN phases 1–5). RUM depends only on this tier.
-6. **Naming (proposed).** The product, binary and image are `fusescope-collector` (as in
+6. **Naming (decided).** The product, binary and image are `fusescope-collector` (as in
    `builder-config.yaml` `dist.name`). Only the repository is `fusescope-collector-server`.
+   FuseScope ADR 0009 §1 records the same rule.
 
 ## Consequences
 
