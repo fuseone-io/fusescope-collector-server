@@ -405,6 +405,13 @@ def metrics(t0):
     return {"resourceMetrics": [
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeMetrics": [{"scope": SCOPE, "metrics": ms}]},
         {"resource": {}, "scopeMetrics": [{"scope": {}, "metrics": probes}]},
+        {"resource": {"attributes": attrs({"service.name": "probe-res", "process.pid": 42,
+                                           "deployment.environment.name": "staging"})},
+         "scopeMetrics": [{"scope": {"name": "probe", "version": "2", "attributes": attrs({"scope.n": 3})}, "metrics": [
+             {"name": "probe.three_hours_old", "gauge": {"dataPoints": [
+                 {"startTimeUnixNano": t(t0, -3 * 3600_000 - 1000), "timeUnixNano": t(t0, -3 * 3600_000), "asDouble": 7.0}]}},
+             {"name": "probe.resource_typed", "gauge": {"dataPoints": [dict(point, asDouble=8.0)]}},
+         ]}]},
     ]}
 
 
