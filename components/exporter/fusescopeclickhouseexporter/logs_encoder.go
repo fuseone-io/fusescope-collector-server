@@ -75,14 +75,11 @@ func (e *logsEncoder) encode(ld plog.Logs) {
 
 func (e *logsEncoder) appendRecord(res *resourceInfo, scope pcommon.InstrumentationScope, lr plog.LogRecord, now time.Time, hour int64) {
 	ts, observed := uint64(lr.Timestamp()), uint64(lr.ObservedTimestamp())
+	if observed == 0 {
+		observed = uint64(now.UnixNano())
+	}
 	if ts == 0 {
 		ts = observed
-	}
-	if ts == 0 {
-		ts = uint64(now.UnixNano())
-	}
-	if observed == 0 {
-		observed = ts
 	}
 	bucket := tsBucket(ts)
 	e.resources.add(res, bucket)

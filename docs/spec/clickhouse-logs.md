@@ -38,7 +38,7 @@ scope_version, scope_string, inserted_at`.
 | Column | Rule |
 |---|---|
 | `timestamp` | OTLP `time_unix_nano`; if 0, `observed_time_unix_nano`; if both are 0, ingest time (ns) [obs records `observed time only`, `no time at all`] |
-| `observed_timestamp` | OTLP `observed_time_unix_nano`; if 0, the `timestamp` above (seen when both are 0; observed 0 with a record time is assumed) |
+| `observed_timestamp` | OTLP `observed_time_unix_nano`; if 0, ingest time (ns), also when the record has a time [obs records `no time at all`, `bad … utf8` of `logs-invalid-utf8.pb`]. The reference reads the clock per record; the exporter reads it once per batch |
 | `id` | 27-character base62 (`0-9A-Za-z`, zero-padded) of 20 bytes: big-endian uint64 `timestamp − 1.4·10¹⁸` followed by 12 random bytes. This is the KSUID layout with a nanosecond timestamp, so ids sort by time [obs: all rows] |
 | `trace_id`, `span_id` | lowercase hex; empty when absent |
 | `trace_flags` | OTLP `flags` |
