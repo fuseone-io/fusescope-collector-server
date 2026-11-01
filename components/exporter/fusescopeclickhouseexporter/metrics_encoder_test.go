@@ -216,6 +216,16 @@ func TestMetricsExpansionLimits(t *testing.T) {
 		{"long name over the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
 			addHistogram(ms, strings.Repeat("\x01", 4<<10), 10)
 		}), 1, 0, false},
+		// Every metadata row, one per attribute, copies the description.
+		{"long description over the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
+			m := ms.AppendEmpty()
+			m.SetName("g")
+			m.SetDescription(strings.Repeat("d", 64<<10))
+			attrs := m.SetEmptyGauge().DataPoints().AppendEmpty().Attributes()
+			for i := range 1_000 {
+				attrs.PutInt(fmt.Sprint("a", i), 1)
+			}
+		}), 1, 0, false},
 		{"histogram under the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
 			addHistogram(ms, "h", 20)
 		}), 0, 21 + 1, false},

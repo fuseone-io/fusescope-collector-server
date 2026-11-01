@@ -35,13 +35,16 @@ OBSERVED_INGEST_TIMED = "bad \udcff\udcfe utf8 \udce2\udc82"
 
 
 def series_labels(out, side):
-    """Maps each fingerprint to its labels: metric fingerprints differ by design (metrics spec §4)."""
+    """Maps each fingerprint to its series identity: metric fingerprints differ by design
+    (metrics spec §4). Labels alone are not enough: two series can share them and differ in
+    a shadowed attribute (probe.collide_resource), so the attribute maps are part of it."""
     labels = {}
     with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             if line.strip():
                 row = json.loads(line, strict=False)
-                labels[row["fingerprint"]] = row["labels"]
+                labels[row["fingerprint"]] = json.dumps(
+                    [row["labels"]] + [row[k] for k in ("attrs", "scope_attrs", "resource_attrs")], sort_keys=True)
     return labels
 
 

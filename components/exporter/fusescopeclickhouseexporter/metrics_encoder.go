@@ -192,10 +192,12 @@ func (e *metricsEncoder) checkpoint() bool {
 
 // fits reports whether a point of metric name with the attributes in e.point
 // may expand into series series, and counts it as dropped otherwise. Each series
-// holds the attributes once in JSON labels, with the name, and once in maps.
-func (e *metricsEncoder) fits(name string, series int) bool {
+// holds the attributes once in JSON labels, with the name, and once in maps,
+// and has a metadata row per attribute, each with the name and description.
+func (e *metricsEncoder) fits(name, description string, series int) bool {
 	attrs := e.resourceBytes + e.scopeBytes + kvBytes(e.point)
-	perSeries := jsonGrowth*(attrs+len(name)) + attrs + seriesOverhead
+	metaRows := len(e.resource) + len(e.scope) + len(e.point) + 2
+	perSeries := jsonGrowth*(attrs+len(name)) + 2*attrs + seriesOverhead + metaRows*(len(name)+len(description)+seriesOverhead)
 	if series*perSeries <= e.maxPointBytes {
 		return true
 	}
@@ -251,7 +253,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 		v = p.DoubleValue()
 	}
 	e.setPoint(p.Attributes())
-	if !e.fits(spec.name, 1) {
+	if !e.fits(spec.name, spec.description, 1) {
 		return
 	}
 	e.appendPoint(spec, typedKV{}, uint64(p.Timestamp()), v, uint32(p.Flags()), insertedAt)
@@ -260,7 +262,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p pmetric.HistogramDataPoint, insertedAt int64) {
 	e.setPoint(p.Attributes())
 	// Buckets, +Inf, count, sum, min and max.
-	if !e.fits(base.name, p.ExplicitBounds().Len()+5) {
+	if !e.fits(base.name, base.description, p.ExplicitBounds().Len()+5) {
 		return
 	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
@@ -296,7 +298,7 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 
 func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoint, insertedAt int64) {
 	e.setPoint(p.Attributes())
-	if !e.fits(base.name, p.QuantileValues().Len()+2) {
+	if !e.fits(base.name, base.description, p.QuantileValues().Len()+2) {
 		return
 	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
