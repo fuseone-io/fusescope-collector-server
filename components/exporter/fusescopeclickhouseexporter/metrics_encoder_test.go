@@ -20,9 +20,10 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-// Generated labels win over incoming attributes with the same key, so distinct
-// buckets and quantiles keep distinct series.
-func TestGeneratedLabelsWinOverAttributes(t *testing.T) {
+// Of equal keys labels keep the generated, resource, scope, then point value,
+// while the fingerprint keeps series apart that differ only in a shadowed value
+// (metrics §3, §4; observed: probe.collide_*).
+func TestLabelPrecedence(t *testing.T) {
 	histogram := func(attrs func(r, s, p pcommon.Map)) pmetric.Metrics {
 		md := pmetric.NewMetrics()
 		rm := md.ResourceMetrics().AppendEmpty()
@@ -50,6 +51,24 @@ func TestGeneratedLabelsWinOverAttributes(t *testing.T) {
 		attrs(p.Attributes())
 		return md
 	}
+	// gauges has two points whose attribute key is also set on the resource or the scope.
+	gauges := func(key string, onResource bool) pmetric.Metrics {
+		md := pmetric.NewMetrics()
+		rm := md.ResourceMetrics().AppendEmpty()
+		sm := rm.ScopeMetrics().AppendEmpty()
+		if onResource {
+			rm.Resource().Attributes().PutStr(key, "custom")
+		} else {
+			sm.Scope().Attributes().PutStr(key, "custom")
+		}
+		m := sm.Metrics().AppendEmpty()
+		m.SetName("g")
+		g := m.SetEmptyGauge()
+		for _, v := range []string{"a", "b"} {
+			g.DataPoints().AppendEmpty().Attributes().PutStr(key, v)
+		}
+		return md
+	}
 
 	tests := []struct {
 		name   string
@@ -57,13 +76,17 @@ func TestGeneratedLabelsWinOverAttributes(t *testing.T) {
 		metric string
 		key    string
 		want   []string
+		// wantMeta: metadata keeps the incoming "custom" value, as its attribute map does.
+		wantMeta bool
 	}{
-		{"point le", histogram(func(_, _, p pcommon.Map) { p.PutStr("le", "custom") }), "h.bucket", "le", []string{"+Inf", "1", "2"}},
-		{"resource le", histogram(func(r, _, _ pcommon.Map) { r.PutStr("le", "custom") }), "h.bucket", "le", []string{"+Inf", "1", "2"}},
-		{"point quantile", summary(func(p pcommon.Map) { p.PutStr("quantile", "custom") }), "s.quantile", "quantile", []string{"0.5", "0.9"}},
-		{"point __name__", histogram(func(_, _, p pcommon.Map) { p.PutStr("__name__", "custom") }), "h.count", "__name__", []string{"h.count"}},
-		{"point __temporality__", histogram(func(_, _, p pcommon.Map) { p.PutStr("__temporality__", "custom") }), "h.count", "__temporality__", []string{"Cumulative"}},
-		{"scope __scope.name__", histogram(func(_, s, _ pcommon.Map) { s.PutStr("__scope.name__", "custom") }), "h.count", "__scope.name__", []string{"probe"}},
+		{"point le", histogram(func(_, _, p pcommon.Map) { p.PutStr("le", "custom") }), "h.bucket", "le", []string{"+Inf", "1", "2"}, false},
+		{"resource le", histogram(func(r, _, _ pcommon.Map) { r.PutStr("le", "custom") }), "h.bucket", "le", []string{"+Inf", "1", "2"}, true},
+		{"point quantile", summary(func(p pcommon.Map) { p.PutStr("quantile", "custom") }), "s.quantile", "quantile", []string{"0.5", "0.9"}, false},
+		{"point __name__", histogram(func(_, _, p pcommon.Map) { p.PutStr("__name__", "custom") }), "h.count", "__name__", []string{"h.count"}, true},
+		{"point __temporality__", histogram(func(_, _, p pcommon.Map) { p.PutStr("__temporality__", "custom") }), "h.count", "__temporality__", []string{"Cumulative"}, false},
+		{"scope __scope.name__", histogram(func(_, s, _ pcommon.Map) { s.PutStr("__scope.name__", "custom") }), "h.count", "__scope.name__", []string{"probe"}, false},
+		{"resource over point", gauges("host.name", true), "g", "host.name", []string{"custom", "custom"}, true},
+		{"scope over point", gauges("region", false), "g", "region", []string{"custom", "custom"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -94,10 +117,12 @@ func TestGeneratedLabelsWinOverAttributes(t *testing.T) {
 			if len(fingerprints) != len(tt.want) {
 				t.Errorf("%d fingerprints for %d series", len(fingerprints), len(tt.want))
 			}
+			meta := false
 			for _, r := range enc.metaRows {
-				if r.key.metricName == tt.metric && r.key.attrName == tt.key && r.key.value == "custom" {
-					t.Errorf("metadata keeps the shadowed attribute %+v", r.key)
-				}
+				meta = meta || r.key.metricName == tt.metric && r.key.attrName == tt.key && r.key.value == "custom"
+			}
+			if meta != tt.wantMeta {
+				t.Errorf("metadata has %s=custom: %v, want %v", tt.key, meta, tt.wantMeta)
 			}
 		})
 	}

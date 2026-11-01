@@ -30,6 +30,9 @@ const (
 	jsonGrowth = 6
 )
 
+// scopeGenerated is the number of __scope.*__ entries leading e.scope.
+const scopeGenerated = 3
+
 // typedKV is a stringified attribute with its pdata type name and origin.
 type typedKV struct {
 	key, value, datatype, origin string
@@ -274,31 +277,42 @@ func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoi
 // appendPoint writes one sample of one derived series, its series row and its
 // metadata. extra is the le/quantile label, if any.
 func (e *metricsEncoder) appendPoint(spec seriesSpec, extra typedKV, ts uint64, value float64, flags uint32, insertedAt int64) {
-	temporalityKV := typedKV{key: "__temporality__", value: spec.temporality, datatype: "Str", origin: "point"}
-	e.labels = e.labels[:0]
-	for _, attrs := range [...][]typedKV{e.resource, e.scope, e.point} {
-		for _, kv := range attrs {
-			if extra.key == "" || kv.key != extra.key {
-				e.labels = append(e.labels, kv)
-			}
-		}
-	}
-	if extra.key != "" {
-		e.labels = append(e.labels, extra)
-	}
-	for _, kv := range e.labels {
+	// Metadata follows the attribute maps. A series that is not written (NaN, or
+	// an absent sum, min or max) gets only its resource and scope rows (metrics §5).
+	for _, kv := range e.resource {
 		e.addMetadata(spec, kv, ts)
 	}
-	// A series that is not written (NaN, or an absent sum, min or max) still
-	// gets attribute metadata, but no __temporality__ row (metrics §5).
+	for _, kv := range e.scope {
+		e.addMetadata(spec, kv, ts)
+	}
 	if math.IsNaN(value) {
 		return
 	}
+	temporalityKV := typedKV{key: "__temporality__", value: spec.temporality, datatype: "Str", origin: "point"}
+	for _, kv := range e.point {
+		if extra.key == "" || kv.key != extra.key {
+			e.addMetadata(spec, kv, ts)
+		}
+	}
+	if extra.key != "" {
+		e.addMetadata(spec, extra, ts)
+	}
 	e.addMetadata(spec, temporalityKV, ts)
-	e.labels = append(e.labels, temporalityKV, typedKV{key: "__name__", value: spec.name})
+
+	// Of equal keys labels keep the first: generated, then resource, scope and
+	// point (metrics §3). The fingerprint also covers the shadowed values, so
+	// points that differ only there stay distinct series (metrics §4).
+	e.labels = append(e.labels[:0], typedKV{key: "__name__", value: spec.name}, temporalityKV)
+	if extra.key != "" {
+		e.labels = append(e.labels, extra)
+	}
+	e.labels = append(e.labels, e.scope[:scopeGenerated]...)
+	e.labels = append(e.labels, e.resource...)
+	e.labels = append(e.labels, e.scope[scopeGenerated:]...)
+	e.labels = append(e.labels, e.point...)
 	slices.SortStableFunc(e.labels, func(a, b typedKV) int { return cmp.Compare(a.key, b.key) })
-	e.labels = slices.CompactFunc(e.labels, func(a, b typedKV) bool { return a.key == b.key })
 	fingerprint := typedHash(e.labels)
+	e.labels = slices.CompactFunc(e.labels, func(a, b typedKV) bool { return a.key == b.key })
 
 	ms := int64(ts / 1e6)
 	s := e.samples
@@ -405,12 +419,13 @@ func (e *metricsEncoder) flushMetadata() {
 }
 
 // typedStrings appends m's attributes, stringified, with their pdata type names.
-// Attributes named like a label every series generates are dropped, so they
-// cannot replace it (metrics §3).
+// It drops the keys that the map of origin generates itself: __temporality__ in
+// attrs and the __scope.*__ entries in scope_attrs (metrics §3).
 func typedStrings(dst []typedKV, m pcommon.Map, origin string) []typedKV {
 	for k, v := range m.All() {
-		switch k {
-		case "__name__", "__temporality__", "__scope.name__", "__scope.schema_url__", "__scope.version__":
+		switch {
+		case origin == "point" && k == "__temporality__",
+			origin == "scope" && (k == "__scope.name__" || k == "__scope.schema_url__" || k == "__scope.version__"):
 			continue
 		}
 		dst = append(dst, typedKV{key: k, value: valueString(v), datatype: v.Type().String(), origin: origin})

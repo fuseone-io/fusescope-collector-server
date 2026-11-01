@@ -39,8 +39,9 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 - `le` and `quantile` labels: `strconv.FormatFloat(v, 'f', -1, 64)` (`0.00001`, `1000000`, `1`),
   bucket upper bound `+Inf` [obs `probe.extreme_bounds`, `probe.extreme_quantiles`].
 - **NaN** values, and a histogram's absent sum, min or max: no sample and no series. Their
-  metadata rows are written for the resource, scope and point attributes, but not
-  `__temporality__` [obs `probe.nan`, `probe.histogram_no_minmax`].
+  metadata rows are written for the resource and scope attributes only: not for the point
+  attributes, nor `__temporality__` [obs `probe.nan`, `probe.nan_attrs`,
+  `probe.histogram_no_minmax`, `probe.no_minmax_attrs`].
 - **No recorded value** (point flag 1): written with value 0 and `flags = 1` [obs `probe.no_value`].
 - Int values become Float64; negative values are kept [obs `probe.cumulative_updown`].
 
@@ -54,9 +55,9 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 | `unix_milli` (time series) | point time floored to the hour, ms [obs `probe.three_hours_old`] |
 | `flags` | OTLP point flags |
 | `description` | metric description |
-| `labels` | compact JSON, keys sorted, of: resource attributes, scope attributes, `__scope.name__`, `__scope.schema_url__`, `__scope.version__`, point attributes, `le`/`quantile`, `__temporality__` and `__name__`; all values stringified (traces §2.2 stringification). The generated labels (`le`/`quantile`, `__temporality__`, `__name__`, `__scope.*__`) win: an incoming attribute with the same key is dropped from `labels`, `attrs`, `scope_attrs` and metadata, otherwise distinct buckets or quantiles would share one series (deliberate; not observed) |
-| `attrs` | point attributes, `le`/`quantile` and `__temporality__` |
-| `scope_attrs` | `__scope.name__`, `__scope.schema_url__`, `__scope.version__` and the scope attributes |
+| `labels` | compact JSON, keys sorted, of: resource attributes, scope attributes, `__scope.name__`, `__scope.schema_url__`, `__scope.version__`, point attributes, `le`/`quantile`, `__temporality__` and `__name__`; all values stringified (traces §2.2 stringification). Of equal keys it keeps the generated value (`le`/`quantile`, `__temporality__`, `__name__`, `__scope.*__`), then the resource's, the scope's and the point's [obs `probe.collide_*`] |
+| `attrs` | point attributes, `le`/`quantile` and `__temporality__`; the generated `le`/`quantile` and `__temporality__` replace a point attribute of that key, other keys (`__name__`) are kept [obs `probe.collide_le`, `probe.collide_generated`] |
+| `scope_attrs` | `__scope.name__`, `__scope.schema_url__`, `__scope.version__` and the scope attributes; the generated entries replace scope attributes of those keys [obs `probe.collide_*`] |
 | `resource_attrs` | resource attributes |
 | `__normalized` | false |
 | `inserted_at_unix_milli` | wall clock at insert, ms |
@@ -69,7 +70,10 @@ observation: FNV-1a, xxHash, CityHash, MurmurHash3, MD5 and SHA-256 over the lab
 subset, order and separator tested do not reproduce it [obs: `probe.bare`, 5 labels].
 
 The exporter therefore computes its own: FNV-1a 64 over the labels sorted by key, each as
-`key 0xFF value 0xFF`, the same function as the resource fingerprint (traces §2.1).
+`key 0xFF value 0xFF`, the same function as the resource fingerprint (traces §2.1). The values
+`labels` shadows (§3) are hashed too, after the kept one: points that differ only in a point
+attribute shadowed by the resource or scope are distinct series with equal `labels`, as in the
+reference [obs `probe.collide_resource`, `probe.collide_scope`].
 
 - **Queries are unaffected**: the backend joins `samples_v4` to `time_series_v4` on the
   fingerprint and groups by labels, so any consistent function works.
@@ -82,7 +86,8 @@ The exporter therefore computes its own: FNV-1a 64 over the labels sorted by key
 ## 5. `metadata`
 
 One row per batch for each distinct (temporality, metric name, attribute name, attribute type,
-datatype, string value), with:
+datatype, string value) among the entries of the series' `resource_attrs`, `scope_attrs` and
+`attrs` (§3; for series not written, §2), with:
 
 - `attr_type`: `resource`, `scope` (also the three `__scope.*__` entries) or `point` (also
   `__temporality__`, `le`, `quantile`);
@@ -118,5 +123,4 @@ were not observed; the exporter enforces its own, on estimated encoded bytes:
 
 ## 7. Still to observe
 
-- a key present both on the resource and on the point (which one `labels` keeps);
 - metric names with characters outside `[A-Za-z0-9._:-]`.
