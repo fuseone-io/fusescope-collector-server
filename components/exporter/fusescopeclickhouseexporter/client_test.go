@@ -151,3 +151,60 @@ func TestRetryKeepsLogIDs(t *testing.T) {
 		t.Error("another request wrote the same IDs")
 	}
 }
+
+// Tables sharded by rand() route a retry's rows to other shards, where a reused
+// token would drop them; they get no token (their repeats merge away).
+func TestTableTokens(t *testing.T) {
+	tests := []struct {
+		table string
+		chunk int
+		want  string
+	}{
+		{"distributed_signoz_index_v3", 0, "id-distributed_signoz_index_v3"},
+		{"distributed_samples_v4", 2, "id-distributed_samples_v4-2"},
+		{"distributed_tag_attributes_v2", 0, ""},
+		{"distributed_span_attributes_keys", 0, ""},
+		{"distributed_metadata", 1, ""},
+	}
+	for _, tt := range tests {
+		if got := tableToken("id", tt.table, tt.chunk); got != tt.want {
+			t.Errorf("tableToken(%s, %d) = %q, want %q", tt.table, tt.chunk, got, tt.want)
+		}
+	}
+}
+
+// An identity is kept for the next retry, and released when the caller gave up.
+func TestPushReleasesIdentities(t *testing.T) {
+	cfg := createDefaultConfig()
+	cfg.RetryConfig.MaxElapsedTime = 0
+	x := newLogsExporter(cfg, zap.NewNop())
+	ld := plog.NewLogs()
+	ld.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+
+	if err := x.push(context.Background(), ld); err == nil {
+		t.Fatal("push without a pool succeeded")
+	}
+	if len(x.requests.ids) != 1 {
+		t.Fatalf("%d identities after a retryable failure, want 1 kept for the retry", len(x.requests.ids))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = x.push(ctx, ld)
+	if len(x.requests.ids) != 0 {
+		t.Errorf("%d identities after a canceled push, want none", len(x.requests.ids))
+	}
+	if x.requests.ttl <= 0 {
+		t.Errorf("ttl = %v with unlimited retries, want a bound", x.requests.ttl)
+	}
+}
+
+func TestRequestIdentitiesAreBounded(t *testing.T) {
+	r := newRequestIDs[plog.Logs](time.Hour)
+	r.max = 3
+	for range 10 {
+		r.get(plog.NewLogs())
+	}
+	if len(r.ids) > 3 {
+		t.Errorf("%d identities kept, want at most 3", len(r.ids))
+	}
+}

@@ -154,14 +154,17 @@ func (c *clickhouseClient) options(ctx context.Context) (ch.Options, fileStamp, 
 	return opts, stamp, nil
 }
 
-// insert runs one INSERT. The deduplication token makes ClickHouse drop the
-// block when a retry resends it; dependent materialized views are deduplicated too.
+// insert runs one INSERT. The deduplication token, unless empty, makes
+// ClickHouse drop the block when a retry resends it; dependent materialized
+// views are deduplicated too.
 func (c *clickhouseClient) insert(ctx context.Context, q ch.Query, token string) error {
 	q.Settings = append(q.Settings,
 		ch.Setting{Key: "insert_deduplicate", Value: "1"},
 		ch.Setting{Key: "deduplicate_blocks_in_dependent_materialized_views", Value: "1"},
-		ch.Setting{Key: "insert_deduplication_token", Value: token},
 	)
+	if token != "" {
+		q.Settings = append(q.Settings, ch.Setting{Key: "insert_deduplication_token", Value: token})
+	}
 	pool := c.pool.Load()
 	if pool == nil {
 		return fmt.Errorf("ClickHouse pool is not started")

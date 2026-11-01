@@ -31,18 +31,23 @@ func (id requestID) random() func([]byte) {
 	return func(b []byte) { _, _ = rng.Read(b) }
 }
 
+// maxRequestIDs bounds the identities kept for requests that may be retried.
+const maxRequestIDs = 100_000
+
 // requestIDs holds the identities of requests that may still be retried.
 // Identities older than ttl are dropped, as the exporter helper has given up
-// on them; ttl 0 keeps them until done.
+// on them; ttl 0 keeps them until done. Above max identities the oldest go, at
+// worst turning a late retry into a new request.
 type requestIDs[D comparable] struct {
 	mu  sync.Mutex
 	ids map[D]requestID
 	ttl time.Duration
+	max int
 	now func() time.Time
 }
 
 func newRequestIDs[D comparable](ttl time.Duration) *requestIDs[D] {
-	return &requestIDs[D]{ids: map[D]requestID{}, ttl: ttl, now: time.Now}
+	return &requestIDs[D]{ids: map[D]requestID{}, ttl: ttl, max: maxRequestIDs, now: time.Now}
 }
 
 func (r *requestIDs[D]) get(d D) requestID {
@@ -58,6 +63,16 @@ func (r *requestIDs[D]) get(d D) requestID {
 	}
 	if id, ok := r.ids[d]; ok {
 		return id
+	}
+	if len(r.ids) >= r.max {
+		var oldest D
+		first := true
+		for k, id := range r.ids {
+			if first || id.started.Before(r.ids[oldest].started) {
+				oldest, first = k, false
+			}
+		}
+		delete(r.ids, oldest)
 	}
 	id := requestID{started: now, expires: now.Add(r.ttl)}
 	_, _ = rand.Read(id.nonce[:])

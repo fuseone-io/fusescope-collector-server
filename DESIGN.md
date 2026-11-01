@@ -89,7 +89,9 @@ code (FuseScope ADR 0001, option 2).
   ingest time and a random-ID stream seeded by its identity, so a retry rebuilds the same rows
   and each sharded row goes to the same shard. Equal telemetry sent twice is two requests and is
   written twice; the parity suite checks that. A request restored from a persistent queue after
-  a restart gets a new identity.
+  a restart gets a new identity. Tables sharded by `rand()` (tag attributes, span keys, metric
+  metadata) get no token, as a retry routes their rows to other shards; they are Replacing or
+  Aggregating merge trees, so the repeats merge away.
 - **Backpressure, not loss:** persistent queues (`file_storage`) at the gateway; when the
   engine answers `RESOURCE_EXHAUSTED` or ClickHouse is slow, data waits in the queue up to its
   byte bound and then refuses upstream, which agents and SDKs retry.

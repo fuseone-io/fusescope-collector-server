@@ -80,8 +80,10 @@ type attempter interface {
 func newSignalExporter[E attempter, D comparable](cfg *Config, database string, logger *zap.Logger, tables []table[E],
 	newEncoder func() E, encode func(E, D, func() error) error,
 ) *signalExporter[E, D] {
-	// A request is retried at most for max_elapsed_time, each attempt bounded by timeout.
-	var ttl time.Duration
+	// A request is retried at most for max_elapsed_time, each attempt bounded by
+	// timeout. Without that bound, an identity outlives the helper's retries
+	// only for an hour, as the helper does not report a request it gave up on.
+	ttl := time.Hour
 	if cfg.RetryConfig.MaxElapsedTime > 0 {
 		ttl = cfg.RetryConfig.MaxElapsedTime + cfg.Timeout + time.Minute
 	}
@@ -116,6 +118,29 @@ func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metric
 	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newEncoder, (*metricsEncoder).encode)
 }
 
+// randomShards are the tables whose Distributed engine shards by rand(): a
+// retry routes their rows to other shards, where a reused token would drop rows
+// that shard never had. They are Replacing or Aggregating merge trees, so the
+// repeats a retry writes merge away.
+var randomShards = map[string]bool{
+	"distributed_tag_attributes_v2":    true,
+	"distributed_span_attributes_keys": true,
+	"distributed_metadata":             true,
+}
+
+// tableToken is the deduplication token of one table's block of a request
+// attempt, or "" for none.
+func tableToken(request, table string, chunk int) string {
+	if randomShards[table] {
+		return ""
+	}
+	token := request + "-" + table
+	if chunk > 0 {
+		token += "-" + strconv.Itoa(chunk)
+	}
+	return token
+}
+
 // infallible adapts an encoder that builds one chunk and cannot fail.
 func infallible[E any, D comparable](encode func(E, D)) func(E, D, func() error) error {
 	return func(e E, d D, _ func() error) error {
@@ -134,7 +159,8 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	}
 	id := x.requests.get(data)
 	err := x.export(ctx, data, id)
-	if err == nil || consumererror.IsPermanent(err) || !x.cfg.RetryConfig.Enabled {
+	// A canceled caller ends the helper's retries too.
+	if err == nil || consumererror.IsPermanent(err) || !x.cfg.RetryConfig.Enabled || ctx.Err() != nil {
 		x.requests.done(data)
 	}
 	return err
@@ -157,11 +183,7 @@ func (x *signalExporter[E, D]) export(ctx context.Context, data D, id requestID)
 			if input[0].Data.Rows() == 0 {
 				continue
 			}
-			tableToken := token + "-" + t.name
-			if chunk > 0 {
-				tableToken += "-" + strconv.Itoa(chunk)
-			}
-			if err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, tableToken); err != nil {
+			if err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, tableToken(token, t.name, chunk)); err != nil {
 				return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
 			}
 		}
