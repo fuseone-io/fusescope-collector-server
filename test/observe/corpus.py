@@ -380,8 +380,31 @@ def metrics(t0):
          "summary": {"dataPoints": [dict(point, count="10", sum=0.02, quantileValues=[
              {"quantile": 0.5, "value": 0.001}, {"quantile": 0.99, "value": 0.008}])]}},
     ]
+    earlier = dict(point, timeUnixNano=t(t0, -30_000))
+    probes = [
+        {"name": "probe.bare", "gauge": {"dataPoints": [dict(point, asDouble=1.0)]}},
+        {"name": "probe.one_attr", "gauge": {"dataPoints": [dict(point, asInt="2", attributes=attrs({"a": "b"}))]}},
+        {"name": "probe.typed_attrs", "gauge": {"dataPoints": [dict(point, asInt="3", attributes=attrs({
+            "i": 7, "d": 1.5, "bool": True, "arr": ["x", "y"], "empty": ""}))]}},
+        {"name": "probe.two_points", "unit": "ms", "description": "Two points of one series.",
+         "gauge": {"dataPoints": [dict(earlier, asDouble=4.0), dict(point, asDouble=5.0)]}},
+        {"name": "probe.no_value", "gauge": {"dataPoints": [dict(point, flags=1)]}},
+        {"name": "probe.nan", "gauge": {"dataPoints": [dict(point, asDouble="NaN")]}},
+        {"name": "probe.monotonic_delta", "sum": {"aggregationTemporality": 1, "isMonotonic": True,
+         "dataPoints": [dict(point, asInt="9")]}},
+        {"name": "probe.cumulative_updown", "sum": {"aggregationTemporality": 2, "isMonotonic": False,
+         "dataPoints": [dict(point, asInt="-4")]}},
+        {"name": "probe.delta_histogram", "unit": "ms", "histogram": {"aggregationTemporality": 1, "dataPoints": [dict(point,
+             count="3", sum=30.0, bucketCounts=["1", "2"], explicitBounds=[10.0])]}},
+        {"name": "probe.histogram_no_minmax", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="0", bucketCounts=[], explicitBounds=[])]}},
+        {"name": "probe.exp_cumulative", "exponentialHistogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="2", sum=3.0, scale=0, zeroCount="0", positive={"offset": 0, "bucketCounts": ["1", "1"]})]}},
+        {"name": "probe.dotted-Name_with:chars", "gauge": {"dataPoints": [dict(point, asDouble=6.0)]}},
+    ]
     return {"resourceMetrics": [
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeMetrics": [{"scope": SCOPE, "metrics": ms}]},
+        {"resource": {}, "scopeMetrics": [{"scope": {}, "metrics": probes}]},
     ]}
 
 
