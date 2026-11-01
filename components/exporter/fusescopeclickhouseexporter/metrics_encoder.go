@@ -200,14 +200,16 @@ func (e *metricsEncoder) appendPoint(spec seriesSpec, extra typedKV, ts uint64, 
 	if extra.key != "" {
 		e.labels = append(e.labels, extra)
 	}
-	e.labels = append(e.labels, temporalityKV)
 	for _, kv := range e.labels {
 		e.addMetadata(spec, kv, ts)
 	}
+	// A series that is not written (NaN, or an absent sum, min or max) still
+	// gets attribute metadata, but no __temporality__ row (metrics §5).
 	if math.IsNaN(value) {
 		return
 	}
-	e.labels = append(e.labels, typedKV{key: "__name__", value: spec.name})
+	e.addMetadata(spec, temporalityKV, ts)
+	e.labels = append(e.labels, temporalityKV, typedKV{key: "__name__", value: spec.name})
 	slices.SortStableFunc(e.labels, func(a, b typedKV) int { return cmp.Compare(a.key, b.key) })
 	e.labels = slices.CompactFunc(e.labels, func(a, b typedKV) bool { return a.key == b.key })
 	fingerprint := typedHash(e.labels)
