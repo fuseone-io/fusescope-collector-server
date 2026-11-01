@@ -226,6 +226,13 @@ func TestMetricsExpansionLimits(t *testing.T) {
 				attrs.PutInt(fmt.Sprint("a", i), 1)
 			}
 		}), 1, 0, false},
+		// The unit is stored in series and metadata rows too.
+		{"long unit over the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
+			m := ms.AppendEmpty()
+			m.SetName("g")
+			m.SetUnit(strings.Repeat("u", 128<<10))
+			m.SetEmptyGauge().DataPoints().AppendEmpty().Attributes().PutInt("a", 1)
+		}), 1, 0, false},
 		{"histogram under the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
 			addHistogram(ms, "h", 20)
 		}), 0, 21 + 1, false},

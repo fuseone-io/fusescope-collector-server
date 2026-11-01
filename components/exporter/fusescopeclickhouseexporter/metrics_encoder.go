@@ -46,6 +46,11 @@ type seriesSpec struct {
 	monotonic bool
 }
 
+// textBytes is the size of the strings a series or metadata row copies from spec.
+func (s seriesSpec) textBytes() int {
+	return len(s.name) + len(s.description) + len(s.unit) + len(s.metaUnit)
+}
+
 type seriesRow struct {
 	fingerprint uint64
 	hour        int64
@@ -190,14 +195,16 @@ func (e *metricsEncoder) checkpoint() bool {
 	return true
 }
 
-// fits reports whether a point of metric name with the attributes in e.point
-// may expand into series series, and counts it as dropped otherwise. Each series
+// fits reports whether a point of spec with the attributes in e.point may
+// expand into series series, and counts it as dropped otherwise. Each series
 // holds the attributes once in JSON labels, with the name, and once in maps,
-// and has a metadata row per attribute, each with the name and description.
-func (e *metricsEncoder) fits(name, description string, series int) bool {
+// and has a metadata row per attribute; series and metadata rows copy the
+// name, description and unit.
+func (e *metricsEncoder) fits(spec seriesSpec, series int) bool {
 	attrs := e.resourceBytes + e.scopeBytes + kvBytes(e.point)
 	metaRows := len(e.resource) + len(e.scope) + len(e.point) + 2
-	perSeries := jsonGrowth*(attrs+len(name)) + 2*attrs + seriesOverhead + metaRows*(len(name)+len(description)+seriesOverhead)
+	text := spec.textBytes()
+	perSeries := jsonGrowth*(attrs+len(spec.name)) + 2*attrs + text + seriesOverhead + metaRows*(text+seriesOverhead)
 	if series*perSeries <= e.maxPointBytes {
 		return true
 	}
@@ -253,7 +260,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 		v = p.DoubleValue()
 	}
 	e.setPoint(p.Attributes())
-	if !e.fits(spec.name, spec.description, 1) {
+	if !e.fits(spec, 1) {
 		return
 	}
 	e.appendPoint(spec, typedKV{}, uint64(p.Timestamp()), v, uint32(p.Flags()), insertedAt)
@@ -262,7 +269,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p pmetric.HistogramDataPoint, insertedAt int64) {
 	e.setPoint(p.Attributes())
 	// Buckets, +Inf, count, sum, min and max.
-	if !e.fits(base.name, base.description, p.ExplicitBounds().Len()+5) {
+	if !e.fits(base, p.ExplicitBounds().Len()+5) {
 		return
 	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
@@ -298,7 +305,7 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 
 func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoint, insertedAt int64) {
 	e.setPoint(p.Attributes())
-	if !e.fits(base.name, base.description, p.QuantileValues().Len()+2) {
+	if !e.fits(base, p.QuantileValues().Len()+2) {
 		return
 	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
@@ -433,7 +440,7 @@ func (e *metricsEncoder) appendSeries(spec seriesSpec, fingerprint uint64, hour 
 	endRow(c.resourceAttrs)
 	c.normalized.Append(false)
 	c.insertedAt.Append(insertedAt)
-	e.expanded += len(e.buf) + e.resourceBytes + e.scopeBytes + kvBytes(e.point) + len(extra.key) + len(extra.value) + seriesOverhead
+	e.expanded += len(e.buf) + e.resourceBytes + e.scopeBytes + kvBytes(e.point) + len(extra.key) + len(extra.value) + spec.textBytes() + seriesOverhead
 }
 
 // addScopeMetadata adds the resource and scope metadata rows of spec, looking
@@ -470,7 +477,7 @@ func (e *metricsEncoder) addMetadata(spec seriesSpec, kv typedKV, ts uint64) int
 	i := len(e.metaRows)
 	e.metaIndex[k] = i
 	e.metaRows = append(e.metaRows, metaRow{spec: spec, key: k, first: ms, last: ms})
-	e.expanded += len(k.metricName) + len(k.attrName) + len(k.value) + len(spec.description) + seriesOverhead
+	e.expanded += len(k.attrName) + len(k.value) + spec.textBytes() + seriesOverhead
 	return i
 }
 
