@@ -64,7 +64,7 @@ func (e *tracesEncoder) newErrorID() (h [32]byte) {
 
 func stringAttr(m pcommon.Map, key string) string {
 	if v, ok := m.Get(key); ok {
-		return v.AsString()
+		return valueString(v)
 	}
 	return ""
 }
@@ -77,6 +77,6 @@ func boolAttr(m pcommon.Map, key string) bool {
 	if v.Type() == pcommon.ValueTypeBool {
 		return v.Bool()
 	}
-	b, _ := strconv.ParseBool(v.AsString())
+	b, _ := strconv.ParseBool(valueString(v))
 	return b
 }

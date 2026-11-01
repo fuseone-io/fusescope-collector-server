@@ -5,6 +5,7 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
@@ -144,5 +145,20 @@ func appendJSONValue(dst []byte, v pcommon.Value) []byte {
 		return append(dst, ']')
 	default:
 		return append(dst, "null"...)
+	}
+}
+
+// valueString stringifies a value for String columns. Maps and arrays use
+// encoding/json (sorted keys, HTML-safe), as observed (logs §3).
+func valueString(v pcommon.Value) string {
+	switch v.Type() {
+	case pcommon.ValueTypeMap, pcommon.ValueTypeSlice:
+		b, err := json.Marshal(v.AsRaw())
+		if err != nil {
+			return v.AsString()
+		}
+		return string(b)
+	default:
+		return v.AsString()
 	}
 }

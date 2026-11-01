@@ -6,8 +6,11 @@ set -euo pipefail
 out=$(realpath -m "${1:-out}")
 cd "$(dirname "$0")"
 
-tables=(signoz_index_v3 signoz_error_index_v2 traces_v3_resource tag_attributes_v2 span_attributes_keys
-  dependency_graph_minutes_v2 top_level_operations trace_summary)
+tables=(signoz_traces.signoz_index_v3 signoz_traces.signoz_error_index_v2 signoz_traces.traces_v3_resource
+  signoz_traces.tag_attributes_v2 signoz_traces.span_attributes_keys signoz_traces.dependency_graph_minutes_v2
+  signoz_traces.top_level_operations signoz_traces.trace_summary
+  signoz_logs.logs_v2 signoz_logs.logs_v2_resource signoz_logs.tag_attributes_v2
+  signoz_logs.logs_attribute_keys signoz_logs.logs_resource_keys)
 
 ch() {
   local body code
@@ -29,9 +32,11 @@ t0=$(( $(date +%s) * 1000000000 ))
 rm -rf "$out" && mkdir -p "$out/reference" "$out/candidate"
 python3 -I ../observe/corpus.py "$t0" "$out/corpus"
 for port in 14318 24318; do
-  code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-    --data-binary @"$out/corpus/traces.json" "localhost:$port/v1/traces")
-  if [ "$code" != 200 ]; then echo "POST :$port/v1/traces: $code $(cat "$out/response")" >&2; exit 1; fi
+  for signal in traces logs; do
+    code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+      --data-binary @"$out/corpus/$signal.json" "localhost:$port/v1/$signal")
+    if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal: $code $(cat "$out/response")" >&2; exit 1; fi
+  done
 done
 rm -f "$out/response"
 sleep 20
@@ -39,7 +44,7 @@ sleep 20
 for side in reference:18123 candidate:28123; do
   name=${side%%:*} port=${side##*:}
   for t in "${tables[@]}"; do
-    ch "$port" "SELECT * FROM signoz_traces.$t FORMAT JSONEachRow" > "$out/$name/$t.jsonl"
+    ch "$port" "SELECT * FROM $t FORMAT JSONEachRow" > "$out/$name/$t.jsonl"
   done
 done
 python3 -I compare.py "$out" "${tables[@]}" || { echo "parity: differences, see report" >&2; exit 1; }

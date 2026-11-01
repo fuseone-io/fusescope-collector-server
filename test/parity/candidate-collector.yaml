@@ -30,3 +30,6 @@ service:
     traces:
       receivers: [otlp]
       exporters: [fusescope_clickhouse]
+    logs:
+      receivers: [otlp]
+      exporters: [fusescope_clickhouse]

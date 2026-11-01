@@ -19,7 +19,7 @@ status:
   disable_codecov_badge: true
   class: exporter
   stability:
-    alpha: [traces]
+    alpha: [traces, logs]
   distributions: []
 
 tests:
