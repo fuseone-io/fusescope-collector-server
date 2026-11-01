@@ -1,4 +1,20 @@
-# fusescope-collector-server
+<p align="center">
+  <img alt="FuseScope" src=".github/brand/fusescope-logo-universal.svg" width="440">
+</p>
+
+<h1 align="center">FuseScope Collector</h1>
+
+<p align="center">
+  <b>FuseScope distribution of the OpenTelemetry Collector, built from upstream components.</b>
+</p>
+
+<p align="center">
+  <a href="DESIGN.md">Design</a> ·
+  <a href="docs/adr">ADRs</a> ·
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0f5fb8"></a>
+  <a href="https://opentelemetry.io/docs/collector/"><img alt="OpenTelemetry Collector" src="https://img.shields.io/badge/OpenTelemetry-Collector-950fb8"></a>
+  <a href="https://github.com/fuseone-io/fusescope-collector-server/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/fuseone-io/fusescope-collector-server?color=950fb8"></a>
+</p>
 
 FuseScope distribution of the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/),
 built from upstream components with the OpenTelemetry Collector Builder. It writes to
