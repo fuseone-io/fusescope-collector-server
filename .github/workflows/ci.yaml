@@ -26,7 +26,7 @@ jobs:
       - name: Validate example configs
         run: make validate
       - name: Check dependency licenses
-        run: make licenses 2> licenses.err || { grep -v -E '^W[0-9]' licenses.err | tail -9 | sed 's/^/::error::/'; exit 1; }
+        run: make licenses 2> licenses.err || { grep -E 'Not allowed|unknown|Failed' licenses.err | sed -E 's#(library [^/]+/[^/]+/[^/ ]+)[^ ]*#\1#' | sort -u | head -9 | sed 's/^/::error::/'; exit 1; }
       - name: Check known vulnerabilities
         run: make vuln
 
