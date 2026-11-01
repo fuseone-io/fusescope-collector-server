@@ -22,7 +22,9 @@ type typedKV struct {
 // seriesSpec describes one derived series (metrics §2).
 type seriesSpec struct {
 	name, metricType, temporality, unit, description string
-	monotonic                                        bool
+	// metaUnit is the unit recorded in metadata, which differs for .count series.
+	metaUnit  string
+	monotonic bool
 }
 
 type seriesRow struct {
@@ -105,7 +107,7 @@ func (e *metricsEncoder) encode(md pmetric.Metrics) {
 }
 
 func (e *metricsEncoder) appendMetric(m pmetric.Metric, insertedAt int64) {
-	base := seriesSpec{name: m.Name(), unit: m.Unit(), description: m.Description()}
+	base := seriesSpec{name: m.Name(), unit: m.Unit(), metaUnit: m.Unit(), description: m.Description()}
 	switch m.Type() {
 	case pmetric.MetricTypeGauge:
 		spec := base
@@ -161,23 +163,16 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 
 	sum := base
 	sum.metricType, sum.temporality, sum.monotonic = "Sum", temporality, true
-	count := sum
-	count.name, count.unit = base.name+".count", "1"
-	e.appendPoint(count, typedKV{}, ts, float64(p.Count()), flags, insertedAt)
-	if p.HasSum() {
-		sum.name = base.name + ".sum"
-		e.appendPoint(sum, typedKV{}, ts, p.Sum(), flags, insertedAt)
-	}
+	e.appendPoint(countSpec(sum, base.name), typedKV{}, ts, float64(p.Count()), flags, insertedAt)
+	// Absent sum, min and max still get metadata rows, but no series (metrics §2).
+	sum.name = base.name + ".sum"
+	e.appendPoint(sum, typedKV{}, ts, valueOrNaN(p.HasSum(), p.Sum()), flags, insertedAt)
 	gauge := base
 	gauge.metricType, gauge.temporality = "Gauge", "Unspecified"
-	if p.HasMin() {
-		gauge.name = base.name + ".min"
-		e.appendPoint(gauge, typedKV{}, ts, p.Min(), flags, insertedAt)
-	}
-	if p.HasMax() {
-		gauge.name = base.name + ".max"
-		e.appendPoint(gauge, typedKV{}, ts, p.Max(), flags, insertedAt)
-	}
+	gauge.name = base.name + ".min"
+	e.appendPoint(gauge, typedKV{}, ts, valueOrNaN(p.HasMin(), p.Min()), flags, insertedAt)
+	gauge.name = base.name + ".max"
+	e.appendPoint(gauge, typedKV{}, ts, valueOrNaN(p.HasMax(), p.Max()), flags, insertedAt)
 }
 
 func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoint, insertedAt int64) {
@@ -185,9 +180,7 @@ func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoi
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
 	sum := base
 	sum.metricType, sum.temporality, sum.monotonic = "Sum", "Cumulative", true
-	count := sum
-	count.name, count.unit = base.name+".count", "1"
-	e.appendPoint(count, typedKV{}, ts, float64(p.Count()), flags, insertedAt)
+	e.appendPoint(countSpec(sum, base.name), typedKV{}, ts, float64(p.Count()), flags, insertedAt)
 	sum.name = base.name + ".sum"
 	e.appendPoint(sum, typedKV{}, ts, p.Sum(), flags, insertedAt)
 	quantile := base
@@ -305,7 +298,7 @@ func (e *metricsEncoder) flushMetadata() {
 		c.temporality.Append(r.key.temporality)
 		c.metricName.Append(r.key.metricName)
 		c.description.Append(r.spec.description)
-		c.unit.Append(r.spec.unit)
+		c.unit.Append(r.spec.metaUnit)
 		c.metricType.Append(r.spec.metricType)
 		c.isMonotonic.Append(r.spec.monotonic)
 		c.attrName.Append(r.key.attrName)
@@ -340,6 +333,24 @@ func typedHash(sorted []typedKV) uint64 {
 		add(kv.value)
 	}
 	return h
+}
+
+// countSpec is the .count series: unit 1 in time_series_v4, the metric's unit
+// (or 1 when empty) in metadata (metrics §5).
+func countSpec(sum seriesSpec, name string) seriesSpec {
+	count := sum
+	count.name, count.unit = name+".count", "1"
+	if count.metaUnit == "" {
+		count.metaUnit = "1"
+	}
+	return count
+}
+
+func valueOrNaN(ok bool, v float64) float64 {
+	if !ok {
+		return math.NaN()
+	}
+	return v
 }
 
 func temporalityName(t pmetric.AggregationTemporality) string {

@@ -27,8 +27,8 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 | Sum | `<name>` | `Sum` | `Cumulative` / `Delta` | from the metric | metric unit | point value |
 | Histogram | `<name>.bucket`, one per bound plus `le="+Inf"` | `Histogram` | the histogram's | true | metric unit | **cumulative** count up to the bound, also for delta histograms |
 | | `<name>.count` | `Sum` | the histogram's | true | `1` | count |
-| | `<name>.sum` | `Sum` | the histogram's | true | metric unit | sum; only if the point has a sum |
-| | `<name>.min`, `<name>.max` | `Gauge` | `Unspecified` | false | metric unit | only if the point has them |
+| | `<name>.sum` | `Sum` | the histogram's | true | metric unit | sum; sample and series only if the point has a sum |
+| | `<name>.min`, `<name>.max` | `Gauge` | `Unspecified` | false | metric unit | sample and series only if the point has them |
 | Summary | `<name>.count` | `Sum` | `Cumulative` | true | `1` | count |
 | | `<name>.sum` | `Sum` | `Cumulative` | true | metric unit | sum |
 | | `<name>.quantile`, one per quantile | `Summary` | `Unspecified` | false | metric unit | quantile value |
@@ -38,7 +38,8 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 
 - `le` and `quantile` labels: `strconv.FormatFloat(v, 'f', -1, 64)` (`0.00001`, `1000000`, `1`),
   bucket upper bound `+Inf` [obs `probe.extreme_bounds`, `probe.extreme_quantiles`].
-- **NaN** values: no sample and no series, but the metadata rows are written [obs `probe.nan`].
+- **NaN** values, and a histogram's absent sum, min or max: no sample and no series, but the
+  metadata rows are written [obs `probe.nan`, `probe.histogram_no_minmax`].
 - **No recorded value** (point flag 1): written with value 0 and `flags = 1` [obs `probe.no_value`].
 - Int values become Float64; negative values are kept [obs `probe.cumulative_updown`].
 
@@ -89,7 +90,9 @@ datatype, string value), with:
 - `attr_string_value`: the stringified value;
 - `first_reported_unix_milli` / `last_reported_unix_milli`: minimum and maximum point time in the
   batch [obs `probe.two_points`];
-- description, unit, type and `is_monotonic` of the series.
+- description, unit, type and `is_monotonic` of the series, except that the unit of a `.count`
+  series is the metric's unit, or `1` when that is empty (in `time_series_v4` it is always `1`)
+  [obs `go.gc.pause.count`: `s`; `probe.extreme_bounds.count`: `1`].
 
 The table is an `AggregatingMergeTree` with min/max states, so rows from different batches
 merge.
