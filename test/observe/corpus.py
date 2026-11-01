@@ -400,6 +400,10 @@ def metrics(t0):
              count="0", bucketCounts=[], explicitBounds=[])]}},
         {"name": "probe.exp_cumulative", "exponentialHistogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
              count="2", sum=3.0, scale=0, zeroCount="0", positive={"offset": 0, "bucketCounts": ["1", "1"]})]}},
+        {"name": "probe.extreme_bounds", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+             count="3", sum=1.0, bucketCounts=["1", "1", "1"], explicitBounds=[0.00001, 1000000.0])]}},
+        {"name": "probe.extreme_quantiles", "summary": {"dataPoints": [dict(point, count="1", sum=1.0, quantileValues=[
+             {"quantile": 0.999, "value": 1.0}, {"quantile": 0.00001, "value": 0.5}, {"quantile": 1.0, "value": 2.0}])]}},
         {"name": "probe.dotted-Name_with:chars", "gauge": {"dataPoints": [dict(point, asDouble=6.0)]}},
     ]
     return {"resourceMetrics": [
