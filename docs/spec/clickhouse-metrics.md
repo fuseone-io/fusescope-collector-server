@@ -54,7 +54,7 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 | `unix_milli` (time series) | point time floored to the hour, ms [obs `probe.three_hours_old`] |
 | `flags` | OTLP point flags |
 | `description` | metric description |
-| `labels` | compact JSON, keys sorted, of: resource attributes, scope attributes, `__scope.name__`, `__scope.schema_url__`, `__scope.version__`, point attributes, `le`/`quantile`, `__temporality__` and `__name__`; all values stringified (traces §2.2 stringification) |
+| `labels` | compact JSON, keys sorted, of: resource attributes, scope attributes, `__scope.name__`, `__scope.schema_url__`, `__scope.version__`, point attributes, `le`/`quantile`, `__temporality__` and `__name__`; all values stringified (traces §2.2 stringification). The generated labels (`le`/`quantile`, `__temporality__`, `__name__`, `__scope.*__`) win: an incoming attribute with the same key is dropped from `labels`, `attrs`, `scope_attrs` and metadata, otherwise distinct buckets or quantiles would share one series (deliberate; not observed) |
 | `attrs` | point attributes, `le`/`quantile` and `__temporality__` |
 | `scope_attrs` | `__scope.name__`, `__scope.schema_url__`, `__scope.version__` and the scope attributes |
 | `resource_attrs` | resource attributes |
@@ -100,7 +100,22 @@ datatype, string value), with:
 The table is an `AggregatingMergeTree` with min/max states, so rows from different batches
 merge.
 
-## 6. Still to observe
+## 6. Expansion limits (deliberate difference)
+
+Every derived series carries its own copy of the resource, scope and point attributes (§3), so
+a request of a few MiB can expand into many GiB: a histogram with 10,000 bounds yields 10,005
+series, and 100,000 gauge points with distinct attributes under a 1 MiB resource yield 100,000
+copies of it. The sending queue counts data points, not this expansion. The reference's limits
+were not observed; the exporter enforces its own, on estimated encoded bytes:
+
+- **Per point, 16 MiB**: derived series × (twice the resource, scope and point attribute bytes,
+  plus 256). A point above it is dropped before any row is built; the rest of the batch is
+  written and a warning reports `dropped_points`.
+- **Per batch, 256 MiB**: bytes of the samples, series and metadata rows built so far, after
+  deduplication, so repeated points of the same series cost one series row. Above it, encoding
+  stops, nothing is inserted and the batch fails with a permanent error.
+
+## 7. Still to observe
 
 - a key present both on the resource and on the point (which one `labels` keeps);
 - metric names with characters outside `[A-Za-z0-9._:-]`.

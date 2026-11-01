@@ -5,6 +5,7 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
 	"strconv"
@@ -12,6 +13,19 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.uber.org/zap"
+)
+
+// A point becomes several series, each with a copy of the resource, scope and
+// point attributes, so a small request can expand by orders of magnitude
+// (metrics §6). Sizes are estimates of the encoded column bytes.
+const (
+	defaultMaxPointBytes = 16 << 20
+	defaultMaxBatchBytes = 256 << 20
+	// sampleBytes is one samples_v4 row: five 8-byte columns and three dictionary indexes.
+	sampleBytes = 64
+	// seriesOverhead covers the generated labels and the fixed columns of one series.
+	seriesOverhead = 256
 )
 
 // typedKV is a stringified attribute with its pdata type name and origin.
@@ -60,6 +74,12 @@ type metricsEncoder struct {
 	buf      []byte
 	env      string
 	now      func() time.Time
+	logger   *zap.Logger
+
+	maxPointBytes, maxBatchBytes int
+	resourceBytes, scopeBytes    int
+	// expanded estimates the bytes encoded so far; dropped counts points over maxPointBytes.
+	expanded, dropped int
 }
 
 func newMetricsEncoder() *metricsEncoder {
@@ -70,6 +90,10 @@ func newMetricsEncoder() *metricsEncoder {
 		seenSeries: map[seriesRow]struct{}{},
 		metaIndex:  map[metaKey]int{},
 		now:        time.Now,
+		logger:     zap.NewNop(),
+
+		maxPointBytes: defaultMaxPointBytes,
+		maxBatchBytes: defaultMaxBatchBytes,
 	}
 }
 
@@ -80,13 +104,16 @@ func (e *metricsEncoder) reset() {
 	clear(e.seenSeries)
 	clear(e.metaIndex)
 	e.metaRows = e.metaRows[:0]
+	e.expanded, e.dropped = 0, 0
 }
 
-func (e *metricsEncoder) encode(md pmetric.Metrics) {
+// encode fails, before any insert, when the batch expands beyond maxBatchBytes.
+func (e *metricsEncoder) encode(md pmetric.Metrics) error {
 	e.reset()
 	insertedAt := e.now().UnixMilli()
 	for _, rm := range md.ResourceMetrics().All() {
 		e.resource = typedStrings(e.resource[:0], rm.Resource().Attributes(), "resource")
+		e.resourceBytes = kvBytes(e.resource)
 		e.env = ""
 		if v, ok := rm.Resource().Attributes().Get("deployment.environment"); ok {
 			e.env = valueString(v)
@@ -98,12 +125,34 @@ func (e *metricsEncoder) encode(md pmetric.Metrics) {
 				typedKV{key: "__scope.schema_url__", value: sm.SchemaUrl(), datatype: "Str", origin: "scope"},
 				typedKV{key: "__scope.version__", value: scope.Version(), datatype: "Str", origin: "scope"})
 			e.scope = typedStrings(e.scope, scope.Attributes(), "scope")
+			e.scopeBytes = kvBytes(e.scope)
 			for _, m := range sm.Metrics().All() {
 				e.appendMetric(m, insertedAt)
+				if e.overBudget() {
+					return fmt.Errorf("metrics batch expands beyond %d MiB of ClickHouse rows; lower sending_queue.batch.max_size or the size of the resource attributes", e.maxBatchBytes>>20)
+				}
 			}
 		}
 	}
 	e.flushMetadata()
+	if e.dropped > 0 {
+		e.logger.Warn("dropped metric points whose derived series exceed the size limit",
+			zap.Int("dropped_points", e.dropped), zap.Int("limit_bytes", e.maxPointBytes))
+	}
+	return nil
+}
+
+func (e *metricsEncoder) overBudget() bool { return e.expanded > e.maxBatchBytes }
+
+// fits reports whether a point with the attributes in e.point may expand into
+// series series, and counts it as dropped otherwise.
+func (e *metricsEncoder) fits(series int) bool {
+	perSeries := 2*(e.resourceBytes+e.scopeBytes+kvBytes(e.point)) + seriesOverhead
+	if series*perSeries <= e.maxPointBytes {
+		return true
+	}
+	e.dropped++
+	return false
 }
 
 func (e *metricsEncoder) appendMetric(m pmetric.Metric, insertedAt int64) {
@@ -113,21 +162,33 @@ func (e *metricsEncoder) appendMetric(m pmetric.Metric, insertedAt int64) {
 		spec := base
 		spec.metricType, spec.temporality = "Gauge", "Unspecified"
 		for _, p := range m.Gauge().DataPoints().All() {
+			if e.overBudget() {
+				return
+			}
 			e.appendNumber(spec, p, insertedAt)
 		}
 	case pmetric.MetricTypeSum:
 		spec := base
 		spec.metricType, spec.temporality, spec.monotonic = "Sum", temporalityName(m.Sum().AggregationTemporality()), m.Sum().IsMonotonic()
 		for _, p := range m.Sum().DataPoints().All() {
+			if e.overBudget() {
+				return
+			}
 			e.appendNumber(spec, p, insertedAt)
 		}
 	case pmetric.MetricTypeHistogram:
 		temporality := temporalityName(m.Histogram().AggregationTemporality())
 		for _, p := range m.Histogram().DataPoints().All() {
+			if e.overBudget() {
+				return
+			}
 			e.appendHistogram(base, temporality, p, insertedAt)
 		}
 	case pmetric.MetricTypeSummary:
 		for _, p := range m.Summary().DataPoints().All() {
+			if e.overBudget() {
+				return
+			}
 			e.appendSummary(base, p, insertedAt)
 		}
 	}
@@ -142,11 +203,18 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 		v = p.DoubleValue()
 	}
 	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
+	if !e.fits(1) {
+		return
+	}
 	e.appendPoint(spec, typedKV{}, uint64(p.Timestamp()), v, uint32(p.Flags()), insertedAt)
 }
 
 func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p pmetric.HistogramDataPoint, insertedAt int64) {
 	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
+	// Buckets, +Inf, count, sum, min and max.
+	if !e.fits(p.ExplicitBounds().Len() + 5) {
+		return
+	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
 
 	bucket := base
@@ -177,6 +245,9 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 
 func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoint, insertedAt int64) {
 	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
+	if !e.fits(p.QuantileValues().Len() + 2) {
+		return
+	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
 	sum := base
 	sum.metricType, sum.temporality, sum.monotonic = "Sum", "Cumulative", true
@@ -194,9 +265,14 @@ func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoi
 // metadata. extra is the le/quantile label, if any.
 func (e *metricsEncoder) appendPoint(spec seriesSpec, extra typedKV, ts uint64, value float64, flags uint32, insertedAt int64) {
 	temporalityKV := typedKV{key: "__temporality__", value: spec.temporality, datatype: "Str", origin: "point"}
-	e.labels = append(e.labels[:0], e.resource...)
-	e.labels = append(e.labels, e.scope...)
-	e.labels = append(e.labels, e.point...)
+	e.labels = e.labels[:0]
+	for _, attrs := range [...][]typedKV{e.resource, e.scope, e.point} {
+		for _, kv := range attrs {
+			if extra.key == "" || kv.key != extra.key {
+				e.labels = append(e.labels, kv)
+			}
+		}
+	}
 	if extra.key != "" {
 		e.labels = append(e.labels, extra)
 	}
@@ -224,6 +300,7 @@ func (e *metricsEncoder) appendPoint(spec seriesSpec, extra typedKV, ts uint64, 
 	s.value.Append(value)
 	s.flags.Append(flags)
 	s.insertedAt.Append(insertedAt)
+	e.expanded += sampleBytes
 
 	row := seriesRow{fingerprint: fingerprint, hour: ms / tagBucketMillis * tagBucketMillis}
 	if _, ok := e.seenSeries[row]; ok {
@@ -258,6 +335,9 @@ func (e *metricsEncoder) appendSeries(spec seriesSpec, fingerprint uint64, hour 
 	c.labels.AppendBytes(e.buf)
 
 	for _, kv := range e.point {
+		if extra.key != "" && kv.key == extra.key {
+			continue
+		}
 		c.attrs.Keys.Append(kv.key)
 		c.attrs.Values.Append(kv.value)
 	}
@@ -280,6 +360,7 @@ func (e *metricsEncoder) appendSeries(spec seriesSpec, fingerprint uint64, hour 
 	endRow(c.resourceAttrs)
 	c.normalized.Append(false)
 	c.insertedAt.Append(insertedAt)
+	e.expanded += len(e.buf) + e.resourceBytes + e.scopeBytes + kvBytes(e.point) + len(extra.key) + len(extra.value) + seriesOverhead
 }
 
 func (e *metricsEncoder) addMetadata(spec seriesSpec, kv typedKV, ts uint64) {
@@ -292,6 +373,7 @@ func (e *metricsEncoder) addMetadata(spec seriesSpec, kv typedKV, ts uint64) {
 	}
 	e.metaIndex[k] = len(e.metaRows)
 	e.metaRows = append(e.metaRows, metaRow{spec: spec, key: k, first: ms, last: ms})
+	e.expanded += len(k.metricName) + len(k.attrName) + len(k.value) + len(spec.description) + seriesOverhead
 }
 
 func (e *metricsEncoder) flushMetadata() {
@@ -313,11 +395,25 @@ func (e *metricsEncoder) flushMetadata() {
 }
 
 // typedStrings appends m's attributes, stringified, with their pdata type names.
+// Attributes named like a label every series generates are dropped, so they
+// cannot replace it (metrics §3).
 func typedStrings(dst []typedKV, m pcommon.Map, origin string) []typedKV {
 	for k, v := range m.All() {
+		switch k {
+		case "__name__", "__temporality__", "__scope.name__", "__scope.schema_url__", "__scope.version__":
+			continue
+		}
 		dst = append(dst, typedKV{key: k, value: valueString(v), datatype: v.Type().String(), origin: origin})
 	}
 	return dst
+}
+
+func kvBytes(kvs []typedKV) int {
+	n := 0
+	for _, kv := range kvs {
+		n += len(kv.key) + len(kv.value)
+	}
+	return n
 }
 
 func typedHash(sorted []typedKV) uint64 {
