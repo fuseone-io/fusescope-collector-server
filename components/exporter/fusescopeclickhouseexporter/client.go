@@ -34,6 +34,8 @@ type clickhouseClient struct {
 	pool  atomic.Pointer[chpool.Pool]
 	mu    sync.Mutex
 	stamp fileStamp
+	// do replaces the pool's query in tests.
+	do func(context.Context, ch.Query) error
 }
 
 func (c *clickhouseClient) start(ctx context.Context) error {
@@ -164,6 +166,9 @@ func (c *clickhouseClient) insert(ctx context.Context, q ch.Query, token string)
 	)
 	if token != "" {
 		q.Settings = append(q.Settings, ch.Setting{Key: "insert_deduplication_token", Value: token})
+	}
+	if c.do != nil {
+		return c.do(ctx, q)
 	}
 	pool := c.pool.Load()
 	if pool == nil {

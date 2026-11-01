@@ -10,11 +10,19 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/ch-go"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config/configoptional"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
+	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.uber.org/zap"
+
+	"github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter/internal/metadata"
 )
 
 func TestTLSMinimumIsAlways13(t *testing.T) {
@@ -117,6 +125,7 @@ func TestRequestIdentity(t *testing.T) {
 		t.Error("a finished request kept its identity")
 	}
 	now = now.Add(2 * time.Minute)
+	r.expire()
 	r.get(plog.NewLogs())
 	if len(r.ids) != 1 {
 		t.Errorf("%d identities kept, want only the one after expiry", len(r.ids))
@@ -206,5 +215,72 @@ func TestRequestIdentitiesAreBounded(t *testing.T) {
 	}
 	if len(r.ids) > 3 {
 		t.Errorf("%d identities kept, want at most 3", len(r.ids))
+	}
+}
+
+// An insert that commits but whose reply outlasts the attempt timeout is
+// retried by the exporter helper with the same token, so ClickHouse drops the
+// repeat.
+func TestTimedOutAttemptKeepsItsToken(t *testing.T) {
+	cfg := createDefaultConfig()
+	cfg.Endpoint = "testing.invalid:9440"
+	cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
+	cfg.Timeout = 50 * time.Millisecond
+	cfg.RetryConfig.InitialInterval = 5 * time.Millisecond
+	cfg.RetryConfig.MaxElapsedTime = 5 * time.Second
+	x := newLogsExporter(cfg, zap.NewNop())
+	var tokens []string
+	x.do = func(ctx context.Context, q ch.Query) error {
+		if !strings.Contains(q.Body, "distributed_logs_v2 ") {
+			return nil
+		}
+		for _, s := range q.Settings {
+			if s.Key == "insert_deduplication_token" {
+				tokens = append(tokens, s.Value)
+			}
+		}
+		if len(tokens) == 1 {
+			<-ctx.Done() // committed, but the reply is lost
+			return ctx.Err()
+		}
+		return nil
+	}
+	ctx := context.Background()
+	exp, err := exporterhelper.NewLogs(ctx, exportertest.NewNopSettings(metadata.Type), cfg, x.push, helperOptions(cfg, x.start, x.shutdown)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exp.Start(ctx, componenttest.NewNopHost()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = exp.Shutdown(ctx) })
+	ld := plog.NewLogs()
+	ld.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty().Body().SetStr("once")
+	if err := exp.ConsumeLogs(ctx, ld); err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 2 || tokens[0] != tokens[1] {
+		t.Fatalf("tokens %q, want the retry to reuse the first", tokens)
+	}
+}
+
+// Identities of requests the helper gave up on expire without further pushes.
+func TestAbandonedIdentitiesExpire(t *testing.T) {
+	r := newRequestIDs[plog.Logs](20 * time.Millisecond)
+	r.get(plog.NewLogs())
+	r.start(5 * time.Millisecond)
+	defer r.stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.mu.Lock()
+		n := len(r.ids)
+		r.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d identities still held", n)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

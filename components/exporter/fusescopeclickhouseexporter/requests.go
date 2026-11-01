@@ -44,23 +44,61 @@ type requestIDs[D comparable] struct {
 	ttl time.Duration
 	max int
 	now func() time.Time
+	// quit stops the expiry loop of start.
+	quit chan struct{}
+	wg   sync.WaitGroup
 }
 
 func newRequestIDs[D comparable](ttl time.Duration) *requestIDs[D] {
 	return &requestIDs[D]{ids: map[D]requestID{}, ttl: ttl, max: maxRequestIDs, now: time.Now}
 }
 
+// start expires identities every interval, also while no request arrives:
+// each identity keeps its batch referenced.
+func (r *requestIDs[D]) start(interval time.Duration) {
+	if r.ttl <= 0 || interval <= 0 || r.quit != nil {
+		return
+	}
+	r.quit = make(chan struct{})
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-r.quit:
+				return
+			case <-t.C:
+				r.expire()
+			}
+		}
+	}()
+}
+
+func (r *requestIDs[D]) stop() {
+	if r.quit != nil {
+		close(r.quit)
+		r.wg.Wait()
+		r.quit = nil
+	}
+}
+
+func (r *requestIDs[D]) expire() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	for k, id := range r.ids {
+		if now.After(id.expires) {
+			delete(r.ids, k)
+		}
+	}
+}
+
 func (r *requestIDs[D]) get(d D) requestID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
-	if r.ttl > 0 {
-		for k, id := range r.ids {
-			if now.After(id.expires) {
-				delete(r.ids, k)
-			}
-		}
-	}
 	if id, ok := r.ids[d]; ok {
 		return id
 	}

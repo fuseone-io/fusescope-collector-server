@@ -5,6 +5,7 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -150,7 +151,13 @@ func infallible[E any, D comparable](encode func(E, D)) func(E, D, func() error)
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
+	x.requests.start(min(x.requests.ttl/4, time.Minute))
 	return x.clickhouseClient.start(ctx)
+}
+
+func (x *signalExporter[E, D]) shutdown(ctx context.Context) error {
+	x.requests.stop()
+	return x.clickhouseClient.shutdown(ctx)
 }
 
 func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
@@ -159,8 +166,10 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	}
 	id := x.requests.get(data)
 	err := x.export(ctx, data, id)
-	// A canceled caller ends the helper's retries too.
-	if err == nil || consumererror.IsPermanent(err) || !x.cfg.RetryConfig.Enabled || ctx.Err() != nil {
+	// A canceled caller ends the helper's retries too. An attempt that hit its
+	// timeout (DeadlineExceeded) is retried, possibly after its insert committed,
+	// so it keeps the identity.
+	if err == nil || consumererror.IsPermanent(err) || !x.cfg.RetryConfig.Enabled || errors.Is(ctx.Err(), context.Canceled) {
 		x.requests.done(data)
 	}
 	return err
