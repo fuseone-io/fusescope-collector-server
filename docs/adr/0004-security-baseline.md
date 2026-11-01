@@ -1,6 +1,6 @@
 # 0004 · Security baseline
 
-- Status: accepted
+- Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest policy over OpAMP)
 - Date: 2026-10-31
 
 ## Decision

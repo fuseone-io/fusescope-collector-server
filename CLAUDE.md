@@ -14,8 +14,9 @@ in `docs/adr/` are binding until superseded.
   MPL-2.0 only unmodified. Ask before adding any dependency.
 - **Upstream as a library** (ADR 0001): never vendor or patch upstream code; bump all module
   versions together (`docs/upgrading.md`).
-- **Security baseline** (ADR 0004): TLS 1.3, tokens only from files, no remote change of
-  receivers/exporters/extensions/credentials, debug endpoints off or on `localhost`.
+- **Security baseline** (ADR 0004, amended by ADR 0006): TLS 1.3; outbound credentials only from
+  files; over OpAMP only allow-listed processors and the restrict-only ingest policy, never a
+  change of receivers/exporters/extensions/endpoints; debug endpoints off or on `localhost`.
 
 ## Go
 

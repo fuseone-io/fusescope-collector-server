@@ -26,11 +26,13 @@ It writes to two storage backends ([ADR 0003](docs/adr/0003-clickhouse-and-engin
 | Mode | Runs as | Receives from | Sends to |
 |---|---|---|---|
 | Agent | DaemonSet / host service | local SDKs on `localhost`, node files, kubelet, host | a gateway, over mTLS |
-| Gateway | Deployment behind a load balancer | agents, SDKs, the RUM gateway in the FuseScope backend | ClickHouse, the engine, or both |
+| Gateway | Deployment behind a load balancer | agents, SDKs, browsers and mobile apps (RUM), CI artifact uploads | ClickHouse, the engine, both, or the existing collector during migration |
 
-One binary, two configurations ([`config/`](config/)). The FuseScope backend's RUM gateway
-stays in the backend (FuseScope ADR 0003) and forwards scrubbed OTLP to a gateway; the
-collector never exposes OTLP to browsers or mobile apps.
+One binary, two configurations ([`config/`](config/)). The gateway is the **only** ingest
+surface exposed to the internet ([ADR 0006](docs/adr/0006-single-ingress.md), FuseScope ADR
+0010). It carries OTLP, RUM, profiles and artifact uploads, and the backend serves no ingest
+route. Until this collector writes storage itself, the gateway is an ingress tier in front of
+the existing collector and forwards OTLP to it (FuseScope ADR 0009, phase 1).
 
 ## 3. Components
 
@@ -53,7 +55,11 @@ configuration goes through OpAMP with an allow-list (§5), never an arbitrary UR
 | `signozlogspipeline` | processor | Log pipelines configured in the FuseScope UI |
 | `signozspanmapper`, `signozllmpricing`, `signoz_tail_sampling` | processors | Other UI-managed processing the backend pushes today |
 | APM span metrics | connector | Service RED metrics under the names the Services page queries |
-| `fusescope_opamp` | extension | Applies backend-managed config fragments within an allow-list |
+| `fusescope_opamp` | extension | Applies backend-managed config fragments within an allow-list, and receives the ingest policy (§5) |
+| `ingestauth` | extension | Validates ingestion keys locally against the ingest policy, stamps `fusescope.ingest.key_id`, per-key rate limits ([ADR 0006](docs/adr/0006-single-ingress.md)) |
+| `rumreceiver` | receiver | RUM ingest (`/rum/v1/*`): public keys, per-application CORS, PII scrubbing, moved from the backend gateway |
+| `artifactreceiver` | receiver | Source maps, R8 mappings and debug files, streamed to the backend's internal intake |
+| profiling (`pyroscopereceiver`, `clickhouseprofilesexporter`) | receiver, exporter | Continuous profiling (FuseScope ADR 0008) |
 
 The processors keep the **type names** the FuseScope backend already sends over OpAMP, so the
 backend works with either collector unchanged. Type names are interface identifiers; their
@@ -88,16 +94,20 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
 
 - **Transport:** TLS 1.3 minimum on every listener and exporter that leaves the host; mTLS
   between agents and gateways and from gateways to engine ingesters.
-- **Authentication:** gateways require a bearer token on OTLP ingest; engine-bound exporters
-  present the tenant's `fst_` ingest token. Tokens are read from mounted files
-  (`bearertokenauth.filename`), never from inline config or OpAMP, and are rotated by
-  replacing the file (the engine's rotation overlap keeps both valid meanwhile).
+- **Ingest authentication:** `ingestauth` validates the ingestion key every client presents, for
+  all signals, against SHA-256 verifiers in the ingest policy. Keys are managed in the backend;
+  the policy arrives over OpAMP and is cached on disk ([ADR 0006](docs/adr/0006-single-ingress.md)).
+- **Outbound credentials:** the collector's own credentials (ClickHouse password, the tenant's
+  `fst_` engine token, TLS keys, agent-to-gateway bearer tokens) are read from mounted files,
+  never from inline config or OpAMP, and are rotated by replacing the file (the engine's
+  rotation overlap keeps both valid meanwhile). The only exception is the artifact-intake
+  credential (ADR 0006).
 - **Tenancy:** one engine token per tenant; a shared gateway serving several tenants routes by
   the authenticated identity, never by an attribute in the payload.
-- **Remote configuration (OpAMP):** mTLS to the FuseScope backend; accepted fragments are
-  limited to an allow-list of processor types (§3.2). Receivers, exporters, extensions,
-  endpoints and credentials can never be changed remotely, so a compromised backend cannot
-  redirect telemetry.
+- **Remote configuration (OpAMP):** mTLS to the FuseScope backend. Accepted config fragments are
+  limited to an allow-list of processor types (§3.2). The ingest policy custom message can only
+  restrict what is accepted. Receivers, exporters, extensions, endpoints and outbound
+  credentials can never be changed remotely, so a compromised backend cannot redirect telemetry.
 - **Limits:** gRPC message size, concurrent streams, and request timeouts on receivers; the
   engine enforces attribute and cardinality limits per tenant.
 - **Surface:** health on `localhost` by default with the config endpoint off; `pprof` and
@@ -146,6 +156,7 @@ ClickHouse, never to production tables, and the parity suite compares both table
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
 | 0 · Skeleton | distribution from upstream components, CI, configs, ADRs | done: binary builds, configs validate, licenses and vulnerabilities checked |
+| I · Ingress tier | gateway in front of the existing collector, forwarding OTLP; `ingestauth`, `rumreceiver`, `artifactreceiver`, limits ([ADR 0006](docs/adr/0006-single-ingress.md), [#13](https://github.com/fuseone-io/fusescope-collector-server/issues/13)) | independent of phases 1–5; the demo ingests only through this collector |
 | 1 · Traces in ClickHouse | `fusescope_clickhouse` traces into the existing schema; parity suite | parity green on traces |
 | 2 · Logs in ClickHouse | logs in the same exporter | parity green on logs |
 | 3 · Metrics in ClickHouse | metrics in the same exporter | parity green on metrics |
