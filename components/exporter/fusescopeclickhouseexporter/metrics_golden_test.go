@@ -105,7 +105,7 @@ func encodeObservedMetrics(t *testing.T) *metricsEncoder {
 		t.Fatal(err)
 	}
 	enc := newMetricsEncoder()
-	if err := enc.encode(md); err != nil {
+	if err := enc.encode(md, nil); err != nil {
 		t.Fatal(err)
 	}
 	return enc

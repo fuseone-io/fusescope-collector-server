@@ -5,6 +5,7 @@ package fusescopeclickhouseexporter
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -63,7 +64,33 @@ func BenchmarkEncodeMetrics(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if err := enc.encode(md); err != nil {
+		if err := enc.encode(md, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/point")
+}
+
+// A shared 64 KiB resource over 10,000 points of 10 series: the cost per point
+// must not grow with the resource.
+func BenchmarkEncodeMetricsSharedResource(b *testing.B) {
+	md := pmetric.NewMetrics()
+	rm := md.ResourceMetrics().AppendEmpty()
+	rm.Resource().Attributes().PutStr("k8s.pod.annotations", strings.Repeat("x", 64<<10))
+	g := rm.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	g.SetName("queue.depth")
+	gauge := g.SetEmptyGauge()
+	for i := range 10_000 {
+		p := gauge.DataPoints().AppendEmpty()
+		p.SetTimestamp(pcommon.Timestamp(1_793_483_525_000_000_000 + i))
+		p.SetIntValue(int64(i))
+		p.Attributes().PutInt("queue", int64(i%10))
+	}
+	enc := newMetricsEncoder()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := enc.encode(md, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

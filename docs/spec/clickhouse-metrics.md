@@ -69,11 +69,25 @@ The reference's fingerprint is deterministic but its function is not identifiabl
 observation: FNV-1a, xxHash, CityHash, MurmurHash3, MD5 and SHA-256 over the labels in every
 subset, order and separator tested do not reproduce it [obs: `probe.bare`, 5 labels].
 
-The exporter therefore computes its own: FNV-1a 64 over the labels sorted by key, each as
-`key 0xFF value 0xFF`, the same function as the resource fingerprint (traces §2.1). The values
-`labels` shadows (§3) are hashed too, after the kept one: points that differ only in a point
-attribute shadowed by the resource or scope are distinct series with equal `labels`, as in the
-reference [obs `probe.collide_resource`, `probe.collide_scope`].
+The exporter therefore computes its own, FNV-1a 64 by level. Each string is hashed as
+`bytes 0xFF`:
+
+1. `R` = the string `resource`, then each resource attribute sorted by key, as key and value;
+   `S` = the same for `scope` over `__scope.name__`, `__scope.schema_url__`,
+   `__scope.version__` and the scope attributes sorted by key; `P` = the same for `point` over
+   the point attributes sorted by key.
+2. The fingerprint hashes `R`, `S` and `P` as 8 little-endian bytes each, then the series name,
+   the temporality and, for buckets and quantiles, `le`/`quantile` and its value.
+
+Hashing each level apart keeps two kinds of series distinct, as the reference does:
+
+- series whose `labels` are equal because a point value is shadowed (§3)
+  [obs `probe.collide_resource`, `probe.collide_scope`];
+- series that differ only in the level of an attribute, which also changes `env` and the
+  attribute maps.
+
+`R` and `S` are computed once per resource and scope, so the cost per point does not grow with
+the resource.
 
 - **Queries are unaffected**: the backend joins `samples_v4` to `time_series_v4` on the
   fingerprint and groups by labels, so any consistent function works.
@@ -117,9 +131,13 @@ were not observed; the exporter enforces its own, on estimated encoded bytes:
   bytes + 256), where attribute bytes are those of the resource, scope and point, and 6 is the
   worst case of JSON escaping in `labels`. A point above it is dropped before any row is built;
   the rest of the batch is written and a warning reports `dropped_points`.
-- **Per batch, 256 MiB**: bytes of the samples, series and metadata rows built so far, after
-  deduplication, so repeated points of the same series cost one series row. Above it, encoding
-  stops, also midway through a histogram's buckets or a summary's quantiles, nothing is inserted and the batch fails with a permanent error.
+- **Per chunk, 256 MiB**: bytes of the samples, series and metadata rows built so far, after
+  deduplication, so repeated points of the same series cost one series row. Above it, the rows
+  built so far are inserted into the three tables and encoding goes on with an empty chunk,
+  also midway through a histogram's buckets or a summary's quantiles. A series row written in
+  one chunk is not repeated in a later one. Metadata rows can repeat across chunks; the
+  `AggregatingMergeTree` merges them (§5). A failed chunk fails the batch, which is retried
+  whole.
 
 ## 7. Still to observe
 

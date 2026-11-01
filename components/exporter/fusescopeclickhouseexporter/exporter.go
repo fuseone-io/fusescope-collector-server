@@ -71,10 +71,10 @@ type signalExporter[E any, D any] struct {
 	tables   []table[E]
 	bodies   []string
 	encoders sync.Pool
-	encode   func(E, D) error
+	encode   func(E, D, func() error) error
 }
 
-func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E], newEncoder func() E, encode func(E, D) error) *signalExporter[E, D] {
+func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E], newEncoder func() E, encode func(E, D, func() error) error) *signalExporter[E, D] {
 	x := &signalExporter[E, D]{cfg: cfg, database: database, logger: logger, tables: tables, encode: encode}
 	x.encoders.New = func() any { return newEncoder() }
 	enc := newEncoder()
@@ -101,8 +101,9 @@ func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metric
 	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newEncoder, (*metricsEncoder).encode)
 }
 
-func infallible[E any, D any](encode func(E, D)) func(E, D) error {
-	return func(e E, d D) error {
+// infallible adapts an encoder that builds one chunk and cannot fail.
+func infallible[E any, D any](encode func(E, D)) func(E, D, func() error) error {
+	return func(e E, d D, _ func() error) error {
 		encode(e, d)
 		return nil
 	}
@@ -162,20 +163,23 @@ func (x *signalExporter[E, D]) clientOptions(ctx context.Context) (ch.Options, e
 func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	enc := x.encoders.Get().(E)
 	defer x.encoders.Put(enc)
-	// Encoding fails only on the input itself, which no retry can change.
-	if err := x.encode(enc, data); err != nil {
-		return consumererror.NewPermanent(err)
-	}
-	for i, t := range x.tables {
-		input := t.input(enc)
-		if input[0].Data.Rows() == 0 {
-			continue
+	// The encoder inserts the chunks that fill up and leaves the last to us.
+	insert := func() error {
+		for i, t := range x.tables {
+			input := t.input(enc)
+			if input[0].Data.Rows() == 0 {
+				continue
+			}
+			if err := x.pool.Do(ctx, ch.Query{Body: x.bodies[i], Input: input}); err != nil {
+				return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
+			}
 		}
-		if err := x.pool.Do(ctx, ch.Query{Body: x.bodies[i], Input: input}); err != nil {
-			return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
-		}
+		return nil
 	}
-	return nil
+	if err := x.encode(enc, data, insert); err != nil {
+		return err
+	}
+	return insert()
 }
 
 func classify(err error) error {

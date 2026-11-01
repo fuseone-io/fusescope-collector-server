@@ -5,7 +5,6 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"cmp"
-	"fmt"
 	"math"
 	"slices"
 	"strconv"
@@ -18,10 +17,11 @@ import (
 
 // A point becomes several series, each with a copy of the resource, scope and
 // point attributes, so a small request can expand by orders of magnitude
-// (metrics §6). Sizes are estimates of the encoded column bytes.
+// (metrics §6). Sizes are estimates of the encoded column bytes; a batch is
+// inserted in chunks of about defaultChunkBytes.
 const (
 	defaultMaxPointBytes = 16 << 20
-	defaultMaxBatchBytes = 256 << 20
+	defaultChunkBytes    = 256 << 20
 	// sampleBytes is one samples_v4 row: five 8-byte columns and three dictionary indexes.
 	sampleBytes = 64
 	// seriesOverhead covers the generated labels and the fixed columns of one series.
@@ -61,6 +61,12 @@ type metaRow struct {
 	first, last uint64
 }
 
+// metaGroup is a series of the current scope whose resource and scope metadata
+// rows are already indexed.
+type metaGroup struct {
+	name, temporality string
+}
+
 // metricsEncoder turns pmetric.Metrics into one column block per table. It is
 // reused across batches and is not safe for concurrent use.
 type metricsEncoder struct {
@@ -71,6 +77,9 @@ type metricsEncoder struct {
 	seenSeries map[seriesRow]struct{}
 	metaIndex  map[metaKey]int
 	metaRows   []metaRow
+	// scopeMeta caches the resource and scope metadata rows of each series of
+	// the current scope, so a point does not hash those values again.
+	scopeMeta map[metaGroup][]int
 
 	resource []typedKV
 	scope    []typedKV
@@ -81,10 +90,16 @@ type metricsEncoder struct {
 	now      func() time.Time
 	logger   *zap.Logger
 
-	maxPointBytes, maxBatchBytes int
+	// Fingerprint contributions of the current resource, scope and point (metrics §4).
+	resourceHash, scopeHash, pointHash uint64
+
+	maxPointBytes, maxChunkBytes int
 	resourceBytes, scopeBytes    int
-	// expanded estimates the bytes encoded so far; dropped counts points over maxPointBytes.
+	// expanded estimates the bytes of the current chunk; dropped counts points over maxPointBytes.
 	expanded, dropped int
+	// emit inserts the current chunk; err is its first failure.
+	emit func() error
+	err  error
 }
 
 func newMetricsEncoder() *metricsEncoder {
@@ -94,31 +109,39 @@ func newMetricsEncoder() *metricsEncoder {
 		meta:       newMetadataColumns(),
 		seenSeries: map[seriesRow]struct{}{},
 		metaIndex:  map[metaKey]int{},
+		scopeMeta:  map[metaGroup][]int{},
 		now:        time.Now,
 		logger:     zap.NewNop(),
 
 		maxPointBytes: defaultMaxPointBytes,
-		maxBatchBytes: defaultMaxBatchBytes,
+		maxChunkBytes: defaultChunkBytes,
 	}
 }
 
-func (e *metricsEncoder) reset() {
+// resetChunk empties the column blocks and the metadata of the current chunk.
+// Series rows already written are remembered, so a later chunk does not repeat them.
+func (e *metricsEncoder) resetChunk() {
 	e.samples.input().Reset()
 	e.series.input().Reset()
 	e.meta.input().Reset()
-	clear(e.seenSeries)
 	clear(e.metaIndex)
+	clear(e.scopeMeta)
 	e.metaRows = e.metaRows[:0]
-	e.expanded, e.dropped = 0, 0
+	e.expanded = 0
 }
 
-// encode fails, before any insert, when the batch expands beyond maxBatchBytes.
-func (e *metricsEncoder) encode(md pmetric.Metrics) error {
-	e.reset()
+// encode builds the rows of md. When they exceed maxChunkBytes it calls emit to
+// insert them and continues with an empty chunk; the last chunk is left for the
+// caller. It returns the first error of emit.
+func (e *metricsEncoder) encode(md pmetric.Metrics, emit func() error) error {
+	e.resetChunk()
+	clear(e.seenSeries)
+	e.dropped, e.emit, e.err = 0, emit, nil
 	insertedAt := e.now().UnixMilli()
 	for _, rm := range md.ResourceMetrics().All() {
-		e.resource = typedStrings(e.resource[:0], rm.Resource().Attributes(), "resource")
+		e.resource = sortedByKey(typedStrings(e.resource[:0], rm.Resource().Attributes(), "resource"))
 		e.resourceBytes = kvBytes(e.resource)
+		e.resourceHash = fnvKVs(fnvString(fnvOffset64, "resource"), e.resource)
 		e.env = ""
 		if v, ok := rm.Resource().Attributes().Get("deployment.environment"); ok {
 			e.env = valueString(v)
@@ -130,11 +153,14 @@ func (e *metricsEncoder) encode(md pmetric.Metrics) error {
 				typedKV{key: "__scope.schema_url__", value: sm.SchemaUrl(), datatype: "Str", origin: "scope"},
 				typedKV{key: "__scope.version__", value: scope.Version(), datatype: "Str", origin: "scope"})
 			e.scope = typedStrings(e.scope, scope.Attributes(), "scope")
+			sortedByKey(e.scope[scopeGenerated:])
 			e.scopeBytes = kvBytes(e.scope)
+			e.scopeHash = fnvKVs(fnvString(fnvOffset64, "scope"), e.scope)
+			clear(e.scopeMeta)
 			for _, m := range sm.Metrics().All() {
 				e.appendMetric(m, insertedAt)
-				if e.overBudget() {
-					return fmt.Errorf("metrics batch expands beyond %d MiB of ClickHouse rows; lower sending_queue.batch.max_size or the size of the resource attributes", e.maxBatchBytes>>20)
+				if e.err != nil {
+					return e.err
 				}
 			}
 		}
@@ -147,7 +173,22 @@ func (e *metricsEncoder) encode(md pmetric.Metrics) error {
 	return nil
 }
 
-func (e *metricsEncoder) overBudget() bool { return e.expanded > e.maxBatchBytes }
+// checkpoint inserts the current chunk once it exceeds maxChunkBytes, and
+// reports whether encoding may go on.
+func (e *metricsEncoder) checkpoint() bool {
+	if e.err != nil {
+		return false
+	}
+	if e.expanded <= e.maxChunkBytes || e.emit == nil {
+		return true
+	}
+	e.flushMetadata()
+	if e.err = e.emit(); e.err != nil {
+		return false
+	}
+	e.resetChunk()
+	return true
+}
 
 // fits reports whether a point of metric name with the attributes in e.point
 // may expand into series series, and counts it as dropped otherwise. Each series
@@ -169,7 +210,7 @@ func (e *metricsEncoder) appendMetric(m pmetric.Metric, insertedAt int64) {
 		spec := base
 		spec.metricType, spec.temporality = "Gauge", "Unspecified"
 		for _, p := range m.Gauge().DataPoints().All() {
-			if e.overBudget() {
+			if !e.checkpoint() {
 				return
 			}
 			e.appendNumber(spec, p, insertedAt)
@@ -178,7 +219,7 @@ func (e *metricsEncoder) appendMetric(m pmetric.Metric, insertedAt int64) {
 		spec := base
 		spec.metricType, spec.temporality, spec.monotonic = "Sum", temporalityName(m.Sum().AggregationTemporality()), m.Sum().IsMonotonic()
 		for _, p := range m.Sum().DataPoints().All() {
-			if e.overBudget() {
+			if !e.checkpoint() {
 				return
 			}
 			e.appendNumber(spec, p, insertedAt)
@@ -186,14 +227,14 @@ func (e *metricsEncoder) appendMetric(m pmetric.Metric, insertedAt int64) {
 	case pmetric.MetricTypeHistogram:
 		temporality := temporalityName(m.Histogram().AggregationTemporality())
 		for _, p := range m.Histogram().DataPoints().All() {
-			if e.overBudget() {
+			if !e.checkpoint() {
 				return
 			}
 			e.appendHistogram(base, temporality, p, insertedAt)
 		}
 	case pmetric.MetricTypeSummary:
 		for _, p := range m.Summary().DataPoints().All() {
-			if e.overBudget() {
+			if !e.checkpoint() {
 				return
 			}
 			e.appendSummary(base, p, insertedAt)
@@ -209,7 +250,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 	case pmetric.NumberDataPointValueTypeDouble:
 		v = p.DoubleValue()
 	}
-	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
+	e.setPoint(p.Attributes())
 	if !e.fits(spec.name, 1) {
 		return
 	}
@@ -217,7 +258,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 }
 
 func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p pmetric.HistogramDataPoint, insertedAt int64) {
-	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
+	e.setPoint(p.Attributes())
 	// Buckets, +Inf, count, sum, min and max.
 	if !e.fits(base.name, p.ExplicitBounds().Len()+5) {
 		return
@@ -229,7 +270,7 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 	bounds, counts := p.ExplicitBounds(), p.BucketCounts()
 	var cumulative uint64
 	for i := range bounds.Len() {
-		if e.overBudget() {
+		if !e.checkpoint() {
 			return
 		}
 		if i < counts.Len() {
@@ -254,7 +295,7 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 }
 
 func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoint, insertedAt int64) {
-	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
+	e.setPoint(p.Attributes())
 	if !e.fits(base.name, p.QuantileValues().Len()+2) {
 		return
 	}
@@ -267,11 +308,16 @@ func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoi
 	quantile := base
 	quantile.name, quantile.metricType, quantile.temporality = base.name+".quantile", "Summary", "Unspecified"
 	for _, q := range p.QuantileValues().All() {
-		if e.overBudget() {
+		if !e.checkpoint() {
 			return
 		}
 		e.appendPoint(quantile, typedKV{key: "quantile", value: formatBound(q.Quantile()), datatype: "Str", origin: "point"}, ts, q.Value(), flags, insertedAt)
 	}
+}
+
+func (e *metricsEncoder) setPoint(attrs pcommon.Map) {
+	e.point = sortedByKey(typedStrings(e.point[:0], attrs, "point"))
+	e.pointHash = fnvKVs(fnvString(fnvOffset64, "point"), e.point)
 }
 
 // appendPoint writes one sample of one derived series, its series row and its
@@ -279,12 +325,7 @@ func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoi
 func (e *metricsEncoder) appendPoint(spec seriesSpec, extra typedKV, ts uint64, value float64, flags uint32, insertedAt int64) {
 	// Metadata follows the attribute maps. A series that is not written (NaN, or
 	// an absent sum, min or max) gets only its resource and scope rows (metrics §5).
-	for _, kv := range e.resource {
-		e.addMetadata(spec, kv, ts)
-	}
-	for _, kv := range e.scope {
-		e.addMetadata(spec, kv, ts)
-	}
+	e.addScopeMetadata(spec, ts)
 	if math.IsNaN(value) {
 		return
 	}
@@ -299,20 +340,14 @@ func (e *metricsEncoder) appendPoint(spec seriesSpec, extra typedKV, ts uint64, 
 	}
 	e.addMetadata(spec, temporalityKV, ts)
 
-	// Of equal keys labels keep the first: generated, then resource, scope and
-	// point (metrics §3). The fingerprint also covers the shadowed values, so
-	// points that differ only there stay distinct series (metrics §4).
-	e.labels = append(e.labels[:0], typedKV{key: "__name__", value: spec.name}, temporalityKV)
+	// The fingerprint covers each level apart, so the origin of an attribute and
+	// values that labels shadow both tell series apart (metrics §4).
+	h := fnvUint64(fnvUint64(fnvUint64(fnvOffset64, e.resourceHash), e.scopeHash), e.pointHash)
+	h = fnvString(fnvString(h, spec.name), spec.temporality)
 	if extra.key != "" {
-		e.labels = append(e.labels, extra)
+		h = fnvString(fnvString(h, extra.key), extra.value)
 	}
-	e.labels = append(e.labels, e.scope[:scopeGenerated]...)
-	e.labels = append(e.labels, e.resource...)
-	e.labels = append(e.labels, e.scope[scopeGenerated:]...)
-	e.labels = append(e.labels, e.point...)
-	slices.SortStableFunc(e.labels, func(a, b typedKV) int { return cmp.Compare(a.key, b.key) })
-	fingerprint := typedHash(e.labels)
-	e.labels = slices.CompactFunc(e.labels, func(a, b typedKV) bool { return a.key == b.key })
+	fingerprint := h
 
 	ms := int64(ts / 1e6)
 	s := e.samples
@@ -346,6 +381,18 @@ func (e *metricsEncoder) appendSeries(spec seriesSpec, fingerprint uint64, hour 
 	c.fingerprint.Append(fingerprint)
 	c.unixMilli.Append(hour)
 
+	// Of equal keys labels keep the first: generated, then resource, scope and
+	// point (metrics §3).
+	e.labels = append(e.labels[:0], typedKV{key: "__name__", value: spec.name}, temporality)
+	if extra.key != "" {
+		e.labels = append(e.labels, extra)
+	}
+	e.labels = append(e.labels, e.scope[:scopeGenerated]...)
+	e.labels = append(e.labels, e.resource...)
+	e.labels = append(e.labels, e.scope[scopeGenerated:]...)
+	e.labels = append(e.labels, e.point...)
+	slices.SortStableFunc(e.labels, func(a, b typedKV) int { return cmp.Compare(a.key, b.key) })
+	e.labels = slices.CompactFunc(e.labels, func(a, b typedKV) bool { return a.key == b.key })
 	b := append(e.buf[:0], '{')
 	for i, kv := range e.labels {
 		if i > 0 {
@@ -387,17 +434,42 @@ func (e *metricsEncoder) appendSeries(spec seriesSpec, fingerprint uint64, hour 
 	e.expanded += len(e.buf) + e.resourceBytes + e.scopeBytes + kvBytes(e.point) + len(extra.key) + len(extra.value) + seriesOverhead
 }
 
-func (e *metricsEncoder) addMetadata(spec seriesSpec, kv typedKV, ts uint64) {
+// addScopeMetadata adds the resource and scope metadata rows of spec, looking
+// them up once per series and scope.
+func (e *metricsEncoder) addScopeMetadata(spec seriesSpec, ts uint64) {
+	g := metaGroup{name: spec.name, temporality: spec.temporality}
+	if rows, ok := e.scopeMeta[g]; ok {
+		ms := ts / 1e6
+		for _, i := range rows {
+			r := &e.metaRows[i]
+			r.first, r.last = min(r.first, ms), max(r.last, ms)
+		}
+		return
+	}
+	rows := make([]int, 0, len(e.resource)+len(e.scope))
+	for _, kv := range e.resource {
+		rows = append(rows, e.addMetadata(spec, kv, ts))
+	}
+	for _, kv := range e.scope {
+		rows = append(rows, e.addMetadata(spec, kv, ts))
+	}
+	e.scopeMeta[g] = rows
+}
+
+// addMetadata adds or widens the metadata row of kv and returns its index.
+func (e *metricsEncoder) addMetadata(spec seriesSpec, kv typedKV, ts uint64) int {
 	ms := ts / 1e6
 	k := metaKey{temporality: spec.temporality, metricName: spec.name, attrName: kv.key, attrType: kv.origin, datatype: kv.datatype, value: kv.value}
 	if i, ok := e.metaIndex[k]; ok {
 		r := &e.metaRows[i]
 		r.first, r.last = min(r.first, ms), max(r.last, ms)
-		return
+		return i
 	}
-	e.metaIndex[k] = len(e.metaRows)
+	i := len(e.metaRows)
+	e.metaIndex[k] = i
 	e.metaRows = append(e.metaRows, metaRow{spec: spec, key: k, first: ms, last: ms})
 	e.expanded += len(k.metricName) + len(k.attrName) + len(k.value) + len(spec.description) + seriesOverhead
+	return i
 }
 
 func (e *metricsEncoder) flushMetadata() {
@@ -441,19 +513,33 @@ func kvBytes(kvs []typedKV) int {
 	return n
 }
 
-func typedHash(sorted []typedKV) uint64 {
-	h := uint64(fnvOffset64)
-	add := func(s string) {
-		for i := 0; i < len(s); i++ {
-			h ^= uint64(s[i])
-			h *= fnvPrime64
-		}
-		h ^= 0xFF
+func sortedByKey(kvs []typedKV) []typedKV {
+	slices.SortFunc(kvs, func(a, b typedKV) int { return cmp.Compare(a.key, b.key) })
+	return kvs
+}
+
+// fnvString adds s and a 0xFF separator to the FNV-1a 64 hash h.
+func fnvString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
 		h *= fnvPrime64
 	}
-	for _, kv := range sorted {
-		add(kv.key)
-		add(kv.value)
+	h ^= 0xFF
+	return h * fnvPrime64
+}
+
+func fnvKVs(h uint64, kvs []typedKV) uint64 {
+	for _, kv := range kvs {
+		h = fnvString(fnvString(h, kv.key), kv.value)
+	}
+	return h
+}
+
+func fnvUint64(h, v uint64) uint64 {
+	for range 8 {
+		h ^= v & 0xFF
+		h *= fnvPrime64
+		v >>= 8
 	}
 	return h
 }
