@@ -39,6 +39,12 @@ def attrs(d):
     return [kv(k, v) for k, v in d.items()]
 
 
+def special_floats(prefix):
+    """NaN and infinities, which OTLP/JSON carries as strings."""
+    return [{"key": f"{prefix}.{name}", "value": {"doubleValue": v}}
+            for name, v in (("nan", "NaN"), ("inf", "Infinity"), ("ninf", "-Infinity"))]
+
+
 CHECKOUT = {
     "service.name": "checkout",
     "service.namespace": "shop",
@@ -209,6 +215,8 @@ def probe_spans(t0):
         span(TRACE_C, next(ids), root, "three-hours-old", 1, -3 * 3600 * 1000, -3 * 3600 * 1000 + 5, {
             "old.attr": "old",
         }, t0),
+        span(TRACE_C, next(ids), root, "inverted-times", 1, 60, 55, {"inverted": True}, t0),
+        dict(span(TRACE_C, next(ids), root, "special-floats", 1, 61, 62, {}, t0), attributes=special_floats("f")),
         span(TRACE_C, next(ids), root, "lengths", 1, 50, 51,
              {f"len.{n}": "x" * n for n in (128, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 2048, 4096)}, t0),
         span(TRACE_C, next(ids), root, "strings", 0, 52, 53, {
@@ -343,6 +351,9 @@ def logs(t0):
     no_times = rec(111, 9, "INFO", "no time at all", {})
     del no_times["timeUnixNano"], no_times["observedTimeUnixNano"]
     probes += [no_time, no_times]
+    special = rec(112, 9, "INFO", "special floats", {})
+    special["attributes"] = special_floats("f")
+    probes.append(special)
     first_old = rec(-5 * 3600 * 1000, 9, "INFO", "five hours old, first in batch", {"first.old": "yes"})
     return {"resourceLogs": [
         {"resource": {"attributes": attrs(PROBE_RESOURCES[0])}, "scopeLogs": [{"scope": SCOPE, "logRecords": [first_old]}]},
@@ -390,6 +401,8 @@ def metrics(t0):
          "gauge": {"dataPoints": [dict(earlier, asDouble=4.0), dict(point, asDouble=5.0)]}},
         {"name": "probe.no_value", "gauge": {"dataPoints": [dict(point, flags=1)]}},
         {"name": "probe.nan", "gauge": {"dataPoints": [dict(point, asDouble="NaN")]}},
+        {"name": "probe.inf", "gauge": {"dataPoints": [dict(point, asDouble="Infinity")]}},
+        {"name": "probe.ninf", "gauge": {"dataPoints": [dict(point, asDouble="-Infinity")]}},
         {"name": "probe.monotonic_delta", "sum": {"aggregationTemporality": 1, "isMonotonic": True,
          "dataPoints": [dict(point, asInt="9")]}},
         {"name": "probe.cumulative_updown", "sum": {"aggregationTemporality": 2, "isMonotonic": False,
@@ -419,6 +432,45 @@ def metrics(t0):
     ]}
 
 
+def _varint(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _field(num, wire, payload):
+    tag = _varint(num << 3 | wire)
+    if wire == 2:
+        return tag + _varint(len(payload)) + payload
+    return tag + payload
+
+
+def _string_kv(key, value):
+    any_value = _field(1, 2, value)
+    return _field(1, 2, key.encode()) + _field(2, 2, any_value)
+
+
+def invalid_utf8(t0):
+    """OTLP protobuf payloads with invalid UTF-8, which OTLP/JSON cannot carry."""
+    bad = b"bad \xff\xfe utf8 \xe2\x82"
+    resource = _field(1, 2, _string_kv("service.name", b"probe-utf8"))
+    event = (_field(1, 1, (t0 + 5 * MS).to_bytes(8, "little")) + _field(2, 2, b"exception")
+             + _field(3, 2, _string_kv("exception.message", bad)))
+    span = (_field(1, 2, bytes.fromhex("6e6f74757466386e6f74757466380001")) + _field(2, 2, bytes.fromhex("7574663875746638"))
+            + _field(5, 2, bad) + _field(6, 0, _varint(1))
+            + _field(7, 1, t0.to_bytes(8, "little")) + _field(8, 1, (t0 + 10 * MS).to_bytes(8, "little"))
+            + _field(9, 2, _string_kv("bad.attr", bad)) + _field(11, 2, event))
+    traces = _field(1, 2, _field(1, 2, resource) + _field(2, 2, _field(2, 2, span)))
+    record = (_field(1, 1, (t0 + 7 * MS).to_bytes(8, "little")) + _field(5, 2, _field(1, 2, bad))
+              + _field(6, 2, _string_kv("bad.attr", bad)))
+    logs = _field(1, 2, _field(1, 2, resource) + _field(2, 2, _field(2, 2, record)))
+    return {"traces": traces, "logs": logs}
+
+
 def main():
     t0, out = int(sys.argv[1]), sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -426,6 +478,9 @@ def main():
         with open(os.path.join(out, f"{name}.json"), "w") as f:
             json.dump(build(t0), f, indent=2, sort_keys=True)
             f.write("\n")
+    for name, payload in invalid_utf8(t0).items():
+        with open(os.path.join(out, f"{name}-invalid-utf8.pb"), "wb") as f:
+            f.write(payload)
 
 
 if __name__ == "__main__":
