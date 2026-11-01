@@ -29,6 +29,9 @@ for signal in traces logs metrics; do
   if [ "$code" != 200 ]; then echo "POST /v1/$signal: $code $(cat "$out/$signal.response")" >&2; exit 1; fi
   rm "$out/$signal.response"
 done
+# The protobuf probes go 3s later, past the reference's 1s batch timeout, so they
+# always form a second batch (golden tests replay them as one).
+sleep 3
 # Invalid UTF-8 may be refused; the status is part of the observation.
 utf8_status=""
 for signal in traces logs; do

@@ -29,24 +29,28 @@ var observed = filepath.Join("..", "..", "..", "docs", "spec", "observed", "0.14
 type row = map[string]any
 
 func TestTracesMatchObservedRows(t *testing.T) {
-	enc := encodeObservedCorpus(t)
+	batches := encodeObservedCorpus(t)
 
 	tests := []struct {
 		table  string
-		input  proto.Input
+		input  func(*tracesEncoder) proto.Input
 		key    func(row) string
 		ignore []string
 	}{
-		{"signoz_index_v3", enc.index.input(), func(r row) string { return fmt.Sprint(r["trace_id"], r["span_id"]) }, []string{"inserted_at"}},
-		{"signoz_error_index_v2", enc.errors.input(), func(r row) string { return fmt.Sprint(r["spanID"], r["timestamp"], r["exceptionMessage"]) }, []string{"errorID"}},
-		{"traces_v3_resource", enc.resources.cols.input(), func(r row) string { return fmt.Sprint(r["fingerprint"], r["seen_at_ts_bucket_start"]) }, nil},
-		{"tag_attributes_v2", enc.tags.cols.input(), func(r row) string { return fmt.Sprint(r) }, nil},
-		{"span_attributes_keys", enc.keys.input(), func(r row) string { return fmt.Sprint(r["tagKey"], r["tagType"], r["dataType"]) }, []string{"timestamp"}},
+		{"signoz_index_v3", func(e *tracesEncoder) proto.Input { return e.index.input() }, func(r row) string { return fmt.Sprint(r["trace_id"], r["span_id"]) }, []string{"inserted_at"}},
+		{"signoz_error_index_v2", func(e *tracesEncoder) proto.Input { return e.errors.input() }, func(r row) string { return fmt.Sprint(r["spanID"], r["timestamp"], r["exceptionMessage"]) }, []string{"errorID"}},
+		{"traces_v3_resource", func(e *tracesEncoder) proto.Input { return e.resources.cols.input() }, func(r row) string { return fmt.Sprint(r["fingerprint"], r["seen_at_ts_bucket_start"]) }, nil},
+		{"tag_attributes_v2", func(e *tracesEncoder) proto.Input { return e.tags.cols.input() }, func(r row) string { return fmt.Sprint(r) }, nil},
+		{"span_attributes_keys", func(e *tracesEncoder) proto.Input { return e.keys.input() }, func(r row) string { return fmt.Sprint(r["tagKey"], r["tagType"], r["dataType"]) }, []string{"timestamp"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.table, func(t *testing.T) {
+			var rows []row
+			for _, enc := range batches {
+				rows = append(rows, blockRows(tt.input(enc))...)
+			}
 			want := indexRows(t, readObserved(t, "signoz_traces", tt.table), tt.key, tt.ignore)
-			got := indexRows(t, blockRows(tt.input), tt.key, tt.ignore)
+			got := indexRows(t, rows, tt.key, tt.ignore)
 			compareRows(t, want, got)
 		})
 	}
@@ -74,7 +78,7 @@ func compareRows(t *testing.T, want, got map[string]row) {
 }
 
 func TestErrorIDsAreUUIDv4(t *testing.T) {
-	enc := encodeObservedCorpus(t)
+	enc := encodeObservedCorpus(t)[0]
 	uuid := regexp.MustCompile(`^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$`)
 	for i := range enc.errors.errorID.Rows() {
 		id := enc.errors.errorID.Row(i)
@@ -84,7 +88,9 @@ func TestErrorIDsAreUUIDv4(t *testing.T) {
 	}
 }
 
-func encodeObservedCorpus(t *testing.T) *tracesEncoder {
+// encodeObservedCorpus replays the observed corpus as the reference received
+// it: the JSON corpus, then the protobuf probes as a second batch (test/observe).
+func encodeObservedCorpus(t *testing.T) []*tracesEncoder {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(observed, "corpus", "traces.json"))
 	if err != nil {
@@ -94,20 +100,22 @@ func encodeObservedCorpus(t *testing.T) *tracesEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The protobuf probe reached the reference in the same batch, after the JSON corpus.
 	pb, err := os.ReadFile(filepath.Join(observed, "corpus", "traces-invalid-utf8.pb"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	extra, err := (&ptrace.ProtoUnmarshaler{}).UnmarshalTraces(pb)
+	probes, err := (&ptrace.ProtoUnmarshaler{}).UnmarshalTraces(pb)
 	if err != nil {
 		t.Fatal(err)
 	}
-	extra.ResourceSpans().MoveAndAppendTo(td.ResourceSpans())
-	enc := newTracesEncoder()
-	enc.now = func() time.Time { return time.Unix(0, 0) }
-	enc.encode(td)
-	return enc
+	var batches []*tracesEncoder
+	for _, batch := range []ptrace.Traces{td, probes} {
+		enc := newTracesEncoder()
+		enc.now = func() time.Time { return time.Unix(0, 0) }
+		enc.encode(batch)
+		batches = append(batches, enc)
+	}
+	return batches
 }
 
 func readObserved(t *testing.T, db, table string) []row {
@@ -143,9 +151,15 @@ func indexRows(t *testing.T, rows []row, key func(row) string, ignore []string) 
 				delete(r, c)
 			}
 		}
+		// A row repeated by a later batch (test/observe sends two) is merged, as a
+		// ReplacingMergeTree does: the reference skips keys it already wrote,
+		// the exporter repeats them (traces §7).
 		k := key(r)
-		if _, dup := out[k]; dup {
-			t.Fatalf("duplicate row key %s", k)
+		if prev, dup := out[k]; dup {
+			if !reflect.DeepEqual(prev, r) {
+				t.Fatalf("two rows with key %s:\n %v\n %v", k, prev, r)
+			}
+			continue
 		}
 		out[k] = r
 	}

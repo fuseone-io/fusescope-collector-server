@@ -19,44 +19,43 @@ import (
 )
 
 func TestLogsMatchObservedRows(t *testing.T) {
-	enc := encodeObservedLogs(t)
+	batches := encodeObservedLogs(t)
 	retention := []string{"_retention_days", "_retention_days_cold"}
 
 	tests := []struct {
 		table  string
-		input  proto.Input
+		input  func(*logsEncoder) proto.Input
 		key    func(row) string
 		ignore []string
 	}{
-		{"logs_v2", enc.rows.input(), func(r row) string { return fmt.Sprint(r["body"]) }, append([]string{"id", "inserted_at"}, retention...)},
-		{"logs_v2_resource", enc.resources.cols.input(), func(r row) string { return fmt.Sprint(r["fingerprint"], r["seen_at_ts_bucket_start"]) }, retention},
-		{"tag_attributes_v2", enc.tags.cols.input(), func(r row) string { return fmt.Sprint(r) }, nil},
-		{"logs_attribute_keys", enc.attrKeys.input(), func(r row) string { return fmt.Sprint(r["name"], r["datatype"]) }, []string{"timestamp"}},
-		{"logs_resource_keys", enc.resKeys.input(), func(r row) string { return fmt.Sprint(r["name"], r["datatype"]) }, []string{"timestamp"}},
+		{"logs_v2", func(e *logsEncoder) proto.Input { return e.rows.input() }, func(r row) string { return fmt.Sprint(r["body"]) }, append([]string{"id", "inserted_at"}, retention...)},
+		{"logs_v2_resource", func(e *logsEncoder) proto.Input { return e.resources.cols.input() }, func(r row) string { return fmt.Sprint(r["fingerprint"], r["seen_at_ts_bucket_start"]) }, retention},
+		{"tag_attributes_v2", func(e *logsEncoder) proto.Input { return e.tags.cols.input() }, func(r row) string { return fmt.Sprint(r) }, nil},
+		{"logs_attribute_keys", func(e *logsEncoder) proto.Input { return e.attrKeys.input() }, func(r row) string { return fmt.Sprint(r["name"], r["datatype"]) }, []string{"timestamp"}},
+		{"logs_resource_keys", func(e *logsEncoder) proto.Input { return e.resKeys.input() }, func(r row) string { return fmt.Sprint(r["name"], r["datatype"]) }, []string{"timestamp"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.table, func(t *testing.T) {
 			observedRows := readObserved(t, "signoz_logs", tt.table)
-			clock := observedClock(t)
 			for _, r := range observedRows {
-				// The reference reads the ingest clock per record, the encoder once per batch.
-				if v, ok := r["observed_timestamp"].(float64); ok && v >= clock && v-clock < 1e9 {
-					r["observed_timestamp"] = clock
-				}
 				// body_v2 has a typed path, so ClickHouse renders the "{}" we send as {"message":""}.
 				if reflect.DeepEqual(r["body_v2"], map[string]any{"message": ""}) {
 					r["body_v2"] = map[string]any{}
 				}
 			}
+			var rows []row
+			for _, enc := range batches {
+				rows = append(rows, blockRows(tt.input(enc))...)
+			}
 			want := indexRows(t, observedRows, tt.key, tt.ignore)
-			got := indexRows(t, blockRows(tt.input), tt.key, tt.ignore)
+			got := indexRows(t, rows, tt.key, tt.ignore)
 			compareRows(t, want, got)
 		})
 	}
 }
 
 func TestLogIDsCarryTheRecordTime(t *testing.T) {
-	enc := encodeObservedLogs(t)
+	enc := encodeObservedLogs(t)[0]
 	for i := range enc.rows.id.Rows() {
 		id := enc.rows.id.Row(i)
 		if len(id) != 27 {
@@ -99,9 +98,10 @@ func decodeBase62(t *testing.T, s string) (raw [20]byte) {
 	return raw
 }
 
-// encodeObservedLogs replays the observed corpus with the clock of the observed
-// run, taken from the record that had no timestamp at all.
-func encodeObservedLogs(t *testing.T) *logsEncoder {
+// encodeObservedLogs replays the observed corpus as the reference received it:
+// the JSON corpus, then the protobuf probe as a second batch (test/observe),
+// each with the ingest time the reference gave it.
+func encodeObservedLogs(t *testing.T) []*logsEncoder {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(observed, "corpus", "logs.json"))
 	if err != nil {
@@ -111,34 +111,40 @@ func encodeObservedLogs(t *testing.T) *logsEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The protobuf probe reached the reference in the same batch, after the JSON corpus.
 	pb, err := os.ReadFile(filepath.Join(observed, "corpus", "logs-invalid-utf8.pb"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	extra, err := (&plog.ProtoUnmarshaler{}).UnmarshalLogs(pb)
+	probe, err := (&plog.ProtoUnmarshaler{}).UnmarshalLogs(pb)
 	if err != nil {
 		t.Fatal(err)
 	}
-	extra.ResourceLogs().MoveAndAppendTo(ld.ResourceLogs())
-	now := time.Unix(0, int64(observedClock(t)))
-	enc := newLogsEncoder()
-	enc.now = func() time.Time { return now }
-	enc.encode(ld)
-	return enc
-}
-
-// observedClock is the ingest time of the observed run, taken from the record
-// that had no timestamp at all.
-func observedClock(t *testing.T) float64 {
-	t.Helper()
+	// The JSON record without any time and the probe without an observed time
+	// carry their batch's ingest time.
+	var jsonClock, probeClock float64
 	for _, r := range readObserved(t, "signoz_logs", "logs_v2") {
-		if r["body"] == "no time at all" {
-			return r["timestamp"].(float64)
+		switch body := fmt.Sprint(r["body"]); {
+		case body == "no time at all":
+			jsonClock = r["timestamp"].(float64)
+		case strings.HasPrefix(body, "bad "):
+			probeClock = r["observed_timestamp"].(float64)
 		}
 	}
-	t.Fatal("observed corpus has no record without timestamps")
-	return 0
+	if jsonClock == 0 || probeClock == 0 {
+		t.Fatal("observed corpus lacks the records that show the ingest times")
+	}
+	var batches []*logsEncoder
+	for _, batch := range []struct {
+		ld    plog.Logs
+		clock float64
+	}{{ld, jsonClock}, {probe, probeClock}} {
+		now := time.Unix(0, int64(batch.clock))
+		enc := newLogsEncoder()
+		enc.now = func() time.Time { return now }
+		enc.encode(batch.ld)
+		batches = append(batches, enc)
+	}
+	return batches
 }
 
 func TestLogTimestamps(t *testing.T) {
