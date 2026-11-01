@@ -39,8 +39,9 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 - `le` and `quantile` labels: `strconv.FormatFloat(v, 'f', -1, 64)` (`0.00001`, `1000000`, `1`),
   bucket upper bound `+Inf` [obs `probe.extreme_bounds`, `probe.extreme_quantiles`].
 - **NaN** values, and a histogram's absent sum, min or max: no sample and no series. Their
-  metadata rows are written for the resource, scope and point attributes, but not
-  `__temporality__` [obs `probe.nan`, `probe.histogram_no_minmax`].
+  metadata rows are written for the resource and scope attributes only: not for the point
+  attributes, nor `__temporality__` [obs `probe.nan`, `probe.nan_attrs`,
+  `probe.histogram_no_minmax`, `probe.no_minmax_attrs`].
 - **±Infinity** values are written as they are [obs `probe.inf`, `probe.ninf`].
 - **No recorded value** (point flag 1): written with value 0 and `flags = 1` [obs `probe.no_value`].
 - Int values become Float64; negative values are kept [obs `probe.cumulative_updown`].
@@ -55,9 +56,9 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
 | `unix_milli` (time series) | point time floored to the hour, ms [obs `probe.three_hours_old`] |
 | `flags` | OTLP point flags |
 | `description` | metric description |
-| `labels` | compact JSON, keys sorted, of: resource attributes, scope attributes, `__scope.name__`, `__scope.schema_url__`, `__scope.version__`, point attributes, `le`/`quantile`, `__temporality__` and `__name__`; all values stringified (traces §2.2 stringification). The generated labels (`le`/`quantile`, `__temporality__`, `__name__`, `__scope.*__`) win: an incoming attribute with the same key is dropped from `labels`, `attrs`, `scope_attrs` and metadata, otherwise distinct buckets or quantiles would share one series (deliberate; not observed) |
-| `attrs` | point attributes, `le`/`quantile` and `__temporality__` |
-| `scope_attrs` | `__scope.name__`, `__scope.schema_url__`, `__scope.version__` and the scope attributes |
+| `labels` | compact JSON, keys sorted, of: resource attributes, scope attributes, `__scope.name__`, `__scope.schema_url__`, `__scope.version__`, point attributes, `le`/`quantile`, `__temporality__` and `__name__`; all values stringified (traces §2.2 stringification). Of equal keys it keeps the generated value (`le`/`quantile`, `__temporality__`, `__name__`, `__scope.*__`), then the resource's, the scope's and the point's [obs `probe.collide_*`] |
+| `attrs` | point attributes, `le`/`quantile` and `__temporality__`; the generated `le`/`quantile` and `__temporality__` replace a point attribute of that key, other keys (`__name__`) are kept [obs `probe.collide_le`, `probe.collide_generated`] |
+| `scope_attrs` | `__scope.name__`, `__scope.schema_url__`, `__scope.version__` and the scope attributes; the generated entries replace scope attributes of those keys [obs `probe.collide_*`] |
 | `resource_attrs` | resource attributes |
 | `__normalized` | false |
 | `inserted_at_unix_milli` | wall clock at insert, ms |
@@ -69,8 +70,25 @@ The reference's fingerprint is deterministic but its function is not identifiabl
 observation: FNV-1a, xxHash, CityHash, MurmurHash3, MD5 and SHA-256 over the labels in every
 subset, order and separator tested do not reproduce it [obs: `probe.bare`, 5 labels].
 
-The exporter therefore computes its own: FNV-1a 64 over the labels sorted by key, each as
-`key 0xFF value 0xFF`, the same function as the resource fingerprint (traces §2.1).
+The exporter therefore computes its own, FNV-1a 64 by level. Each string is hashed as
+`bytes 0xFF`:
+
+1. `R` = the string `resource`, then each resource attribute sorted by key, as key and value;
+   `S` = the same for `scope` over `__scope.name__`, `__scope.schema_url__`,
+   `__scope.version__` and the scope attributes sorted by key; `P` = the same for `point` over
+   the point attributes sorted by key.
+2. The fingerprint hashes `R`, `S` and `P` as 8 little-endian bytes each, then the series name,
+   the temporality and, for buckets and quantiles, `le`/`quantile` and its value.
+
+Hashing each level apart keeps two kinds of series distinct, as the reference does:
+
+- series whose `labels` are equal because a point value is shadowed (§3)
+  [obs `probe.collide_resource`, `probe.collide_scope`];
+- series that differ only in the level of an attribute, which also changes `env` and the
+  attribute maps.
+
+`R` and `S` are computed once per resource and scope, so the cost per point does not grow with
+the resource.
 
 - **Queries are unaffected**: the backend joins `samples_v4` to `time_series_v4` on the
   fingerprint and groups by labels, so any consistent function works.
@@ -83,7 +101,8 @@ The exporter therefore computes its own: FNV-1a 64 over the labels sorted by key
 ## 5. `metadata`
 
 One row per batch for each distinct (temporality, metric name, attribute name, attribute type,
-datatype, string value), with:
+datatype, string value) among the entries of the series' `resource_attrs`, `scope_attrs` and
+`attrs` (§3; for series not written, §2), with:
 
 - `attr_type`: `resource`, `scope` (also the three `__scope.*__` entries) or `point` (also
   `__temporality__`, `le`, `quantile`);
@@ -109,14 +128,18 @@ series, and 100,000 gauge points with distinct attributes under a 1 MiB resource
 copies of it. The sending queue counts data points, not this expansion. The reference's limits
 were not observed; the exporter enforces its own, on estimated encoded bytes:
 
-- **Per point, 16 MiB**: derived series × (twice the resource, scope and point attribute bytes,
-  plus 256). A point above it is dropped before any row is built; the rest of the batch is
-  written and a warning reports `dropped_points`.
-- **Per batch, 256 MiB**: bytes of the samples, series and metadata rows built so far, after
-  deduplication, so repeated points of the same series cost one series row. Above it, encoding
-  stops, nothing is inserted and the batch fails with a permanent error.
+- **Per point, 16 MiB**: derived series × (6 × (attribute bytes + metric name) + attribute
+  bytes + 256), where attribute bytes are those of the resource, scope and point, and 6 is the
+  worst case of JSON escaping in `labels`. A point above it is dropped before any row is built;
+  the rest of the batch is written and a warning reports `dropped_points`.
+- **Per chunk, 256 MiB**: bytes of the samples, series and metadata rows built so far, after
+  deduplication, so repeated points of the same series cost one series row. Above it, the rows
+  built so far are inserted into the three tables and encoding goes on with an empty chunk,
+  also midway through a histogram's buckets or a summary's quantiles. A series row written in
+  one chunk is not repeated in a later one. Metadata rows can repeat across chunks; the
+  `AggregatingMergeTree` merges them (§5). A failed chunk fails the batch, which is retried
+  whole.
 
 ## 7. Still to observe
 
-- a key present both on the resource and on the point (which one `labels` keeps);
 - metric names with characters outside `[A-Za-z0-9._:-]`.

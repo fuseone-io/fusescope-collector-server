@@ -429,6 +429,26 @@ def metrics(t0):
                  {"startTimeUnixNano": t(t0, -3 * 3600_000 - 1000), "timeUnixNano": t(t0, -3 * 3600_000), "asDouble": 7.0}]}},
              {"name": "probe.resource_typed", "gauge": {"dataPoints": [dict(point, asDouble=8.0)]}},
          ]}]},
+        # Keys present at two levels, and attributes named like generated labels.
+        {"resource": {"attributes": attrs({"service.name": "probe-collide", "host.name": "gateway", "zone": "resource"})},
+         "scopeMetrics": [{"scope": {"name": "probe-collide", "attributes": attrs({
+             "zone": "scope", "region": "scope", "__scope.name__": "custom"})}, "metrics": [
+             {"name": "probe.collide_resource", "gauge": {"dataPoints": [
+                 dict(point, asDouble=1.0, attributes=attrs({"host.name": "node-a"})),
+                 dict(point, asDouble=2.0, attributes=attrs({"host.name": "node-b"}))]}},
+             {"name": "probe.collide_le", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+                 count="2", sum=1.0, bucketCounts=["1", "1"], explicitBounds=[1.0], attributes=attrs({"le": "custom"}))]}},
+             {"name": "probe.collide_quantile", "summary": {"dataPoints": [dict(point, count="1", sum=1.0, quantileValues=[
+                 {"quantile": 0.5, "value": 1.0}, {"quantile": 0.9, "value": 2.0}], attributes=attrs({"quantile": "custom"}))]}},
+             {"name": "probe.collide_generated", "gauge": {"dataPoints": [dict(point, asDouble=3.0,
+                 attributes=attrs({"__name__": "custom", "__temporality__": "custom"}))]}},
+             {"name": "probe.collide_scope", "gauge": {"dataPoints": [
+                 dict(point, asDouble=4.0, attributes=attrs({"region": "point-a"})),
+                 dict(point, asDouble=5.0, attributes=attrs({"region": "point-b"}))]}},
+             {"name": "probe.nan_attrs", "gauge": {"dataPoints": [dict(point, asDouble="NaN", attributes=attrs({"k": "v"}))]}},
+             {"name": "probe.no_minmax_attrs", "histogram": {"aggregationTemporality": 2, "dataPoints": [dict(point,
+                 count="1", bucketCounts=["1"], explicitBounds=[], attributes=attrs({"k": "v"}))]}},
+         ]}]},
     ]}
 
 

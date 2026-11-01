@@ -82,7 +82,8 @@ code (FuseScope ADR 0001, option 2).
   `pdata` without per-row structs or maps, one `INSERT` per table per batch, LZ4 on the wire,
   bounded concurrency per table, and no `async_insert` dependency.
 - **Idempotent retries:** every insert carries an `insert_deduplication_token` derived from the
-  batch content and the table, with deduplication on for dependent materialized views, so a
+  batch content, the table and, for a metrics batch inserted in chunks, the chunk index (chunks
+  are cut deterministically), with deduplication on for dependent materialized views, so a
   retry after a timeout or a partial failure does not duplicate rows (ClickHouse `Replicated*`
   tables). The parity suite resends its corpus and checks that no table grows.
 - **Backpressure, not loss:** persistent queues (`file_storage`) at the gateway; when the

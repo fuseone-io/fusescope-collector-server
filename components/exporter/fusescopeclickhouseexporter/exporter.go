@@ -6,6 +6,7 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/ClickHouse/ch-go"
@@ -65,12 +66,12 @@ type signalExporter[E any, D any] struct {
 	tables   []table[E]
 	bodies   []string
 	encoders sync.Pool
-	encode   func(E, D) error
+	encode   func(E, D, func() error) error
 	marshal  func(D) ([]byte, error)
 }
 
 func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E],
-	newEncoder func() E, encode func(E, D) error, marshal func(D) ([]byte, error),
+	newEncoder func() E, encode func(E, D, func() error) error, marshal func(D) ([]byte, error),
 ) *signalExporter[E, D] {
 	x := &signalExporter[E, D]{
 		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
@@ -106,8 +107,9 @@ func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metric
 		(&pmetric.ProtoMarshaler{}).MarshalMetrics)
 }
 
-func infallible[E any, D any](encode func(E, D)) func(E, D) error {
-	return func(e E, d D) error {
+// infallible adapts an encoder that builds one chunk and cannot fail.
+func infallible[E any, D any](encode func(E, D)) func(E, D, func() error) error {
+	return func(e E, d D, _ func() error) error {
 		encode(e, d)
 		return nil
 	}
@@ -128,20 +130,30 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	token := batchToken(payload)
 	enc := x.encoders.Get().(E)
 	defer x.encoders.Put(enc)
-	// Encoding fails only on the input itself, which no retry can change.
-	if err := x.encode(enc, data); err != nil {
-		return consumererror.NewPermanent(err)
-	}
-	for i, t := range x.tables {
-		input := t.input(enc)
-		if input[0].Data.Rows() == 0 {
-			continue
+	// The encoder inserts the chunks that fill up and leaves the last to us.
+	// Chunks are cut deterministically, so a retry gives each the same token.
+	chunk := 0
+	insert := func() error {
+		for i, t := range x.tables {
+			input := t.input(enc)
+			if input[0].Data.Rows() == 0 {
+				continue
+			}
+			tableToken := token + "-" + t.name
+			if chunk > 0 {
+				tableToken += "-" + strconv.Itoa(chunk)
+			}
+			if err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, tableToken); err != nil {
+				return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
+			}
 		}
-		if err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, token+"-"+t.name); err != nil {
-			return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
-		}
+		chunk++
+		return nil
 	}
-	return nil
+	if err := x.encode(enc, data, insert); err != nil {
+		return err
+	}
+	return insert()
 }
 
 func classify(err error) error {
