@@ -4,6 +4,7 @@
 {"unix_milli":1793502000000,"tag_key":"attr.empty","tag_type":"tag","tag_data_type":"string","string_value":"","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"attr.int_array","tag_type":"tag","tag_data_type":"string","string_value":"[1,2,3]","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"attr.map","tag_type":"tag","tag_data_type":"string","string_value":"{\"inner\":\"value\",\"n\":1}","number_value":null}
+{"unix_milli":1793502000000,"tag_key":"bad.attr","tag_type":"tag","tag_data_type":"string","string_value":"bad ÿþ utf8 â‚","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"body.kind","tag_type":"tag","tag_data_type":"string","string_value":"array","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"body.kind","tag_type":"tag","tag_data_type":"string","string_value":"bool","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"body.kind","tag_type":"tag","tag_data_type":"string","string_value":"bytes","number_value":null}
@@ -19,6 +20,9 @@
 {"unix_milli":1793502000000,"tag_key":"container.name","tag_type":"resource","tag_data_type":"string","string_value":"inventory","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"deployment.environment","tag_type":"resource","tag_data_type":"string","string_value":"prod","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"exception.type","tag_type":"tag","tag_data_type":"string","string_value":"DiscountExpiredError","number_value":null}
+{"unix_milli":1793502000000,"tag_key":"f.inf","tag_type":"tag","tag_data_type":"float64","string_value":"","number_value":null}
+{"unix_milli":1793502000000,"tag_key":"f.nan","tag_type":"tag","tag_data_type":"float64","string_value":"","number_value":null}
+{"unix_milli":1793502000000,"tag_key":"f.ninf","tag_type":"tag","tag_data_type":"float64","string_value":"","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"first.old","tag_type":"tag","tag_data_type":"string","string_value":"yes","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"host.name","tag_type":"resource","tag_data_type":"string","string_value":"node-1","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"host.name","tag_type":"resource","tag_data_type":"string","string_value":"node-4","number_value":null}
@@ -35,6 +39,7 @@
 {"unix_milli":1793502000000,"tag_key":"scope.n","tag_type":"scope","tag_data_type":"string","string_value":"2","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"service.name","tag_type":"resource","tag_data_type":"string","string_value":"checkout","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"service.name","tag_type":"resource","tag_data_type":"string","string_value":"inventory","number_value":null}
+{"unix_milli":1793502000000,"tag_key":"service.name","tag_type":"resource","tag_data_type":"string","string_value":"probe-utf8","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"service.name","tag_type":"resource","tag_data_type":"string","string_value":"solo","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"service.namespace","tag_type":"resource","tag_data_type":"string","string_value":"shop","number_value":null}
 {"unix_milli":1793502000000,"tag_key":"service.version","tag_type":"resource","tag_data_type":"string","string_value":"1.2.3","number_value":null}

@@ -26,10 +26,10 @@
               "body": {
                 "stringValue": "five hours old, first in batch"
               },
-              "observedTimeUnixNano": "1793484103001000000",
+              "observedTimeUnixNano": "1793487127001000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793484103000000000"
+              "timeUnixNano": "1793487127000000000"
             }
           ],
           "scope": {
@@ -114,11 +114,11 @@
                 "stringValue": "cart loaded"
               },
               "flags": 1,
-              "observedTimeUnixNano": "1793502103006000000",
+              "observedTimeUnixNano": "1793505127006000000",
               "severityNumber": 9,
               "severityText": "INFO",
               "spanId": "b7ad6b7169203331",
-              "timeUnixNano": "1793502103005000000",
+              "timeUnixNano": "1793505127005000000",
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
             {
@@ -140,11 +140,11 @@
                 "stringValue": "discount expired"
               },
               "flags": 1,
-              "observedTimeUnixNano": "1793502103042000000",
+              "observedTimeUnixNano": "1793505127042000000",
               "severityNumber": 17,
               "severityText": "ERROR",
               "spanId": "53995c3f42cd8ad8",
-              "timeUnixNano": "1793502103041000000",
+              "timeUnixNano": "1793505127041000000",
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
             {
@@ -180,10 +180,10 @@
                   ]
                 }
               },
-              "observedTimeUnixNano": "1793502103091000000",
+              "observedTimeUnixNano": "1793505127091000000",
               "severityNumber": 13,
               "severityText": "WARN",
-              "timeUnixNano": "1793502103090000000"
+              "timeUnixNano": "1793505127090000000"
             },
             {
               "attributes": [
@@ -203,18 +203,18 @@
               "body": {
                 "stringValue": "debug without severity text"
               },
-              "observedTimeUnixNano": "1793502103096000000",
+              "observedTimeUnixNano": "1793505127096000000",
               "severityNumber": 5,
-              "timeUnixNano": "1793502103095000000"
+              "timeUnixNano": "1793505127095000000"
             },
             {
               "attributes": [],
               "body": {
                 "stringValue": ""
               },
-              "observedTimeUnixNano": "1793502103097000000",
+              "observedTimeUnixNano": "1793505127097000000",
               "severityNumber": 0,
-              "timeUnixNano": "1793502103096000000"
+              "timeUnixNano": "1793505127096000000"
             }
           ],
           "scope": {
@@ -292,10 +292,10 @@
               "body": {
                 "intValue": "42"
               },
-              "observedTimeUnixNano": "1793502103101000000",
+              "observedTimeUnixNano": "1793505127101000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103100000000"
+              "timeUnixNano": "1793505127100000000"
             },
             {
               "attributes": [
@@ -309,10 +309,10 @@
               "body": {
                 "doubleValue": 2.5
               },
-              "observedTimeUnixNano": "1793502103102000000",
+              "observedTimeUnixNano": "1793505127102000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103101000000"
+              "timeUnixNano": "1793505127101000000"
             },
             {
               "attributes": [
@@ -326,10 +326,10 @@
               "body": {
                 "boolValue": true
               },
-              "observedTimeUnixNano": "1793502103103000000",
+              "observedTimeUnixNano": "1793505127103000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103102000000"
+              "timeUnixNano": "1793505127102000000"
             },
             {
               "attributes": [
@@ -343,10 +343,10 @@
               "body": {
                 "bytesValue": "AAFyYXc="
               },
-              "observedTimeUnixNano": "1793502103104000000",
+              "observedTimeUnixNano": "1793505127104000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103103000000"
+              "timeUnixNano": "1793505127103000000"
             },
             {
               "attributes": [
@@ -381,10 +381,10 @@
                   ]
                 }
               },
-              "observedTimeUnixNano": "1793502103105000000",
+              "observedTimeUnixNano": "1793505127105000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103104000000"
+              "timeUnixNano": "1793505127104000000"
             },
             {
               "attributes": [
@@ -437,10 +437,10 @@
                   ]
                 }
               },
-              "observedTimeUnixNano": "1793502103106000000",
+              "observedTimeUnixNano": "1793505127106000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103105000000"
+              "timeUnixNano": "1793505127105000000"
             },
             {
               "attributes": [
@@ -454,10 +454,10 @@
               "body": {
                 "stringValue": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
               },
-              "observedTimeUnixNano": "1793502103107000000",
+              "observedTimeUnixNano": "1793505127107000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793502103106000000"
+              "timeUnixNano": "1793505127106000000"
             },
             {
               "attributes": [
@@ -546,20 +546,20 @@
               "body": {
                 "stringValue": "<a href=\"x\">&amp;</a> \u00e7\u00e3o \u2713 \u2028 \t tab"
               },
-              "observedTimeUnixNano": "1793502103108000000",
+              "observedTimeUnixNano": "1793505127108000000",
               "severityNumber": 21,
               "severityText": "FATAL",
-              "timeUnixNano": "1793502103107000000"
+              "timeUnixNano": "1793505127107000000"
             },
             {
               "attributes": [],
               "body": {
                 "stringValue": "text only severity"
               },
-              "observedTimeUnixNano": "1793502103109000000",
+              "observedTimeUnixNano": "1793505127109000000",
               "severityNumber": 0,
               "severityText": "Warning",
-              "timeUnixNano": "1793502103108000000"
+              "timeUnixNano": "1793505127108000000"
             },
             {
               "attributes": [
@@ -573,17 +573,17 @@
               "body": {
                 "stringValue": "three hours old"
               },
-              "observedTimeUnixNano": "1793491303001000000",
+              "observedTimeUnixNano": "1793494327001000000",
               "severityNumber": 9,
               "severityText": "INFO",
-              "timeUnixNano": "1793491303000000000"
+              "timeUnixNano": "1793494327000000000"
             },
             {
               "attributes": [],
               "body": {
                 "stringValue": "observed time only"
               },
-              "observedTimeUnixNano": "1793502103111000000",
+              "observedTimeUnixNano": "1793505127111000000",
               "severityNumber": 9,
               "severityText": "INFO"
             },
@@ -594,6 +594,35 @@
               },
               "severityNumber": 9,
               "severityText": "INFO"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "f.nan",
+                  "value": {
+                    "doubleValue": "NaN"
+                  }
+                },
+                {
+                  "key": "f.inf",
+                  "value": {
+                    "doubleValue": "Infinity"
+                  }
+                },
+                {
+                  "key": "f.ninf",
+                  "value": {
+                    "doubleValue": "-Infinity"
+                  }
+                }
+              ],
+              "body": {
+                "stringValue": "special floats"
+              },
+              "observedTimeUnixNano": "1793505127113000000",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "timeUnixNano": "1793505127112000000"
             }
           ],
           "scope": {
