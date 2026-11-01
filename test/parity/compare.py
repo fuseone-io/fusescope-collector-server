@@ -22,6 +22,9 @@ IGNORED = {
     "signoz_logs.logs_resource_keys": {"timestamp"},
     "signoz_metrics.time_series_v4": {"inserted_at_unix_milli"},
     "signoz_metrics.samples_v4": {"inserted_at_unix_milli"},
+    # Fed from samples_v4_agg_5m with anyLast(last): when a series has two 5m rows in one
+    # 30m bucket, the pick depends on the unordered GROUP BY output, in both collectors.
+    "signoz_metrics.samples_v4_agg_30m": {"last"},
 }
 
 # The corpus record without any timestamp: each collector stamps it with its own ingest time.
