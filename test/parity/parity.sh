@@ -25,6 +25,8 @@ ch() {
   [ -n "$body" ] && printf '%s\n' "$body"; return 0
 }
 
+# Start from empty databases, also when a previous local run left containers up.
+docker compose down -v --remove-orphans
 docker compose up -d --build reference-collector candidate-collector
 for port in 13133 23133/health/status; do
   for _ in $(seq 120); do curl -sf "localhost:$port" >/dev/null && break; sleep 2; done
@@ -34,7 +36,10 @@ done
 t0=$(( $(date +%s) * 1000000000 ))
 rm -rf "$out" && mkdir -p "$out/reference" "$out/candidate"
 python3 -I ../observe/corpus.py "$t0" "$out/corpus"
-for port in 14318 24318; do
+# send_corpus PORT posts the whole corpus. Within the 1s flush, each signal
+# reaches the exporter as one batch, so a second call resends the same batches.
+send_corpus() {
+  local port=$1 signal code
   for signal in traces logs metrics; do
     code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
       --data-binary @"$out/corpus/$signal.json" "localhost:$port/v1/$signal")
@@ -45,8 +50,9 @@ for port in 14318 24318; do
       --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:$port/v1/$signal")
     if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal (invalid UTF-8): $code $(cat "$out/response")" >&2; exit 1; fi
   done
-done
-rm -f "$out/response"
+  rm -f "$out/response"
+}
+for port in 14318 24318; do send_corpus "$port"; done
 sleep 20
 
 for side in reference:18123 candidate:28123; do
@@ -61,10 +67,7 @@ python3 -I compare.py "$out" "${tables[@]}" || { echo "parity: differences, see 
 # including materialized-view targets, unchanged.
 counts() { for t in "${tables[@]}"; do echo "$t $(ch 28123 "SELECT count() FROM $t")"; done; }
 counts > "$out/candidate-counts-before.txt"
-for signal in traces logs metrics; do
-  curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' \
-    --data-binary @"$out/corpus/$signal.json" "localhost:24318/v1/$signal"
-done
+send_corpus 24318
 sleep 20
 counts > "$out/candidate-counts-after.txt"
 if ! diff "$out/candidate-counts-before.txt" "$out/candidate-counts-after.txt" >&2; then

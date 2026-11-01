@@ -26,6 +26,9 @@ IGNORED = {
 
 # The corpus record without any timestamp: each collector stamps it with its own ingest time.
 INGEST_TIMED = "no time at all"
+# The protobuf probe record has a time but no observed time, which also gets the ingest time
+# (logs spec §3). Its body is invalid UTF-8, read with surrogateescape.
+OBSERVED_INGEST_TIMED = "bad \udcff\udcfe utf8 \udce2\udc82"
 
 
 def series_labels(out, side):
@@ -50,6 +53,8 @@ def load(path, table, labels):
                 if table == "signoz_logs.logs_v2" and row.get("body") == INGEST_TIMED:
                     for k in ("timestamp", "observed_timestamp", "ts_bucket_start"):
                         row.pop(k, None)
+                if table == "signoz_logs.logs_v2" and row.get("body") == OBSERVED_INGEST_TIMED:
+                    row.pop("observed_timestamp", None)
                 if table.startswith("signoz_metrics."):
                     # The reference also writes span metrics (phase 4); the candidate does not yet.
                     if str(row.get("metric_name", "")).startswith("signoz_"):
