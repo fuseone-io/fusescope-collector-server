@@ -82,7 +82,9 @@ Span attributes [obs span `typed-attributes`]:
 `attributes` (JSON column) holds the same attributes as a nested object, split on `.`, with
 original types (arrays as arrays, bytes as base64). When a key is both a leaf and a prefix of
 another key (`a` and `a.b`), the leaf is absent from the JSON column in either order; the map
-columns keep both [obs spans `strings`, `collision-reversed`]. `attributes_promoted` is always
+columns keep both [obs spans `strings`, `collision-reversed`]. NaN and infinite double
+attributes are dropped everywhere: map columns, JSON column, tags and keys [obs span
+`special-floats`]. `attributes_promoted` is always
 `{}` [obs].
 
 `resource` is the nested form of `resources_string`. `scope` is
@@ -104,7 +106,7 @@ http_method, http_host, db_name, db_operation, has_error, is_remote, inserted_at
 | `trace_state` | as received |
 | `flags` | raw OTLP `flags` (`0x301` → `769`) |
 | `kind` / `kind_string` | 0 `Unspecified`, 1 `Internal`, 2 `Server`, 3 `Client`, 4 `Producer`, 5 `Consumer` |
-| `duration_nano` | end − start |
+| `duration_nano` | end − start in unsigned 64-bit arithmetic: it wraps when end < start (`18446744073704551616` for −5 ms), as the reference does [obs span `inverted-times`] |
 | `status_code` / `status_code_string` | 0 `Unset`, 1 `Ok`, 2 `Error` |
 | `status_message` | as received, for every status code |
 | `has_error` | `status_code == 2` |
@@ -129,6 +131,10 @@ order** wins, whether current or legacy [obs spans `precedence`, `precedence-rev
 
 - `attributeMap` values are stringified and keys are sorted; the field is omitted when the
   event has no attributes.
+- Invalid UTF-8 is stored raw in every String column and map; in JSON text each invalid byte
+  becomes `\ufffd`, which ClickHouse also applies when it parses the JSON columns [obs span
+  `7574663875746638`, sent as protobuf since OTLP/JSON cannot carry it; the collector accepts it
+  with 200].
 - Strings use Go `encoding/json` escaping: `<`, `>`, `&` as `<`, `>`, `&`;
   U+2028/U+2029 escaped; other non-ASCII verbatim [obs span `strings`]. The same applies to
   `links` and to `labels` (§5).

@@ -81,6 +81,10 @@ code (FuseScope ADR 0001, option 2).
 - **ClickHouse exporter:** native protocol through `ch-go`, columnar blocks built straight from
   `pdata` without per-row structs or maps, one `INSERT` per table per batch, LZ4 on the wire,
   bounded concurrency per table, and no `async_insert` dependency.
+- **Idempotent retries:** every insert carries an `insert_deduplication_token` derived from the
+  batch content and the table, with deduplication on for dependent materialized views, so a
+  retry after a timeout or a partial failure does not duplicate rows (ClickHouse `Replicated*`
+  tables). The parity suite resends its corpus and checks that no table grows.
 - **Backpressure, not loss:** persistent queues (`file_storage`) at the gateway; when the
   engine answers `RESOURCE_EXHAUSTED` or ClickHouse is slow, data waits in the queue up to its
   byte bound and then refuses upstream, which agents and SDKs retry.
@@ -99,8 +103,9 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
   the policy arrives over OpAMP and is cached on disk ([ADR 0006](docs/adr/0006-single-ingress.md)).
 - **Outbound credentials:** the collector's own credentials (ClickHouse password, the tenant's
   `fst_` engine token, TLS keys, agent-to-gateway bearer tokens) are read from mounted files,
-  never from inline config or OpAMP, and are rotated by replacing the file (the engine's
-  rotation overlap keeps both valid meanwhile). The only exception is the artifact-intake
+  never from inline config or OpAMP, and are rotated by replacing the file:
+  `fusescope_clickhouse` reconnects when its password file changes, and the engine's rotation
+  overlap keeps both tokens valid meanwhile. The only exception is the artifact-intake
   credential (ADR 0006).
 - **Tenancy:** one engine token per tenant; a shared gateway serving several tenants routes by
   the authenticated identity, never by an attribute in the payload.

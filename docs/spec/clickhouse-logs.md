@@ -51,7 +51,8 @@ scope_version, scope_string, inserted_at`.
 | `scope_string` | scope attributes, all values stringified (int `2` → `"2"`) |
 | `inserted_at` | wall clock at insert, ms |
 
-There is no `attributes` JSON column for logs.
+There is no `attributes` JSON column for logs. Unlike traces, NaN and infinite double attributes
+are kept, in `attributes_number`, the tags and the key table [obs record `special floats`].
 
 ## 4. `tag_attributes_v2`
 
