@@ -1,0 +1,11 @@
+CREATE TABLE signoz_traces.signoz_spans
+(
+    `timestamp` DateTime64(9) CODEC(DoubleDelta, LZ4),
+    `traceID` FixedString(32) CODEC(ZSTD(1)),
+    `model` String CODEC(ZSTD(9))
+)
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toDate(timestamp)
+ORDER BY traceID
+TTL toDateTime(timestamp) + toIntervalSecond(1296000)
+SETTINGS index_granularity = 1024, ttl_only_drop_parts = 1

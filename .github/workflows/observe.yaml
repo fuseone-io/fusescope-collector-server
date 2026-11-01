@@ -1,0 +1,46 @@
+name: observe
+
+# Runs the existing collector as a black box (ADR 0002), sends the deterministic
+# corpus and commits the DDL and rows it produced to docs/spec/observed/.
+on:
+  workflow_dispatch:
+    inputs:
+      reference_version:
+        description: fusescope-otel-collector image tag
+        default: "0.145.0"
+  push:
+    branches:
+      - feat/observe-harness
+    paths:
+      - test/observe/**
+      - .github/workflows/observe.yaml
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      REFERENCE_VERSION: ${{ inputs.reference_version || '0.145.0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Observe
+        run: test/observe/observe.sh "docs/spec/observed/$REFERENCE_VERSION" 2> >(tee observe.err >&2)
+      - name: Report failure
+        if: failure()
+        run: |
+          msg=$( (cat observe.err 2>/dev/null; cd test/observe && docker compose logs --tail 20 reference-collector 2>&1) | tail -60 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=observe::$msg"
+      - name: Commit observations
+        run: |
+          git add docs/spec/observed
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "docs(spec): observe fusescope-otel-collector $REFERENCE_VERSION" || exit 0
+          git push origin HEAD:${{ github.ref_name }}
