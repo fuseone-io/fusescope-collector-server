@@ -18,17 +18,18 @@ func isSpanMetric(r row) bool {
 	return strings.HasPrefix(fmt.Sprint(r["metric_name"]), "signoz_")
 }
 
-// byLabels replaces each row's fingerprint with the labels of its series, since
-// fingerprints differ by design (metrics §4).
+// byLabels replaces each row's fingerprint with the labels and attrs of its
+// series, since fingerprints differ by design (metrics §4). Series with equal
+// labels differ in attrs (probe.collide_resource).
 func byLabels(t *testing.T, rows, series []row) []row {
 	t.Helper()
 	labels := map[string]string{}
 	for _, s := range series {
-		fp := fmt.Sprint(s["fingerprint"])
-		if l, ok := labels[fp]; ok && l != s["labels"] {
-			t.Fatalf("fingerprint %s used by two label sets", fp)
+		fp, id := fmt.Sprint(s["fingerprint"]), fmt.Sprint(s["labels"], s["attrs"])
+		if l, ok := labels[fp]; ok && l != id {
+			t.Fatalf("fingerprint %s used by two series", fp)
 		}
-		labels[fp] = s["labels"].(string)
+		labels[fp] = id
 	}
 	var out []row
 	for _, r := range rows {
@@ -62,7 +63,7 @@ func TestMetricsMatchObservedRows(t *testing.T) {
 		ignore    []string
 	}{
 		{"time_series_v4", byLabels(t, wantSeries, wantSeries), byLabels(t, gotSeries, gotSeries),
-			func(r row) string { return fmt.Sprint(r["labels"]) }, []string{"inserted_at_unix_milli"}},
+			func(r row) string { return fmt.Sprint(r["fingerprint"]) }, []string{"inserted_at_unix_milli"}},
 		{"samples_v4", byLabels(t, readObserved(t, "signoz_metrics", "samples_v4"), wantSeries), byLabels(t, blockRows(enc.samples.input()), gotSeries),
 			func(r row) string { return fmt.Sprint(r["fingerprint"], r["unix_milli"]) }, []string{"inserted_at_unix_milli"}},
 		{"metadata", withoutSpanMetrics(readObserved(t, "signoz_metrics", "metadata")), withoutSpanMetrics(blockRows(enc.meta.input())),
