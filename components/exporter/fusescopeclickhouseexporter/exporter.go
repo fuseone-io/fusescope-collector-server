@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 )
@@ -55,6 +56,12 @@ var logsTables = []table[*logsEncoder]{
 	{"distributed_logs_v2", func(e *logsEncoder) proto.Input { return e.rows.input() }},
 }
 
+var metricsTables = []table[*metricsEncoder]{
+	{"distributed_metadata", func(e *metricsEncoder) proto.Input { return e.meta.input() }},
+	{"distributed_time_series_v4", func(e *metricsEncoder) proto.Input { return e.series.input() }},
+	{"distributed_samples_v4", func(e *metricsEncoder) proto.Input { return e.samples.input() }},
+}
+
 // signalExporter encodes a batch of one signal and inserts one block per table.
 type signalExporter[E any, D any] struct {
 	cfg      *Config
@@ -83,6 +90,10 @@ func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesE
 
 func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
 	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode)
+}
+
+func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metricsEncoder, pmetric.Metrics] {
+	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newMetricsEncoder, (*metricsEncoder).encode)
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
