@@ -31,7 +31,7 @@ INGEST_TIMED = "no time at all"
 def series_labels(out, side):
     """Maps each fingerprint to its labels: metric fingerprints differ by design (metrics spec §4)."""
     labels = {}
-    with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8") as f:
+    with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             if line.strip():
                 row = json.loads(line, strict=False)

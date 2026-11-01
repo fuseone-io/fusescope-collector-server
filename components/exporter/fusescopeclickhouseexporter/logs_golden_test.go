@@ -105,6 +105,16 @@ func encodeObservedLogs(t *testing.T) *logsEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The protobuf probe reached the reference in the same batch, after the JSON corpus.
+	pb, err := os.ReadFile(filepath.Join(observed, "corpus", "logs-invalid-utf8.pb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra, err := (&plog.ProtoUnmarshaler{}).UnmarshalLogs(pb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra.ResourceLogs().MoveAndAppendTo(ld.ResourceLogs())
 	var now time.Time
 	for _, r := range readObserved(t, "signoz_logs", "logs_v2") {
 		if r["body"] == "no time at all" {
