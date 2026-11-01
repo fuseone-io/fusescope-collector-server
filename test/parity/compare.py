@@ -29,6 +29,9 @@ IGNORED = {
 
 # The corpus record without any timestamp: each collector stamps it with its own ingest time.
 INGEST_TIMED = "no time at all"
+# The protobuf probe record has a time but no observed time, which also gets the ingest time
+# (logs spec §3). Its body is invalid UTF-8, read with surrogateescape.
+OBSERVED_INGEST_TIMED = "bad \udcff\udcfe utf8 \udce2\udc82"
 
 
 def series_labels(out, side):
@@ -36,7 +39,7 @@ def series_labels(out, side):
     (metrics spec §4). Labels alone are not enough: two series can share them and differ in
     a shadowed attribute (probe.collide_resource), so the attribute maps are part of it."""
     labels = {}
-    with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8") as f:
+    with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             if line.strip():
                 row = json.loads(line, strict=False)
@@ -56,6 +59,8 @@ def load(path, table, labels):
                 if table == "signoz_logs.logs_v2" and row.get("body") == INGEST_TIMED:
                     for k in ("timestamp", "observed_timestamp", "ts_bucket_start"):
                         row.pop(k, None)
+                if table == "signoz_logs.logs_v2" and row.get("body") == OBSERVED_INGEST_TIMED:
+                    row.pop("observed_timestamp", None)
                 if table.startswith("signoz_metrics."):
                     # The reference also writes span metrics (phase 4); the candidate does not yet.
                     if str(row.get("metric_name", "")).startswith("signoz_"):

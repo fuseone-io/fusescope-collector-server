@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -71,4 +72,47 @@ func BenchmarkEncodeTraces(b *testing.B) {
 		enc.encode(td)
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
+}
+
+func BenchmarkEncodeLogs(b *testing.B) {
+	ld := plog.NewLogs()
+	for r := range 10 {
+		rl := ld.ResourceLogs().AppendEmpty()
+		rl.Resource().Attributes().PutStr("service.name", fmt.Sprintf("svc-%d", r))
+		rl.Resource().Attributes().PutStr("host.name", fmt.Sprintf("node-%d", r))
+		records := rl.ScopeLogs().AppendEmpty().LogRecords()
+		for i := range 1_000 {
+			lr := records.AppendEmpty()
+			lr.SetTimestamp(pcommon.Timestamp(1_793_483_525_000_000_000 + i*1_000_000))
+			lr.SetSeverityText("INFO")
+			lr.SetSeverityNumber(plog.SeverityNumberInfo)
+			lr.Body().SetStr(fmt.Sprintf("request %d served in %d ms", i, i%300))
+			lr.Attributes().PutStr("http.route", "/items/{id}")
+			lr.Attributes().PutInt("http.response.status_code", 200)
+			lr.Attributes().PutStr("tenant.id", fmt.Sprintf("t-%d", i%20))
+		}
+	}
+	enc := newLogsEncoder()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		enc.encode(ld)
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/record")
+}
+
+// TestEncodeMaxBatch encodes a batch at the default sending_queue max_size and
+// checks that reusing the encoder for a smaller batch leaves no rows behind.
+func TestEncodeMaxBatch(t *testing.T) {
+	enc := newTracesEncoder()
+	enc.encode(syntheticTraces(100_000))
+	if got := enc.index.input()[0].Data.Rows(); got != 100_000 {
+		t.Fatalf("index rows = %d, want 100000", got)
+	}
+	enc.encode(syntheticTraces(10))
+	for _, col := range enc.index.input() {
+		if got := col.Data.Rows(); got != 10 {
+			t.Fatalf("column %s has %d rows after reuse, want 10", col.Name, got)
+		}
+	}
 }

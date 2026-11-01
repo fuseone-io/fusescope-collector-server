@@ -29,12 +29,19 @@ for signal in traces logs metrics; do
   if [ "$code" != 200 ]; then echo "POST /v1/$signal: $code $(cat "$out/$signal.response")" >&2; exit 1; fi
   rm "$out/$signal.response"
 done
+# Invalid UTF-8 may be refused; the status is part of the observation.
+utf8_status=""
+for signal in traces logs; do
+  utf8_status+=" $signal=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/x-protobuf' \
+    --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:4318/v1/$signal")"
+done
 sleep 30
 
 {
   echo "t0_unix_nanos: $t0"
   echo "reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:${REFERENCE_VERSION:-0.145.0}"
   echo "clickhouse: $(ch 'SELECT version()')"
+  echo "invalid_utf8_status:$utf8_status"
 } > "$out/run.yaml"
 
 ch "SYSTEM FLUSH LOGS" >/dev/null

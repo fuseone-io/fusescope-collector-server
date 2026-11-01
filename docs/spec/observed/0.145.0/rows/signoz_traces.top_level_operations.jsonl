@@ -1,8 +1,9 @@
-{"name":"GET \/cart","serviceName":"checkout","time":"2026-11-01 05:04:16"}
-{"name":"GET \/legacy","serviceName":"inventory","time":"2026-11-01 05:04:16"}
-{"name":"POST \/charge","serviceName":"payment","time":"2026-11-01 05:04:16"}
-{"name":"orders process","serviceName":"payment","time":"2026-11-01 05:04:16"}
-{"name":"probe-resource","serviceName":"","time":"2026-11-01 05:04:16"}
-{"name":"probe-resource","serviceName":"batch","time":"2026-11-01 05:04:16"}
-{"name":"probe-resource","serviceName":"edge","time":"2026-11-01 05:04:16"}
-{"name":"probe-resource","serviceName":"solo","time":"2026-11-01 05:04:16"}
+{"name":"GET \/cart","serviceName":"checkout","time":"2026-11-01 13:54:14"}
+{"name":"GET \/legacy","serviceName":"inventory","time":"2026-11-01 13:54:14"}
+{"name":"POST \/charge","serviceName":"payment","time":"2026-11-01 13:54:14"}
+{"name":"bad ÿþ utf8 â‚","serviceName":"probe-utf8","time":"2026-11-01 13:54:14"}
+{"name":"orders process","serviceName":"payment","time":"2026-11-01 13:54:14"}
+{"name":"probe-resource","serviceName":"","time":"2026-11-01 13:54:14"}
+{"name":"probe-resource","serviceName":"batch","time":"2026-11-01 13:54:14"}
+{"name":"probe-resource","serviceName":"edge","time":"2026-11-01 13:54:14"}
+{"name":"probe-resource","serviceName":"solo","time":"2026-11-01 13:54:14"}

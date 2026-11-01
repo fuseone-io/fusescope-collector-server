@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - "feat/**"
+      - "fix/**"
     paths:
       - test/observe/**
       - .github/workflows/observe.yaml

@@ -168,6 +168,10 @@ func (e *tracesEncoder) appendIndexRow(res *resourceInfo, scopeJSON string, span
 func (e *tracesEncoder) appendSpanAttributes(m pcommon.Map, t rowTimes) {
 	c := e.index
 	walkLeaves("", m, func(k string, v pcommon.Value) {
+		// The reference drops NaN and infinite span attributes everywhere (traces §2.2).
+		if isNumberNaNOrInf(v) {
+			return
+		}
 		switch dt := leafType(v); dt {
 		case dataFloat64:
 			c.attributesNumber.Keys.Append(k)

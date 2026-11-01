@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/ch-go/proto"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
 
@@ -36,7 +37,12 @@ func TestLogsMatchObservedRows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.table, func(t *testing.T) {
 			observedRows := readObserved(t, "signoz_logs", tt.table)
+			clock := observedClock(t)
 			for _, r := range observedRows {
+				// The reference reads the ingest clock per record, the encoder once per batch.
+				if v, ok := r["observed_timestamp"].(float64); ok && v >= clock && v-clock < 1e9 {
+					r["observed_timestamp"] = clock
+				}
 				// body_v2 has a typed path, so ClickHouse renders the "{}" we send as {"message":""}.
 				if reflect.DeepEqual(r["body_v2"], map[string]any{"message": ""}) {
 					r["body_v2"] = map[string]any{}
@@ -105,17 +111,63 @@ func encodeObservedLogs(t *testing.T) *logsEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var now time.Time
-	for _, r := range readObserved(t, "signoz_logs", "logs_v2") {
-		if r["body"] == "no time at all" {
-			now = time.Unix(0, int64(r["timestamp"].(float64)))
-		}
+	// The protobuf probe reached the reference in the same batch, after the JSON corpus.
+	pb, err := os.ReadFile(filepath.Join(observed, "corpus", "logs-invalid-utf8.pb"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if now.IsZero() {
-		t.Fatal("observed corpus has no record without timestamps")
+	extra, err := (&plog.ProtoUnmarshaler{}).UnmarshalLogs(pb)
+	if err != nil {
+		t.Fatal(err)
 	}
+	extra.ResourceLogs().MoveAndAppendTo(ld.ResourceLogs())
+	now := time.Unix(0, int64(observedClock(t)))
 	enc := newLogsEncoder()
 	enc.now = func() time.Time { return now }
 	enc.encode(ld)
 	return enc
+}
+
+// observedClock is the ingest time of the observed run, taken from the record
+// that had no timestamp at all.
+func observedClock(t *testing.T) float64 {
+	t.Helper()
+	for _, r := range readObserved(t, "signoz_logs", "logs_v2") {
+		if r["body"] == "no time at all" {
+			return r["timestamp"].(float64)
+		}
+	}
+	t.Fatal("observed corpus has no record without timestamps")
+	return 0
+}
+
+func TestLogTimestamps(t *testing.T) {
+	now := time.Unix(0, 9_000)
+	tests := []struct {
+		name                 string
+		ts, observed         uint64
+		wantTS, wantObserved uint64
+	}{
+		{"both", 1_000, 2_000, 1_000, 2_000},
+		{"observed only", 0, 2_000, 2_000, 2_000},
+		{"record time only", 1_000, 0, 1_000, 9_000},
+		{"neither", 0, 0, 9_000, 9_000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ld := plog.NewLogs()
+			lr := ld.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+			lr.SetTimestamp(pcommon.Timestamp(tt.ts))
+			lr.SetObservedTimestamp(pcommon.Timestamp(tt.observed))
+			enc := newLogsEncoder()
+			enc.now = func() time.Time { return now }
+			enc.encode(ld)
+			if got := enc.rows.timestamp.Row(0); got != tt.wantTS {
+				t.Errorf("timestamp = %d, want %d", got, tt.wantTS)
+			}
+			if got := enc.rows.observedTimestamp.Row(0); got != tt.wantObserved {
+				t.Errorf("observed_timestamp = %d, want %d", got, tt.wantObserved)
+			}
+		})
+	}
 }

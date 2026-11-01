@@ -353,3 +353,29 @@ func TestFingerprintKeepsOrigin(t *testing.T) {
 		t.Error("both series have one fingerprint")
 	}
 }
+
+// A retry encodes the batch again and must cut the same chunks, since each
+// chunk's deduplication token carries its index.
+func TestChunksAreDeterministic(t *testing.T) {
+	md := expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
+		addHistogram(ms, "h", 2_000)
+		addGauges(ms, "g", 500, 1_000, 1)
+	})
+	cut := func() []int {
+		enc := newMetricsEncoder()
+		enc.maxChunkBytes = 256 << 10
+		var sizes []int
+		emit := func() error {
+			sizes = append(sizes, enc.samples.value.Rows(), enc.series.labels.Rows(), enc.meta.attrName.Rows())
+			return nil
+		}
+		if err := enc.encode(md, emit); err != nil {
+			t.Fatal(err)
+		}
+		return append(sizes, enc.samples.value.Rows(), enc.series.labels.Rows(), enc.meta.attrName.Rows())
+	}
+	first, second := cut(), cut()
+	if len(first) < 6 || !slices.Equal(first, second) {
+		t.Errorf("chunks %v and %v, want the same several chunks", first, second)
+	}
+}

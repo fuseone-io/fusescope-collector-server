@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ClickHouse/ch-go/proto"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -92,6 +94,16 @@ func encodeObservedCorpus(t *testing.T) *tracesEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The protobuf probe reached the reference in the same batch, after the JSON corpus.
+	pb, err := os.ReadFile(filepath.Join(observed, "corpus", "traces-invalid-utf8.pb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra, err := (&ptrace.ProtoUnmarshaler{}).UnmarshalTraces(pb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra.ResourceSpans().MoveAndAppendTo(td.ResourceSpans())
 	enc := newTracesEncoder()
 	enc.now = func() time.Time { return time.Unix(0, 0) }
 	enc.encode(td)
@@ -175,13 +187,13 @@ func cell(c proto.ColInput, i int) any {
 	case *proto.ColInt8:
 		return float64(c.Row(i))
 	case *proto.ColFloat64:
-		return c.Row(i)
+		return jsonFloat(c.Row(i))
 	case *proto.ColBool:
 		return c.Row(i)
 	case *proto.ColStr:
-		return c.Row(i)
+		return asJSONText(c.Row(i))
 	case *proto.ColLowCardinality[string]:
-		return c.Row(i)
+		return asJSONText(c.Row(i))
 	case *proto.ColEnum:
 		return c.Row(i)
 	case *proto.ColFixedStr32:
@@ -193,7 +205,7 @@ func cell(c proto.ColInput, i int) any {
 		return c.Row(i).UTC().Format(time.DateTime)
 	case *proto.ColNullable[float64]:
 		if v := c.Row(i); v.Set {
-			return v.Value
+			return jsonFloat(v.Value)
 		}
 		return nil
 	case *proto.ColJSONStr:
@@ -201,17 +213,52 @@ func cell(c proto.ColInput, i int) any {
 	case *proto.ColArr[string]:
 		out := []any{}
 		for _, s := range c.Row(i) {
-			out = append(out, s)
+			out = append(out, asJSONText(s))
 		}
 		return out
 	case *proto.ColMap[string, string]:
-		return mapRow(c.Row(i))
+		out := map[string]any{}
+		for k, v := range c.Row(i) {
+			out[asJSONText(k)] = asJSONText(v)
+		}
+		return out
 	case *proto.ColMap[string, float64]:
-		return mapRow(c.Row(i))
+		out := map[string]any{}
+		for k, v := range c.Row(i) {
+			out[k] = jsonFloat(v)
+		}
+		return out
 	case *proto.ColMap[string, bool]:
 		return mapRow(c.Row(i))
 	}
 	panic(fmt.Sprintf("cell: unsupported column %T", c))
+}
+
+// asJSONText replaces each invalid UTF-8 byte with U+FFFD, as encoding/json
+// does when it reads the observed rows.
+func asJSONText(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b.WriteRune(utf8.RuneError)
+		} else {
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// jsonFloat renders NaN and infinities as ClickHouse's JSON output does: null.
+func jsonFloat(f float64) any {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil
+	}
+	return f
 }
 
 func mapRow[V any](m map[string]V) map[string]any {

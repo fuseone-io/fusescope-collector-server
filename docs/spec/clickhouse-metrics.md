@@ -42,6 +42,7 @@ Each OTLP point becomes one or more series, each with a name, type, temporality 
   metadata rows are written for the resource and scope attributes only: not for the point
   attributes, nor `__temporality__` [obs `probe.nan`, `probe.nan_attrs`,
   `probe.histogram_no_minmax`, `probe.no_minmax_attrs`].
+- **±Infinity** values are written as they are [obs `probe.inf`, `probe.ninf`].
 - **No recorded value** (point flag 1): written with value 0 and `flags = 1` [obs `probe.no_value`].
 - Int values become Float64; negative values are kept [obs `probe.cumulative_updown`].
 
