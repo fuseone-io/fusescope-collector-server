@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/proto"
@@ -61,23 +62,34 @@ var metricsTables = []table[*metricsEncoder]{
 }
 
 // signalExporter encodes a batch of one signal and inserts one block per table.
-type signalExporter[E any, D any] struct {
+type signalExporter[E attempter, D comparable] struct {
 	*clickhouseClient
 	tables   []table[E]
 	bodies   []string
 	encoders sync.Pool
 	encode   func(E, D, func() error) error
-	marshal  func(D) ([]byte, error)
+	requests *requestIDs[D]
 }
 
-func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E],
-	newEncoder func() E, encode func(E, D, func() error) error, marshal func(D) ([]byte, error),
+// attempter is an encoder that takes the ingest time and the ID generator of
+// one export request, so every retry encodes the same rows.
+type attempter interface {
+	setAttempt(now time.Time, random func([]byte))
+}
+
+func newSignalExporter[E attempter, D comparable](cfg *Config, database string, logger *zap.Logger, tables []table[E],
+	newEncoder func() E, encode func(E, D, func() error) error,
 ) *signalExporter[E, D] {
+	// A request is retried at most for max_elapsed_time, each attempt bounded by timeout.
+	var ttl time.Duration
+	if cfg.RetryConfig.MaxElapsedTime > 0 {
+		ttl = cfg.RetryConfig.MaxElapsedTime + cfg.Timeout + time.Minute
+	}
 	x := &signalExporter[E, D]{
 		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
 		tables:           tables,
 		encode:           encode,
-		marshal:          marshal,
+		requests:         newRequestIDs[D](ttl),
 	}
 	x.encoders.New = func() any { return newEncoder() }
 	enc := newEncoder()
@@ -88,13 +100,11 @@ func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.L
 }
 
 func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
-	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, infallible((*tracesEncoder).encode),
-		(&ptrace.ProtoMarshaler{}).MarshalTraces)
+	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, infallible((*tracesEncoder).encode))
 }
 
 func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
-	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, infallible((*logsEncoder).encode),
-		(&plog.ProtoMarshaler{}).MarshalLogs)
+	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, infallible((*logsEncoder).encode))
 }
 
 func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metricsEncoder, pmetric.Metrics] {
@@ -103,12 +113,11 @@ func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metric
 		e.logger = logger
 		return e
 	}
-	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newEncoder, (*metricsEncoder).encode,
-		(&pmetric.ProtoMarshaler{}).MarshalMetrics)
+	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newEncoder, (*metricsEncoder).encode)
 }
 
 // infallible adapts an encoder that builds one chunk and cannot fail.
-func infallible[E any, D any](encode func(E, D)) func(E, D, func() error) error {
+func infallible[E any, D comparable](encode func(E, D)) func(E, D, func() error) error {
 	return func(e E, d D, _ func() error) error {
 		encode(e, d)
 		return nil
@@ -123,13 +132,22 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	if err := x.refresh(ctx); err != nil {
 		return err
 	}
-	payload, err := x.marshal(data)
-	if err != nil {
-		return consumererror.NewPermanent(fmt.Errorf("marshal batch for its deduplication token: %w", err))
+	id := x.requests.get(data)
+	err := x.export(ctx, data, id)
+	if err == nil || consumererror.IsPermanent(err) || !x.cfg.RetryConfig.Enabled {
+		x.requests.done(data)
 	}
-	token := batchToken(payload)
+	return err
+}
+
+// export encodes and inserts one attempt of request id. Its token identifies
+// the request, not the content: equal telemetry sent twice is written twice,
+// while a retry is deduplicated (DESIGN §4).
+func (x *signalExporter[E, D]) export(ctx context.Context, data D, id requestID) error {
 	enc := x.encoders.Get().(E)
 	defer x.encoders.Put(enc)
+	enc.setAttempt(id.started, id.random())
+	token := id.token()
 	// The encoder inserts the chunks that fill up and leaves the last to us.
 	// Chunks are cut deterministically, so a retry gives each the same token.
 	chunk := 0

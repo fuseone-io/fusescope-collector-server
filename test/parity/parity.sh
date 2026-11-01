@@ -74,14 +74,18 @@ for side in reference:18123 candidate:28123; do
 done
 python3 -I compare.py "$out" "${tables[@]}" || { echo "parity: differences, see report" >&2; exit 1; }
 
-# A retry resends the same batch: the deduplication token must keep every table,
-# including materialized-view targets, unchanged.
-counts() { for t in "${tables[@]}"; do echo "$t $(ch 28123 "SELECT count() FROM $t")"; done; }
-counts > "$out/candidate-counts-before.txt"
-send_corpus 24318
+# Sending equal telemetry again is a new request, not a retry: both collectors
+# must write it again. Retries of one request are deduplicated (unit tests of the
+# exporter); MergeTree tables are counted, as Replacing ones merge repeats.
+merge_tables=(signoz_traces.signoz_index_v3 signoz_traces.signoz_error_index_v2 signoz_logs.logs_v2 signoz_metrics.samples_v4)
+counts() { for t in "${merge_tables[@]}"; do echo "$t $(ch "$1" "SELECT count() FROM $t")"; done; }
+for port in 18123 28123; do counts $port > "$out/counts-before-$port.txt"; done
+send_corpus 14318 24318
 sleep 20
-counts > "$out/candidate-counts-after.txt"
-if ! diff "$out/candidate-counts-before.txt" "$out/candidate-counts-after.txt" >&2; then
-  echo "retry: resending the same batch added rows" >&2
-  exit 1
-fi
+for port in 18123 28123; do
+  counts $port > "$out/counts-after-$port.txt"
+  if ! awk 'NR == FNR { before[$1] = $2; next } $2 != 2 * before[$1] { print "resend: " FILENAME ": " $1 " has " $2 " rows, want " 2 * before[$1]; bad = 1 } END { exit bad }' \
+      "$out/counts-before-$port.txt" "$out/counts-after-$port.txt" >&2; then
+    exit 1
+  fi
+done

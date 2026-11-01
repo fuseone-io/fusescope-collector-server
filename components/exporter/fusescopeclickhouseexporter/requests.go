@@ -1,0 +1,73 @@
+// Copyright FuseOne
+// SPDX-License-Identifier: Apache-2.0
+
+package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter"
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	mathrand "math/rand/v2"
+	"sync"
+	"time"
+)
+
+// requestID identifies one export request across its retries. The exporter
+// helper retries a request by passing the same pdata value again, so the value
+// itself is the key; equal content sent twice is two requests.
+type requestID struct {
+	nonce   [16]byte
+	started time.Time
+	expires time.Time
+}
+
+// token is the base of the request's insert_deduplication_token.
+func (id requestID) token() string { return hex.EncodeToString(id.nonce[:]) }
+
+// random returns the request's ID generator. Every attempt replays the same
+// stream, so a retry rebuilds the same random IDs.
+func (id requestID) random() func([]byte) {
+	rng := mathrand.NewChaCha8(sha256.Sum256(id.nonce[:]))
+	return func(b []byte) { _, _ = rng.Read(b) }
+}
+
+// requestIDs holds the identities of requests that may still be retried.
+// Identities older than ttl are dropped, as the exporter helper has given up
+// on them; ttl 0 keeps them until done.
+type requestIDs[D comparable] struct {
+	mu  sync.Mutex
+	ids map[D]requestID
+	ttl time.Duration
+	now func() time.Time
+}
+
+func newRequestIDs[D comparable](ttl time.Duration) *requestIDs[D] {
+	return &requestIDs[D]{ids: map[D]requestID{}, ttl: ttl, now: time.Now}
+}
+
+func (r *requestIDs[D]) get(d D) requestID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	if r.ttl > 0 {
+		for k, id := range r.ids {
+			if now.After(id.expires) {
+				delete(r.ids, k)
+			}
+		}
+	}
+	if id, ok := r.ids[d]; ok {
+		return id
+	}
+	id := requestID{started: now, expires: now.Add(r.ttl)}
+	_, _ = rand.Read(id.nonce[:])
+	r.ids[d] = id
+	return id
+}
+
+// done forgets a request that succeeded or will not be retried.
+func (r *requestIDs[D]) done(d D) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.ids, d)
+}

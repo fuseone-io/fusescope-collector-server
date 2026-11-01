@@ -29,6 +29,12 @@ type logsEncoder struct {
 	random func([]byte)
 }
 
+// setAttempt fixes the ingest time and the random IDs of the next encode.
+func (e *logsEncoder) setAttempt(now time.Time, random func([]byte)) {
+	e.now = func() time.Time { return now }
+	e.random = random
+}
+
 func newLogsEncoder() *logsEncoder {
 	return &logsEncoder{
 		rows:      newLogColumns(),

@@ -81,11 +81,15 @@ code (FuseScope ADR 0001, option 2).
 - **ClickHouse exporter:** native protocol through `ch-go`, columnar blocks built straight from
   `pdata` without per-row structs or maps, one `INSERT` per table per batch, LZ4 on the wire,
   bounded concurrency per table, and no `async_insert` dependency.
-- **Idempotent retries:** every insert carries an `insert_deduplication_token` derived from the
-  batch content, the table and, for a metrics batch inserted in chunks, the chunk index (chunks
-  are cut deterministically), with deduplication on for dependent materialized views, so a
-  retry after a timeout or a partial failure does not duplicate rows (ClickHouse `Replicated*`
-  tables). The parity suite resends its corpus and checks that no table grows.
+- **Idempotent retries:** every insert carries an `insert_deduplication_token` made of a
+  random identity of the export request, kept across its retries, the table and, for a metrics
+  batch inserted in chunks, the chunk index (chunks are cut deterministically). Deduplication is
+  on for dependent materialized views, so a retry after a timeout or a partial failure does not
+  duplicate rows (ClickHouse `Replicated*` tables). Every attempt also reuses the request's
+  ingest time and a random-ID stream seeded by its identity, so a retry rebuilds the same rows
+  and each sharded row goes to the same shard. Equal telemetry sent twice is two requests and is
+  written twice; the parity suite checks that. A request restored from a persistent queue after
+  a restart gets a new identity.
 - **Backpressure, not loss:** persistent queues (`file_storage`) at the gateway; when the
   engine answers `RESOURCE_EXHAUSTED` or ClickHouse is slow, data waits in the queue up to its
   byte bound and then refuses upstream, which agents and SDKs retry.

@@ -107,6 +107,11 @@ type metricsEncoder struct {
 	err  error
 }
 
+// setAttempt fixes the ingest time of the next encode.
+func (e *metricsEncoder) setAttempt(now time.Time, _ func([]byte)) {
+	e.now = func() time.Time { return now }
+}
+
 func newMetricsEncoder() *metricsEncoder {
 	return &metricsEncoder{
 		samples:    newSampleColumns(),

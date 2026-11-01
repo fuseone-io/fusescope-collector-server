@@ -5,10 +5,9 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -45,11 +44,10 @@ func (c *clickhouseClient) start(ctx context.Context) error {
 
 // dial creates a pool from the current configuration; c.mu must be held.
 func (c *clickhouseClient) dial(ctx context.Context) error {
-	opts, err := c.clientOptions(ctx)
+	opts, stamp, err := c.options(ctx)
 	if err != nil {
 		return err
 	}
-	stamp, _ := c.passwordStamp()
 	pool, err := chpool.New(ctx, chpool.Options{ClientOptions: opts, MaxConns: c.cfg.MaxConnections})
 	if err != nil {
 		return fmt.Errorf("create ClickHouse pool: %w", err)
@@ -96,7 +94,34 @@ func (c *clickhouseClient) refresh(ctx context.Context) error {
 }
 
 func (c *clickhouseClient) clientOptions(ctx context.Context) (ch.Options, error) {
+	opts, _, err := c.options(ctx)
+	return opts, err
+}
+
+// readPassword reads the password file and stamps the file it read, from the
+// same open file: a replacement right after the read changes the stamp seen by
+// the next refresh.
+func readPassword(path string) (string, fileStamp, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fileStamp{}, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", fileStamp{}, err
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return "", fileStamp{}, err
+	}
+	return strings.TrimRight(string(b), "\r\n"), fileStamp{modTime: fi.ModTime(), size: fi.Size()}, nil
+}
+
+// options builds the client options and the stamp of the password file they hold.
+func (c *clickhouseClient) options(ctx context.Context) (ch.Options, fileStamp, error) {
 	cfg := c.cfg
+	var stamp fileStamp
 	opts := ch.Options{
 		Logger:      c.logger,
 		Address:     cfg.Endpoint,
@@ -108,30 +133,29 @@ func (c *clickhouseClient) clientOptions(ctx context.Context) (ch.Options, error
 		ReadTimeout: cfg.Timeout,
 	}
 	if cfg.PasswordFile != "" {
-		b, err := os.ReadFile(cfg.PasswordFile)
+		password, s, err := readPassword(cfg.PasswordFile)
 		if err != nil {
-			return opts, fmt.Errorf("read password_file: %w", err)
+			return opts, stamp, fmt.Errorf("read password_file: %w", err)
 		}
-		opts.Password = strings.TrimRight(string(b), "\r\n")
+		opts.Password, stamp = password, s
 	}
 	if cfg.TLS.Insecure {
 		c.logger.Warn("TLS to ClickHouse is disabled; credentials and telemetry travel in clear text", zap.String("endpoint", cfg.Endpoint))
-		return opts, nil
+		return opts, stamp, nil
 	}
 	tlsCfg, err := cfg.TLS.LoadTLSConfig(ctx)
 	if err != nil {
-		return opts, fmt.Errorf("load TLS config: %w", err)
+		return opts, stamp, fmt.Errorf("load TLS config: %w", err)
 	}
 	if tlsCfg.MinVersion < tls.VersionTLS13 {
 		tlsCfg.MinVersion = tls.VersionTLS13
 	}
 	opts.TLS = tlsCfg
-	return opts, nil
+	return opts, stamp, nil
 }
 
 // insert runs one INSERT. The deduplication token makes ClickHouse drop the
-// block when a retry resends the same batch, even though re-encoding changes
-// random IDs and insert times; dependent materialized views are deduplicated too.
+// block when a retry resends it; dependent materialized views are deduplicated too.
 func (c *clickhouseClient) insert(ctx context.Context, q ch.Query, token string) error {
 	q.Settings = append(q.Settings,
 		ch.Setting{Key: "insert_deduplicate", Value: "1"},
@@ -143,11 +167,4 @@ func (c *clickhouseClient) insert(ctx context.Context, q ch.Query, token string)
 		return fmt.Errorf("ClickHouse pool is not started")
 	}
 	return pool.Do(ctx, q)
-}
-
-// batchToken identifies a batch by its content, so every retry of the same
-// batch yields the same token.
-func batchToken(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:16])
 }
