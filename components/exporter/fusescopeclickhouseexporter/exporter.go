@@ -65,12 +65,12 @@ type signalExporter[E any, D any] struct {
 	tables   []table[E]
 	bodies   []string
 	encoders sync.Pool
-	encode   func(E, D)
+	encode   func(E, D) error
 	marshal  func(D) ([]byte, error)
 }
 
 func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E],
-	newEncoder func() E, encode func(E, D), marshal func(D) ([]byte, error),
+	newEncoder func() E, encode func(E, D) error, marshal func(D) ([]byte, error),
 ) *signalExporter[E, D] {
 	x := &signalExporter[E, D]{
 		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
@@ -87,18 +87,30 @@ func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.L
 }
 
 func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
-	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, (*tracesEncoder).encode,
+	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, infallible((*tracesEncoder).encode),
 		(&ptrace.ProtoMarshaler{}).MarshalTraces)
 }
 
 func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
-	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode,
+	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, infallible((*logsEncoder).encode),
 		(&plog.ProtoMarshaler{}).MarshalLogs)
 }
 
 func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metricsEncoder, pmetric.Metrics] {
-	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newMetricsEncoder, (*metricsEncoder).encode,
+	newEncoder := func() *metricsEncoder {
+		e := newMetricsEncoder()
+		e.logger = logger
+		return e
+	}
+	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newEncoder, (*metricsEncoder).encode,
 		(&pmetric.ProtoMarshaler{}).MarshalMetrics)
+}
+
+func infallible[E any, D any](encode func(E, D)) func(E, D) error {
+	return func(e E, d D) error {
+		encode(e, d)
+		return nil
+	}
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
@@ -116,7 +128,10 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	token := batchToken(payload)
 	enc := x.encoders.Get().(E)
 	defer x.encoders.Put(enc)
-	x.encode(enc, data)
+	// Encoding fails only on the input itself, which no retry can change.
+	if err := x.encode(enc, data); err != nil {
+		return consumererror.NewPermanent(err)
+	}
 	for i, t := range x.tables {
 		input := t.input(enc)
 		if input[0].Data.Rows() == 0 {
