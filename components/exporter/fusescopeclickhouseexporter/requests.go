@@ -4,21 +4,30 @@
 package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter"
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	mathrand "math/rand/v2"
-	"sync"
 	"time"
+
+	"go.opentelemetry.io/collector/config/configretry"
+	"go.opentelemetry.io/collector/consumer/consumererror"
+	"go.uber.org/zap"
 )
 
-// requestID identifies one export request across its retries. The exporter
-// helper retries a request by passing the same pdata value again, so the value
-// itself is the key; equal content sent twice is two requests.
+// requestID identifies one export request across its retry attempts, which
+// all run within one push call. Equal content sent twice is two requests.
 type requestID struct {
 	nonce   [16]byte
 	started time.Time
-	expires time.Time
+}
+
+func newRequestID(now time.Time) requestID {
+	id := requestID{started: now}
+	_, _ = rand.Read(id.nonce[:])
+	return id
 }
 
 // token is the base of the request's insert_deduplication_token.
@@ -31,96 +40,49 @@ func (id requestID) random() func([]byte) {
 	return func(b []byte) { _, _ = rng.Read(b) }
 }
 
-// maxRequestIDs bounds the identities kept for requests that may be retried.
-const maxRequestIDs = 100_000
-
-// requestIDs holds the identities of requests that may still be retried.
-// Identities older than ttl are dropped, as the exporter helper has given up
-// on them; ttl 0 keeps them until done. Above max identities the oldest go, at
-// worst turning a late retry into a new request.
-type requestIDs[D comparable] struct {
-	mu  sync.Mutex
-	ids map[D]requestID
-	ttl time.Duration
-	max int
-	now func() time.Time
-	// quit stops the expiry loop of start.
-	quit chan struct{}
-	wg   sync.WaitGroup
-}
-
-func newRequestIDs[D comparable](ttl time.Duration) *requestIDs[D] {
-	return &requestIDs[D]{ids: map[D]requestID{}, ttl: ttl, max: maxRequestIDs, now: time.Now}
-}
-
-// start expires identities every interval, also while no request arrives:
-// each identity keeps its batch referenced.
-func (r *requestIDs[D]) start(interval time.Duration) {
-	if r.ttl <= 0 || interval <= 0 || r.quit != nil {
-		return
+// retry runs attempt until it succeeds, fails permanently or cfg gives up, with
+// the exponential backoff of retry_on_failure. The exporter retries itself,
+// instead of the exporter helper, so that every attempt of a request shares
+// one requestID without the exporter keeping state between push calls.
+func retry(ctx context.Context, cfg configretry.BackOffConfig, logger *zap.Logger, attempt func(context.Context) error) error {
+	err := attempt(ctx)
+	if err == nil || !cfg.Enabled || consumererror.IsPermanent(err) {
+		return err
 	}
-	r.quit = make(chan struct{})
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
-		t := time.NewTicker(interval)
-		defer t.Stop()
-		for {
-			select {
-			case <-r.quit:
-				return
-			case <-t.C:
-				r.expire()
-			}
+	var deadline time.Time
+	if cfg.MaxElapsedTime > 0 {
+		deadline = time.Now().Add(cfg.MaxElapsedTime)
+	}
+	interval := cfg.InitialInterval
+	for {
+		delay := jitter(interval, cfg.RandomizationFactor)
+		interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
+		next := time.Now().Add(delay)
+		if !deadline.IsZero() && next.After(deadline) {
+			return fmt.Errorf("no more retries left: %w", err)
 		}
-	}()
-}
-
-func (r *requestIDs[D]) stop() {
-	if r.quit != nil {
-		close(r.quit)
-		r.wg.Wait()
-		r.quit = nil
-	}
-}
-
-func (r *requestIDs[D]) expire() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := r.now()
-	for k, id := range r.ids {
-		if now.After(id.expires) {
-			delete(r.ids, k)
+		if d, ok := ctx.Deadline(); ok && next.After(d) {
+			return fmt.Errorf("request will be canceled before the next retry: %w", err)
+		}
+		logger.Info("Exporting failed. Will retry the request after interval.", zap.Error(err), zap.Duration("interval", delay))
+		t := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return fmt.Errorf("request canceled while waiting to retry: %w", err)
+		case <-t.C:
+		}
+		if err = attempt(ctx); err == nil || consumererror.IsPermanent(err) {
+			return err
 		}
 	}
 }
 
-func (r *requestIDs[D]) get(d D) requestID {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := r.now()
-	if id, ok := r.ids[d]; ok {
-		return id
+// jitter spreads d by ±factor, as configretry's randomization_factor.
+func jitter(d time.Duration, factor float64) time.Duration {
+	if factor <= 0 {
+		return d
 	}
-	if len(r.ids) >= r.max {
-		var oldest D
-		first := true
-		for k, id := range r.ids {
-			if first || id.started.Before(r.ids[oldest].started) {
-				oldest, first = k, false
-			}
-		}
-		delete(r.ids, oldest)
-	}
-	id := requestID{started: now, expires: now.Add(r.ttl)}
-	_, _ = rand.Read(id.nonce[:])
-	r.ids[d] = id
-	return id
-}
-
-// done forgets a request that succeeded or will not be retried.
-func (r *requestIDs[D]) done(d D) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.ids, d)
+	delta := factor * float64(d)
+	return time.Duration(float64(d) - delta + mathrand.Float64()*2*delta)
 }

@@ -6,17 +6,21 @@ package fusescopeclickhouseexporter
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ClickHouse/ch-go"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config/configoptional"
+	"go.opentelemetry.io/collector/consumer/consumererror"
+	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -106,32 +110,6 @@ func TestPasswordStampIsTheReadFile(t *testing.T) {
 	}
 }
 
-// A retry of one request keeps its identity; separate requests with equal
-// content get distinct ones, so neither is deduplicated against the other.
-func TestRequestIdentity(t *testing.T) {
-	now := time.Unix(1_000, 0)
-	r := newRequestIDs[plog.Logs](time.Minute)
-	r.now = func() time.Time { return now }
-	a, b := plog.NewLogs(), plog.NewLogs()
-	first := r.get(a)
-	if r.get(a) != first {
-		t.Error("a retry got a new identity")
-	}
-	if r.get(b).nonce == first.nonce {
-		t.Error("two requests with equal content share an identity")
-	}
-	r.done(a)
-	if r.get(a).nonce == first.nonce {
-		t.Error("a finished request kept its identity")
-	}
-	now = now.Add(2 * time.Minute)
-	r.expire()
-	r.get(plog.NewLogs())
-	if len(r.ids) != 1 {
-		t.Errorf("%d identities kept, want only the one after expiry", len(r.ids))
-	}
-}
-
 // A retry rebuilds the same log IDs and ingest times, so each record goes to
 // the same shard (logs_v2 shards by id) and deduplicates there.
 func TestRetryKeepsLogIDs(t *testing.T) {
@@ -150,13 +128,11 @@ func TestRetryKeepsLogIDs(t *testing.T) {
 		}
 		return out
 	}
-	r := newRequestIDs[plog.Logs](0)
-	id := r.get(ld)
-	time.Sleep(time.Millisecond)
+	id := newRequestID(time.Now())
 	if first, retry := encode(id), encode(id); !slices.Equal(first, retry) {
 		t.Errorf("retry wrote %v, want %v", retry, first)
 	}
-	if other := encode(r.get(plog.NewLogs())); slices.Equal(other, encode(id)) {
+	if other := encode(newRequestID(time.Now())); slices.Equal(other, encode(id)) {
 		t.Error("another request wrote the same IDs")
 	}
 }
@@ -182,69 +158,14 @@ func TestTableTokens(t *testing.T) {
 	}
 }
 
-// An identity is kept for the next retry, and released when the caller gave up.
-func TestPushReleasesIdentities(t *testing.T) {
-	cfg := createDefaultConfig()
-	cfg.RetryConfig.MaxElapsedTime = 0
-	x := newLogsExporter(cfg, zap.NewNop())
-	ld := plog.NewLogs()
-	ld.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
-
-	if err := x.push(context.Background(), ld); err == nil {
-		t.Fatal("push without a pool succeeded")
-	}
-	if len(x.requests.ids) != 1 {
-		t.Fatalf("%d identities after a retryable failure, want 1 kept for the retry", len(x.requests.ids))
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_ = x.push(ctx, ld)
-	if len(x.requests.ids) != 0 {
-		t.Errorf("%d identities after a canceled push, want none", len(x.requests.ids))
-	}
-	if x.requests.ttl <= 0 {
-		t.Errorf("ttl = %v with unlimited retries, want a bound", x.requests.ttl)
-	}
-}
-
-func TestRequestIdentitiesAreBounded(t *testing.T) {
-	r := newRequestIDs[plog.Logs](time.Hour)
-	r.max = 3
-	for range 10 {
-		r.get(plog.NewLogs())
-	}
-	if len(r.ids) > 3 {
-		t.Errorf("%d identities kept, want at most 3", len(r.ids))
-	}
-}
-
-// An insert that commits but whose reply outlasts the attempt timeout is
-// retried by the exporter helper with the same token, so ClickHouse drops the
-// repeat.
-func TestTimedOutAttemptKeepsItsToken(t *testing.T) {
-	cfg := createDefaultConfig()
+// helperLogs runs the logs exporter behind the real exporter helper, without a
+// queue, with do in place of ClickHouse.
+func helperLogs(t *testing.T, cfg *Config, do func(context.Context, ch.Query) error) exporter.Logs {
+	t.Helper()
 	cfg.Endpoint = "testing.invalid:9440"
 	cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
-	cfg.Timeout = 50 * time.Millisecond
-	cfg.RetryConfig.InitialInterval = 5 * time.Millisecond
-	cfg.RetryConfig.MaxElapsedTime = 5 * time.Second
 	x := newLogsExporter(cfg, zap.NewNop())
-	var tokens []string
-	x.do = func(ctx context.Context, q ch.Query) error {
-		if !strings.Contains(q.Body, "distributed_logs_v2 ") {
-			return nil
-		}
-		for _, s := range q.Settings {
-			if s.Key == "insert_deduplication_token" {
-				tokens = append(tokens, s.Value)
-			}
-		}
-		if len(tokens) == 1 {
-			<-ctx.Done() // committed, but the reply is lost
-			return ctx.Err()
-		}
-		return nil
-	}
+	x.do = do
 	ctx := context.Background()
 	exp, err := exporterhelper.NewLogs(ctx, exportertest.NewNopSettings(metadata.Type), cfg, x.push, helperOptions(cfg, x.start, x.shutdown)...)
 	if err != nil {
@@ -254,33 +175,116 @@ func TestTimedOutAttemptKeepsItsToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = exp.Shutdown(ctx) })
+	return exp
+}
+
+func fastRetries() *Config {
+	cfg := createDefaultConfig()
+	cfg.Timeout = 50 * time.Millisecond
+	cfg.RetryConfig.InitialInterval = 5 * time.Millisecond
+	cfg.RetryConfig.MaxElapsedTime = 5 * time.Second
+	return cfg
+}
+
+func oneLog() plog.Logs {
 	ld := plog.NewLogs()
 	ld.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty().Body().SetStr("once")
-	if err := exp.ConsumeLogs(ctx, ld); err != nil {
-		t.Fatal(err)
-	}
-	if len(tokens) != 2 || tokens[0] != tokens[1] {
-		t.Fatalf("tokens %q, want the retry to reuse the first", tokens)
+	return ld
+}
+
+// logsTokens records the token of every logs_v2 insert and answers with reply.
+func logsTokens(mu *sync.Mutex, tokens *[]string, reply func(ctx context.Context, attempt int) error) func(context.Context, ch.Query) error {
+	return func(ctx context.Context, q ch.Query) error {
+		if !strings.Contains(q.Body, "distributed_logs_v2 ") {
+			return nil
+		}
+		mu.Lock()
+		for _, s := range q.Settings {
+			if s.Key == "insert_deduplication_token" {
+				*tokens = append(*tokens, s.Value)
+			}
+		}
+		n := len(*tokens)
+		mu.Unlock()
+		return reply(ctx, n)
 	}
 }
 
-// Identities of requests the helper gave up on expire without further pushes.
-func TestAbandonedIdentitiesExpire(t *testing.T) {
-	r := newRequestIDs[plog.Logs](20 * time.Millisecond)
-	r.get(plog.NewLogs())
-	r.start(5 * time.Millisecond)
-	defer r.stop()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		r.mu.Lock()
-		n := len(r.ids)
-		r.mu.Unlock()
-		if n == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d identities still held", n)
-		}
-		time.Sleep(5 * time.Millisecond)
+func TestRetries(t *testing.T) {
+	permanent := consumererror.NewPermanent(errors.New("bad data"))
+	tests := []struct {
+		name       string
+		cfg        func() *Config
+		reply      func(ctx context.Context, attempt int) error
+		wantErr    bool
+		wantTokens func([]string) bool
+	}{
+		// Committed, but the reply outlasts the attempt timeout: the retry
+		// carries the same token, so ClickHouse drops the repeat.
+		{"timeout after commit", fastRetries, func(ctx context.Context, n int) error {
+			if n == 1 {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}, false, func(tk []string) bool { return len(tk) == 2 && tk[0] == tk[1] }},
+		{"gives up after max_elapsed_time", func() *Config {
+			cfg := fastRetries()
+			cfg.RetryConfig.MaxElapsedTime = 100 * time.Millisecond
+			return cfg
+		}, func(context.Context, int) error { return errors.New("connection refused") },
+			true, func(tk []string) bool { return len(tk) > 1 }},
+		{"permanent error is not retried", fastRetries, func(context.Context, int) error { return permanent },
+			true, func(tk []string) bool { return len(tk) == 1 }},
+		{"retries off", func() *Config {
+			cfg := fastRetries()
+			cfg.RetryConfig.Enabled = false
+			return cfg
+		}, func(context.Context, int) error { return errors.New("connection refused") },
+			true, func(tk []string) bool { return len(tk) == 1 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var tokens []string
+			exp := helperLogs(t, tt.cfg(), logsTokens(&mu, &tokens, tt.reply))
+			err := exp.ConsumeLogs(context.Background(), oneLog())
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ConsumeLogs = %v, want error %v", err, tt.wantErr)
+			}
+			if !tt.wantTokens(tokens) {
+				t.Errorf("tokens %q", tokens)
+			}
+		})
+	}
+}
+
+// Two consumes of one immutable pdata value are two requests: neither may be
+// deduplicated as a retry of the other.
+func TestConcurrentConsumesGetDistinctTokens(t *testing.T) {
+	var mu sync.Mutex
+	var tokens []string
+	both := make(chan struct{})
+	var arrived sync.WaitGroup
+	arrived.Add(2)
+	exp := helperLogs(t, fastRetries(), logsTokens(&mu, &tokens, func(context.Context, int) error {
+		arrived.Done()
+		<-both
+		return nil
+	}))
+	ld := oneLog()
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			if err := exp.ConsumeLogs(context.Background(), ld); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	arrived.Wait()
+	close(both)
+	wg.Wait()
+	if len(tokens) != 2 || tokens[0] == tokens[1] {
+		t.Fatalf("tokens %q, want two distinct", tokens)
 	}
 }

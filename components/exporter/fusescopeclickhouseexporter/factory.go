@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
@@ -48,8 +49,10 @@ func helperOptions(c *Config, start component.StartFunc, shutdown component.Shut
 		exporterhelper.WithStart(start),
 		exporterhelper.WithShutdown(shutdown),
 		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
-		exporterhelper.WithTimeout(c.TimeoutConfig),
-		exporterhelper.WithRetry(c.RetryConfig),
+		// The exporter applies timeout and retry_on_failure itself, so that all
+		// attempts of a request share its deduplication identity (requests.go).
+		exporterhelper.WithTimeout(exporterhelper.TimeoutConfig{}),
+		exporterhelper.WithRetry(configretry.BackOffConfig{}),
 		exporterhelper.WithQueue(c.QueueConfig),
 	}
 }

@@ -82,14 +82,16 @@ code (FuseScope ADR 0001, option 2).
   `pdata` without per-row structs or maps, one `INSERT` per table per batch, LZ4 on the wire,
   bounded concurrency per table, and no `async_insert` dependency.
 - **Idempotent retries:** every insert carries an `insert_deduplication_token` made of a
-  random identity of the export request, kept across its retries, the table and, for a metrics
+  random identity of the export request, the table and, for a metrics
   batch inserted in chunks, the chunk index (chunks are cut deterministically). Deduplication is
   on for dependent materialized views, so a retry after a timeout or a partial failure does not
   duplicate rows (ClickHouse `Replicated*` tables). Every attempt also reuses the request's
   ingest time and a random-ID stream seeded by its identity, so a retry rebuilds the same rows
   and each sharded row goes to the same shard. Equal telemetry sent twice is two requests and is
   written twice; the parity suite checks that. A request restored from a persistent queue after
-  a restart gets a new identity. Tables sharded by `rand()` (tag attributes, span keys, metric
+  a restart gets a new identity. The exporter applies `timeout` and `retry_on_failure` itself,
+  not the exporter helper, so all attempts of a request run in one call and share its identity
+  with nothing kept between requests. Tables sharded by `rand()` (tag attributes, span keys, metric
   metadata) get no token, as a retry routes their rows to other shards; they are Replacing or
   Aggregating merge trees, so the repeats merge away.
 - **Backpressure, not loss:** persistent queues (`file_storage`) at the gateway; when the

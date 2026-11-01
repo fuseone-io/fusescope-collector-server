@@ -5,7 +5,6 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -63,13 +62,12 @@ var metricsTables = []table[*metricsEncoder]{
 }
 
 // signalExporter encodes a batch of one signal and inserts one block per table.
-type signalExporter[E attempter, D comparable] struct {
+type signalExporter[E attempter, D any] struct {
 	*clickhouseClient
 	tables   []table[E]
 	bodies   []string
 	encoders sync.Pool
 	encode   func(E, D, func() error) error
-	requests *requestIDs[D]
 }
 
 // attempter is an encoder that takes the ingest time and the ID generator of
@@ -78,21 +76,13 @@ type attempter interface {
 	setAttempt(now time.Time, random func([]byte))
 }
 
-func newSignalExporter[E attempter, D comparable](cfg *Config, database string, logger *zap.Logger, tables []table[E],
+func newSignalExporter[E attempter, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E],
 	newEncoder func() E, encode func(E, D, func() error) error,
 ) *signalExporter[E, D] {
-	// A request is retried at most for max_elapsed_time, each attempt bounded by
-	// timeout. Without that bound, an identity outlives the helper's retries
-	// only for an hour, as the helper does not report a request it gave up on.
-	ttl := time.Hour
-	if cfg.RetryConfig.MaxElapsedTime > 0 {
-		ttl = cfg.RetryConfig.MaxElapsedTime + cfg.Timeout + time.Minute
-	}
 	x := &signalExporter[E, D]{
 		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
 		tables:           tables,
 		encode:           encode,
-		requests:         newRequestIDs[D](ttl),
 	}
 	x.encoders.New = func() any { return newEncoder() }
 	enc := newEncoder()
@@ -143,7 +133,7 @@ func tableToken(request, table string, chunk int) string {
 }
 
 // infallible adapts an encoder that builds one chunk and cannot fail.
-func infallible[E any, D comparable](encode func(E, D)) func(E, D, func() error) error {
+func infallible[E any, D any](encode func(E, D)) func(E, D, func() error) error {
 	return func(e E, d D, _ func() error) error {
 		encode(e, d)
 		return nil
@@ -151,28 +141,24 @@ func infallible[E any, D comparable](encode func(E, D)) func(E, D, func() error)
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
-	x.requests.start(min(x.requests.ttl/4, time.Minute))
 	return x.clickhouseClient.start(ctx)
 }
 
-func (x *signalExporter[E, D]) shutdown(ctx context.Context) error {
-	x.requests.stop()
-	return x.clickhouseClient.shutdown(ctx)
-}
-
+// push exports one request, retrying it itself (see retry): every attempt
+// shares the request's identity, bounded by timeout.
 func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
-	if err := x.refresh(ctx); err != nil {
-		return err
-	}
-	id := x.requests.get(data)
-	err := x.export(ctx, data, id)
-	// A canceled caller ends the helper's retries too. An attempt that hit its
-	// timeout (DeadlineExceeded) is retried, possibly after its insert committed,
-	// so it keeps the identity.
-	if err == nil || consumererror.IsPermanent(err) || !x.cfg.RetryConfig.Enabled || errors.Is(ctx.Err(), context.Canceled) {
-		x.requests.done(data)
-	}
-	return err
+	id := newRequestID(time.Now())
+	return retry(ctx, x.cfg.RetryConfig, x.logger, func(ctx context.Context) error {
+		if x.cfg.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, x.cfg.Timeout)
+			defer cancel()
+		}
+		if err := x.refresh(ctx); err != nil {
+			return err
+		}
+		return x.export(ctx, data, id)
+	})
 }
 
 // export encodes and inserts one attempt of request id. Its token identifies
