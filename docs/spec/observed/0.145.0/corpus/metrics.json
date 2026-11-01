@@ -76,8 +76,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -105,8 +105,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ],
                 "isMonotonic": true
@@ -128,8 +128,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ],
                 "isMonotonic": false
@@ -163,9 +163,9 @@
                     ],
                     "max": 0.4,
                     "min": 0.01,
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 0.73,
-                    "timeUnixNano": "1793502103000000000"
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -202,9 +202,9 @@
                       "offset": 1
                     },
                     "scale": 2,
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 12.5,
-                    "timeUnixNano": "1793502103000000000",
+                    "timeUnixNano": "1793508539000000000",
                     "zeroCount": "1"
                   }
                 ]
@@ -228,9 +228,9 @@
                         "value": 0.008
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 0.02,
-                    "timeUnixNano": "1793502103000000000"
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -254,8 +254,8 @@
                 "dataPoints": [
                   {
                     "asDouble": 1.0,
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -274,8 +274,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -327,8 +327,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -340,13 +340,13 @@
                 "dataPoints": [
                   {
                     "asDouble": 4.0,
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502073000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508509000000000"
                   },
                   {
                     "asDouble": 5.0,
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -358,8 +358,8 @@
                 "dataPoints": [
                   {
                     "flags": 1,
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -370,8 +370,8 @@
                 "dataPoints": [
                   {
                     "asDouble": "NaN",
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -384,8 +384,8 @@
                 "dataPoints": [
                   {
                     "asInt": "9",
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ],
                 "isMonotonic": true
@@ -398,8 +398,8 @@
                 "dataPoints": [
                   {
                     "asInt": "-4",
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ],
                 "isMonotonic": false
@@ -418,9 +418,9 @@
                     "explicitBounds": [
                       10.0
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 30.0,
-                    "timeUnixNano": "1793502103000000000"
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -435,8 +435,8 @@
                     "bucketCounts": [],
                     "count": "0",
                     "explicitBounds": [],
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -456,9 +456,9 @@
                       "offset": 0
                     },
                     "scale": 0,
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 3.0,
-                    "timeUnixNano": "1793502103000000000",
+                    "timeUnixNano": "1793508539000000000",
                     "zeroCount": "0"
                   }
                 ]
@@ -480,9 +480,9 @@
                       1e-05,
                       1000000.0
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 1.0,
-                    "timeUnixNano": "1793502103000000000"
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -508,9 +508,9 @@
                         "value": 2.0
                       }
                     ],
-                    "startTimeUnixNano": "1793502043000000000",
+                    "startTimeUnixNano": "1793508479000000000",
                     "sum": 1.0,
-                    "timeUnixNano": "1793502103000000000"
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               }
@@ -520,8 +520,8 @@
                 "dataPoints": [
                   {
                     "asDouble": 6.0,
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -563,8 +563,8 @@
                 "dataPoints": [
                   {
                     "asDouble": 7.0,
-                    "startTimeUnixNano": "1793491302000000000",
-                    "timeUnixNano": "1793491303000000000"
+                    "startTimeUnixNano": "1793497738000000000",
+                    "timeUnixNano": "1793497739000000000"
                   }
                 ]
               },
@@ -575,8 +575,8 @@
                 "dataPoints": [
                   {
                     "asDouble": 8.0,
-                    "startTimeUnixNano": "1793502043000000000",
-                    "timeUnixNano": "1793502103000000000"
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
                   }
                 ]
               },
@@ -594,6 +594,172 @@
             ],
             "name": "probe",
             "version": "2"
+          }
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "probe-collide"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "gateway"
+            }
+          },
+          {
+            "key": "region",
+            "value": {
+              "stringValue": "resource"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 1.0,
+                    "attributes": [
+                      {
+                        "key": "host.name",
+                        "value": {
+                          "stringValue": "node-a"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
+                  },
+                  {
+                    "asDouble": 2.0,
+                    "attributes": [
+                      {
+                        "key": "host.name",
+                        "value": {
+                          "stringValue": "node-b"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_resource"
+            },
+            {
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "le",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      "1",
+                      "1"
+                    ],
+                    "count": "2",
+                    "explicitBounds": [
+                      1.0
+                    ],
+                    "startTimeUnixNano": "1793508479000000000",
+                    "sum": 1.0,
+                    "timeUnixNano": "1793508539000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_le"
+            },
+            {
+              "name": "probe.collide_quantile",
+              "summary": {
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "quantile",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      }
+                    ],
+                    "count": "1",
+                    "quantileValues": [
+                      {
+                        "quantile": 0.5,
+                        "value": 1.0
+                      },
+                      {
+                        "quantile": 0.9,
+                        "value": 2.0
+                      }
+                    ],
+                    "startTimeUnixNano": "1793508479000000000",
+                    "sum": 1.0,
+                    "timeUnixNano": "1793508539000000000"
+                  }
+                ]
+              }
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 3.0,
+                    "attributes": [
+                      {
+                        "key": "__name__",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      },
+                      {
+                        "key": "__temporality__",
+                        "value": {
+                          "stringValue": "custom"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1793508479000000000",
+                    "timeUnixNano": "1793508539000000000"
+                  }
+                ]
+              },
+              "name": "probe.collide_generated"
+            }
+          ],
+          "scope": {
+            "attributes": [
+              {
+                "key": "region",
+                "value": {
+                  "stringValue": "scope"
+                }
+              },
+              {
+                "key": "__scope.name__",
+                "value": {
+                  "stringValue": "custom"
+                }
+              }
+            ],
+            "name": "probe-collide"
           }
         }
       ]
