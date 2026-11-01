@@ -10,7 +10,7 @@ in `docs/adr/` are binding until superseded.
   or SigNoz collector source, including git history. Specify behavior in `docs/spec/` from the
   FuseScope backend, observed data, the OpenTelemetry spec or engine `MAPPING.md`, citing the
   source of every rule. Say "clean-room" in the commit message when touching that behavior.
-- **Licenses** (ADR 0005): source is Apache-2.0; dependencies MIT, BSD, ISC, Apache-2.0, and
+- **Licenses** (ADR 0005): source is Apache-2.0; dependencies MIT, MIT-0, BSD, ISC, Apache-2.0, and
   MPL-2.0 only unmodified. Ask before adding any dependency.
 - **Upstream as a library** (ADR 0001): never vendor or patch upstream code; bump all module
   versions together (`docs/upgrading.md`).

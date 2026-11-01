@@ -1,0 +1,29 @@
+display_name: FuseScope ClickHouse Exporter
+type: fusescope_clickhouse
+github_project: fuseone-io/fusescope-collector-server
+
+# ClickHouse favours few large inserts: batch up to 100k spans, flush at least every second.
+sending_queue:
+  support: has_overrides
+  overrides:
+    enabled: true
+    num_consumers: 4
+    batch:
+      enabled: true
+      flush_timeout: 1s
+      sizer: items
+      min_size: 20000
+      max_size: 100000
+
+status:
+  disable_codecov_badge: true
+  class: exporter
+  stability:
+    alpha: [traces]
+  distributions: []
+
+tests:
+  config:
+    endpoint: "testing.invalid:9440"
+    password_file: "testdata/password"
+  skip_lifecycle: true

@@ -6,3 +6,7 @@ This product is a distribution of the OpenTelemetry Collector
 https://github.com/open-telemetry/opentelemetry-collector-contrib),
 licensed under the Apache License, Version 2.0, and includes its components
 as unmodified Go module dependencies.
+
+It also includes, as an unmodified Go module dependency of ch-go,
+github.com/segmentio/asm (https://github.com/segmentio/asm), licensed under the
+MIT No Attribution License (MIT-0).
