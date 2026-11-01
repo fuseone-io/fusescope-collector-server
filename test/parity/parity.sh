@@ -40,6 +40,11 @@ for port in 14318 24318; do
       --data-binary @"$out/corpus/$signal.json" "localhost:$port/v1/$signal")
     if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal: $code $(cat "$out/response")" >&2; exit 1; fi
   done
+  for signal in traces logs; do
+    code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/x-protobuf' \
+      --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:$port/v1/$signal")
+    if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal (invalid UTF-8): $code $(cat "$out/response")" >&2; exit 1; fi
+  done
 done
 rm -f "$out/response"
 sleep 20
