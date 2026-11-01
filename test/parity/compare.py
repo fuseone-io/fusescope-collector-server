@@ -14,9 +14,12 @@ import sys
 
 IGNORED = {
     "*": {"inserted_at", "created_at"},
-    "signoz_error_index_v2": {"errorID"},
-    "span_attributes_keys": {"timestamp"},
-    "top_level_operations": {"time"},
+    "signoz_traces.signoz_error_index_v2": {"errorID"},
+    "signoz_traces.span_attributes_keys": {"timestamp"},
+    "signoz_traces.top_level_operations": {"time"},
+    "signoz_logs.logs_v2": {"id"},
+    "signoz_logs.logs_attribute_keys": {"timestamp"},
+    "signoz_logs.logs_resource_keys": {"timestamp"},
 }
 
 
