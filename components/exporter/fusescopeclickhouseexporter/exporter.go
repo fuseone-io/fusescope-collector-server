@@ -6,12 +6,9 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 
 	"github.com/ClickHouse/ch-go"
-	"github.com/ClickHouse/ch-go/chpool"
 	"github.com/ClickHouse/ch-go/proto"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumererror"
@@ -64,18 +61,23 @@ var metricsTables = []table[*metricsEncoder]{
 
 // signalExporter encodes a batch of one signal and inserts one block per table.
 type signalExporter[E any, D any] struct {
-	cfg      *Config
-	database string
-	logger   *zap.Logger
-	pool     *chpool.Pool
+	*clickhouseClient
 	tables   []table[E]
 	bodies   []string
 	encoders sync.Pool
 	encode   func(E, D)
+	marshal  func(D) ([]byte, error)
 }
 
-func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E], newEncoder func() E, encode func(E, D)) *signalExporter[E, D] {
-	x := &signalExporter[E, D]{cfg: cfg, database: database, logger: logger, tables: tables, encode: encode}
+func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E],
+	newEncoder func() E, encode func(E, D), marshal func(D) ([]byte, error),
+) *signalExporter[E, D] {
+	x := &signalExporter[E, D]{
+		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
+		tables:           tables,
+		encode:           encode,
+		marshal:          marshal,
+	}
 	x.encoders.New = func() any { return newEncoder() }
 	enc := newEncoder()
 	for _, t := range tables {
@@ -85,69 +87,33 @@ func newSignalExporter[E any, D any](cfg *Config, database string, logger *zap.L
 }
 
 func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
-	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, (*tracesEncoder).encode)
+	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, (*tracesEncoder).encode,
+		(&ptrace.ProtoMarshaler{}).MarshalTraces)
 }
 
 func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
-	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode)
+	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode,
+		(&plog.ProtoMarshaler{}).MarshalLogs)
 }
 
 func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metricsEncoder, pmetric.Metrics] {
-	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newMetricsEncoder, (*metricsEncoder).encode)
+	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newMetricsEncoder, (*metricsEncoder).encode,
+		(&pmetric.ProtoMarshaler{}).MarshalMetrics)
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
-	opts, err := x.clientOptions(ctx)
-	if err != nil {
-		return err
-	}
-	pool, err := chpool.New(ctx, chpool.Options{ClientOptions: opts, MaxConns: x.cfg.MaxConnections})
-	if err != nil {
-		return fmt.Errorf("create ClickHouse pool: %w", err)
-	}
-	x.pool = pool
-	return nil
-}
-
-func (x *signalExporter[E, D]) shutdown(context.Context) error {
-	if x.pool != nil {
-		x.pool.Close()
-	}
-	return nil
-}
-
-func (x *signalExporter[E, D]) clientOptions(ctx context.Context) (ch.Options, error) {
-	cfg := x.cfg
-	opts := ch.Options{
-		Logger:      x.logger,
-		Address:     cfg.Endpoint,
-		Database:    x.database,
-		User:        cfg.Username,
-		Compression: ch.CompressionLZ4,
-		ClientName:  "fusescope-collector",
-		DialTimeout: cfg.DialTimeout,
-		ReadTimeout: cfg.Timeout,
-	}
-	if cfg.PasswordFile != "" {
-		b, err := os.ReadFile(cfg.PasswordFile)
-		if err != nil {
-			return opts, fmt.Errorf("read password_file: %w", err)
-		}
-		opts.Password = strings.TrimRight(string(b), "\r\n")
-	}
-	if cfg.TLS.Insecure {
-		x.logger.Warn("TLS to ClickHouse is disabled; credentials and telemetry travel in clear text", zap.String("endpoint", cfg.Endpoint))
-		return opts, nil
-	}
-	tlsCfg, err := cfg.TLS.LoadTLSConfig(ctx)
-	if err != nil {
-		return opts, fmt.Errorf("load TLS config: %w", err)
-	}
-	opts.TLS = tlsCfg
-	return opts, nil
+	return x.clickhouseClient.start(ctx)
 }
 
 func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
+	if err := x.refresh(ctx); err != nil {
+		return err
+	}
+	payload, err := x.marshal(data)
+	if err != nil {
+		return consumererror.NewPermanent(fmt.Errorf("marshal batch for its deduplication token: %w", err))
+	}
+	token := batchToken(payload)
 	enc := x.encoders.Get().(E)
 	defer x.encoders.Put(enc)
 	x.encode(enc, data)
@@ -156,7 +122,7 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 		if input[0].Data.Rows() == 0 {
 			continue
 		}
-		if err := x.pool.Do(ctx, ch.Query{Body: x.bodies[i], Input: input}); err != nil {
+		if err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, token+"-"+t.name); err != nil {
 			return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
 		}
 	}
