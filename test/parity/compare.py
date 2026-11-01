@@ -22,6 +22,9 @@ IGNORED = {
     "signoz_logs.logs_resource_keys": {"timestamp"},
 }
 
+# The corpus record without any timestamp: each collector stamps it with its own ingest time.
+INGEST_TIMED = "no time at all"
+
 
 def load(path, table):
     drop = IGNORED["*"] | IGNORED.get(table, set())
@@ -31,6 +34,9 @@ def load(path, table):
         for line in f:
             if line.strip():
                 row = {k: v for k, v in json.loads(line, strict=False).items() if k not in drop}
+                if table == "signoz_logs.logs_v2" and row.get("body") == INGEST_TIMED:
+                    for k in ("timestamp", "observed_timestamp", "ts_bucket_start"):
+                        row.pop(k, None)
                 rows[json.dumps(row, sort_keys=True)] += 1
     return rows
 
