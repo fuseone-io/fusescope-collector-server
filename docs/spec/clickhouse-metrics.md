@@ -90,9 +90,11 @@ datatype, string value), with:
 - `attr_string_value`: the stringified value;
 - `first_reported_unix_milli` / `last_reported_unix_milli`: minimum and maximum point time in the
   batch [obs `probe.two_points`];
-- description, unit, type and `is_monotonic` of the series, except that the unit of a `.count`
-  series is the metric's unit, or `1` when that is empty (in `time_series_v4` it is always `1`)
-  [obs `go.gc.pause.count`: `s`; `probe.extreme_bounds.count`: `1`].
+- description, unit, type and `is_monotonic` of the series. For a `.count` series the reference's
+  unit is not deterministic: runs show either `1` or the metric's unit (`go.gc.pause.count`: `s`
+  in one run, `1` in the next), as rows with the same key collapse on insert and keep an
+  arbitrary unit. The exporter writes the metric's unit, or `1` when that is empty; the parity
+  suite ignores this one column.
 
 The table is an `AggregatingMergeTree` with min/max states, so rows from different batches
 merge.

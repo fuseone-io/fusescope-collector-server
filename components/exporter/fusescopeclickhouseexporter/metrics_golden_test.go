@@ -65,7 +65,7 @@ func TestMetricsMatchObservedRows(t *testing.T) {
 			func(r row) string { return fmt.Sprint(r["labels"]) }, []string{"inserted_at_unix_milli"}},
 		{"samples_v4", byLabels(t, readObserved(t, "signoz_metrics", "samples_v4"), wantSeries), byLabels(t, blockRows(enc.samples.input()), gotSeries),
 			func(r row) string { return fmt.Sprint(r["fingerprint"], r["unix_milli"]) }, []string{"inserted_at_unix_milli"}},
-		{"metadata", withoutSpanMetrics(readObserved(t, "signoz_metrics", "metadata")), blockRows(enc.meta.input()),
+		{"metadata", withoutSpanMetrics(readObserved(t, "signoz_metrics", "metadata")), withoutSpanMetrics(blockRows(enc.meta.input())),
 			func(r row) string {
 				return fmt.Sprint(r["temporality"], r["metric_name"], r["attr_name"], r["attr_type"], r["attr_datatype"], r["attr_string_value"])
 			}, nil},
@@ -77,12 +77,18 @@ func TestMetricsMatchObservedRows(t *testing.T) {
 	}
 }
 
+// withoutSpanMetrics also drops the unit of .count metadata, which the
+// reference writes arbitrarily (metrics §5).
 func withoutSpanMetrics(rows []row) []row {
 	var out []row
 	for _, r := range rows {
-		if !isSpanMetric(r) {
-			out = append(out, r)
+		if isSpanMetric(r) {
+			continue
 		}
+		if strings.HasSuffix(fmt.Sprint(r["metric_name"]), ".count") {
+			delete(r, "unit")
+		}
+		out = append(out, r)
 	}
 	return out
 }

@@ -56,6 +56,9 @@ def load(path, table, labels):
                         continue
                     if "fingerprint" in row:
                         row["fingerprint"] = labels.get(row["fingerprint"], "unknown series")
+                    # The reference's unit for .count metadata is arbitrary (metrics spec §5).
+                    if table == "signoz_metrics.metadata" and str(row.get("metric_name")).endswith(".count"):
+                        row.pop("unit", None)
                 rows[json.dumps(row, sort_keys=True)] += 1
     return rows
 
@@ -72,7 +75,7 @@ def main():
         failed |= status == "DIFF"
         report.append(f"- `{table}`: {status} ({sum(ref.values())} reference rows, {sum(cand.values())} candidate rows)")
         for label, rows in (("only in reference", missing), ("only in candidate", extra)):
-            for row in list(rows)[:5]:
+            for row in sorted(rows)[:12]:
                 report.append(f"  - {label}: `{row[:600]}`")
     text = "\n".join(report) + "\n"
     with open(os.path.join(out, "report.md"), "w") as f:
