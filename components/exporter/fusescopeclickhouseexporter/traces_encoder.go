@@ -72,10 +72,84 @@ func (e *tracesEncoder) reset() {
 
 // encode builds the rows of td, inserting a chunk through emit whenever the
 // copies of resources and scopes exceed maxChunkBytes; the last chunk is left
-// for the caller. It returns the first error of emit.
+// for the caller. It returns the first error of emit. Chunks hold whole
+// traces: the service-call view joins a parent and its child within one insert
+// (traces §1). Only a trace larger than a chunk is split.
 func (e *tracesEncoder) encode(td ptrace.Traces, emit func() error) error {
 	e.reset()
 	e.begin(emit)
+	chunkOf, chunks := e.planChunks(td)
+	for chunk := range chunks {
+		if chunk > 0 {
+			if e.err = e.emit(); e.err != nil {
+				return e.err
+			}
+			e.reset()
+			e.expanded = 0
+		}
+		if !e.encodeChunk(td, chunkOf, chunk) {
+			return e.err
+		}
+	}
+	return nil
+}
+
+// copied is what one span copies: resources_string and resource each hold the
+// resource, scope_string the scope.
+func copied(resourceLabels, scopeJSON string) int {
+	return 2*len(resourceLabels) + len(scopeJSON)
+}
+
+// planChunks assigns each trace to a chunk, in order of first appearance, when
+// td does not fit one chunk; chunkOf is nil when it does.
+func (e *tracesEncoder) planChunks(td ptrace.Traces) (chunkOf map[pcommon.TraceID]int, chunks int) {
+	if e.emit == nil {
+		return nil, 1
+	}
+	total := 0
+	e.spanCopies(td, func(_ pcommon.TraceID, n int) { total += n })
+	if total <= e.maxChunkBytes {
+		return nil, 1
+	}
+	size := map[pcommon.TraceID]int{}
+	var order []pcommon.TraceID
+	e.spanCopies(td, func(id pcommon.TraceID, n int) {
+		if _, ok := size[id]; !ok {
+			order = append(order, id)
+		}
+		size[id] += n
+	})
+	chunkOf = make(map[pcommon.TraceID]int, len(order))
+	used := 0
+	for _, id := range order {
+		if used > 0 && used+size[id] > e.maxChunkBytes {
+			chunks++
+			used = 0
+		}
+		used += size[id]
+		chunkOf[id] = chunks
+	}
+	return chunkOf, chunks + 1
+}
+
+// spanCopies calls f with each span's trace and the bytes its row copies, as
+// counted by the chunker.
+func (e *tracesEncoder) spanCopies(td ptrace.Traces, f func(pcommon.TraceID, int)) {
+	for _, rs := range td.ResourceSpans().All() {
+		var res resourceInfo
+		res, e.buf = newResourceInfo(rs.Resource(), e.buf)
+		for _, ss := range rs.ScopeSpans().All() {
+			n := copied(res.labels, e.scopeJSON(ss.Scope())) + rowOverhead
+			for _, span := range ss.Spans().All() {
+				f(span.TraceID(), n)
+			}
+		}
+	}
+}
+
+// encodeChunk appends the spans of chunk, or all spans when chunkOf is nil.
+// It reports whether encoding may go on.
+func (e *tracesEncoder) encodeChunk(td ptrace.Traces, chunkOf map[pcommon.TraceID]int, chunk int) bool {
 	now := e.now()
 	for _, rs := range td.ResourceSpans().All() {
 		var res resourceInfo
@@ -92,15 +166,18 @@ func (e *tracesEncoder) encode(td ptrace.Traces, emit func() error) error {
 				e.addKey(k, tagScope, leafType(v))
 			})
 			for _, span := range ss.Spans().All() {
+				if chunkOf != nil && chunkOf[span.TraceID()] != chunk {
+					continue
+				}
 				e.appendSpan(&res, scope, scopeJSON, span, now)
-				// resources_string and resource each copy the resource, scope_string the scope.
-				if !e.add(2*len(res.labels)+len(scopeJSON), e.reset) {
-					return e.err
+				// A trace larger than a chunk is split here.
+				if !e.add(copied(res.labels, scopeJSON), e.reset) {
+					return false
 				}
 			}
 		}
 	}
-	return nil
+	return true
 }
 
 func (e *tracesEncoder) scopeJSON(scope pcommon.InstrumentationScope) string {

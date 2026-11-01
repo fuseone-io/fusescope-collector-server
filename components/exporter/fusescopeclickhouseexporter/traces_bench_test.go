@@ -69,7 +69,8 @@ func BenchmarkEncodeTraces(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = enc.encode(td, nil)
+		// A real emit, as push passes, so the chunk plan runs.
+		_ = enc.encode(td, func() error { return nil })
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
 }

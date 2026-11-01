@@ -85,3 +85,59 @@ func TestLogsAndTracesChunks(t *testing.T) {
 		})
 	}
 }
+
+// A chunk boundary never splits a trace: the service-call view joins a parent
+// and its child within one insert (dependency_graph_minutes_service_calls_mv_v2).
+func TestTraceChunksKeepTracesWhole(t *testing.T) {
+	big := strings.Repeat("x", 64<<10)
+	td := ptrace.NewTraces()
+	addSpan := func(service string, trace, span, parent byte) {
+		rs := td.ResourceSpans().AppendEmpty()
+		rs.Resource().Attributes().PutStr("service.name", service)
+		rs.Resource().Attributes().PutStr("big", big)
+		s := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+		s.SetTraceID(pcommon.TraceID{trace})
+		s.SetSpanID(pcommon.SpanID{span})
+		if parent != 0 {
+			s.SetParentSpanID(pcommon.SpanID{parent})
+		}
+	}
+	// Each trace has a parent in one service and, after filler, its child in another.
+	for tr := byte(1); tr <= 10; tr++ {
+		addSpan("front", tr, tr*10+1, 0)
+	}
+	for tr := byte(1); tr <= 10; tr++ {
+		addSpan("back", tr, tr*10+2, tr*10+1)
+	}
+	enc := newTracesEncoder()
+	enc.maxChunkBytes = 1 << 20
+	var chunks [][]string
+	collect := func() {
+		var ids []string
+		for i := range enc.index.traceID.Rows() {
+			r := enc.index.traceID.Row(i)
+			ids = append(ids, string(r[:]))
+		}
+		chunks = append(chunks, ids)
+	}
+	if err := enc.encode(td, func() error { collect(); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	collect()
+	if len(chunks) < 2 {
+		t.Fatalf("%d chunks, want several", len(chunks))
+	}
+	seen, total := map[string]int{}, 0
+	for i, ids := range chunks {
+		for _, id := range ids {
+			if c, ok := seen[id]; ok && c != i {
+				t.Errorf("trace %x is in chunks %d and %d", id, c, i)
+			}
+			seen[id] = i
+			total++
+		}
+	}
+	if total != 20 {
+		t.Errorf("%d spans written, want 20", total)
+	}
+}
