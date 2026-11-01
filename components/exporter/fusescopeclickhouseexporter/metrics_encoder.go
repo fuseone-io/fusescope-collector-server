@@ -26,6 +26,8 @@ const (
 	sampleBytes = 64
 	// seriesOverhead covers the generated labels and the fixed columns of one series.
 	seriesOverhead = 256
+	// jsonGrowth is the worst case of JSON escaping: one byte becomes \u00XX or \ufffd.
+	jsonGrowth = 6
 )
 
 // typedKV is a stringified attribute with its pdata type name and origin.
@@ -144,10 +146,12 @@ func (e *metricsEncoder) encode(md pmetric.Metrics) error {
 
 func (e *metricsEncoder) overBudget() bool { return e.expanded > e.maxBatchBytes }
 
-// fits reports whether a point with the attributes in e.point may expand into
-// series series, and counts it as dropped otherwise.
-func (e *metricsEncoder) fits(series int) bool {
-	perSeries := 2*(e.resourceBytes+e.scopeBytes+kvBytes(e.point)) + seriesOverhead
+// fits reports whether a point of metric name with the attributes in e.point
+// may expand into series series, and counts it as dropped otherwise. Each series
+// holds the attributes once in JSON labels, with the name, and once in maps.
+func (e *metricsEncoder) fits(name string, series int) bool {
+	attrs := e.resourceBytes + e.scopeBytes + kvBytes(e.point)
+	perSeries := jsonGrowth*(attrs+len(name)) + attrs + seriesOverhead
 	if series*perSeries <= e.maxPointBytes {
 		return true
 	}
@@ -203,7 +207,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 		v = p.DoubleValue()
 	}
 	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
-	if !e.fits(1) {
+	if !e.fits(spec.name, 1) {
 		return
 	}
 	e.appendPoint(spec, typedKV{}, uint64(p.Timestamp()), v, uint32(p.Flags()), insertedAt)
@@ -212,7 +216,7 @@ func (e *metricsEncoder) appendNumber(spec seriesSpec, p pmetric.NumberDataPoint
 func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p pmetric.HistogramDataPoint, insertedAt int64) {
 	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
 	// Buckets, +Inf, count, sum, min and max.
-	if !e.fits(p.ExplicitBounds().Len() + 5) {
+	if !e.fits(base.name, p.ExplicitBounds().Len()+5) {
 		return
 	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
@@ -222,6 +226,9 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 	bounds, counts := p.ExplicitBounds(), p.BucketCounts()
 	var cumulative uint64
 	for i := range bounds.Len() {
+		if e.overBudget() {
+			return
+		}
 		if i < counts.Len() {
 			cumulative += counts.At(i)
 		}
@@ -245,7 +252,7 @@ func (e *metricsEncoder) appendHistogram(base seriesSpec, temporality string, p 
 
 func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoint, insertedAt int64) {
 	e.point = typedStrings(e.point[:0], p.Attributes(), "point")
-	if !e.fits(p.QuantileValues().Len() + 2) {
+	if !e.fits(base.name, p.QuantileValues().Len()+2) {
 		return
 	}
 	ts, flags := uint64(p.Timestamp()), uint32(p.Flags())
@@ -257,6 +264,9 @@ func (e *metricsEncoder) appendSummary(base seriesSpec, p pmetric.SummaryDataPoi
 	quantile := base
 	quantile.name, quantile.metricType, quantile.temporality = base.name+".quantile", "Summary", "Unspecified"
 	for _, q := range p.QuantileValues().All() {
+		if e.overBudget() {
+			return
+		}
 		e.appendPoint(quantile, typedKV{key: "quantile", value: formatBound(q.Quantile()), datatype: "Str", origin: "point"}, ts, q.Value(), flags, insertedAt)
 	}
 }

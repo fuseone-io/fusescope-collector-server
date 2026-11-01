@@ -166,6 +166,10 @@ func TestMetricsExpansionLimits(t *testing.T) {
 			addHistogram(ms, "huge", 10_000)
 			addHistogram(ms, "small", 2)
 		}), 1, false, 3 + 1},
+		// The name is copied into every series, and JSON escaping can grow it sixfold.
+		{"long name over the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
+			addHistogram(ms, strings.Repeat("\x01", 4<<10), 10)
+		}), 1, false, 0},
 		{"histogram under the point limit", expansionMetrics(1<<10, func(ms pmetric.MetricSlice) {
 			addHistogram(ms, "h", 20)
 		}), 0, false, 21 + 1},
@@ -190,7 +194,7 @@ func TestMetricsExpansionLimits(t *testing.T) {
 			core, logs := observer.New(zap.WarnLevel)
 			enc := newMetricsEncoder()
 			enc.logger = zap.New(core)
-			enc.maxPointBytes, enc.maxBatchBytes = 64<<10, 512<<10
+			enc.maxPointBytes, enc.maxBatchBytes = 256<<10, 1<<20
 			err := enc.encode(tt.md)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("encode error = %v, want error %v", err, tt.wantErr)
@@ -222,5 +226,18 @@ func TestOverBudgetBatchIsPermanent(t *testing.T) {
 	err := x.push(context.Background(), expansionMetrics(4<<10, func(ms pmetric.MetricSlice) { addGauges(ms, "g", 1, 1, 1) }))
 	if !consumererror.IsPermanent(err) {
 		t.Fatalf("push error = %v, want a permanent error", err)
+	}
+}
+
+// The batch limit stops a histogram's expansion midway, not after it.
+func TestBatchLimitStopsBucketExpansion(t *testing.T) {
+	enc := newMetricsEncoder()
+	enc.maxPointBytes, enc.maxBatchBytes = 1<<40, 512<<10
+	md := expansionMetrics(1<<10, func(ms pmetric.MetricSlice) { addHistogram(ms, "h", 10_000) })
+	if err := enc.encode(md); err == nil {
+		t.Fatal("encode accepted a batch over the limit")
+	}
+	if got := enc.series.labels.Rows(); got > 1_000 {
+		t.Errorf("%d series rows built before stopping, want the expansion cut short", got)
 	}
 }
