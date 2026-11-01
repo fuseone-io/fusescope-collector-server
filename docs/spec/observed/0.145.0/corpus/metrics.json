@@ -76,8 +76,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -105,8 +105,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ],
                 "isMonotonic": true
@@ -128,8 +128,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ],
                 "isMonotonic": false
@@ -163,9 +163,9 @@
                     ],
                     "max": 0.4,
                     "min": 0.01,
-                    "startTimeUnixNano": "1793501648000000000",
+                    "startTimeUnixNano": "1793501835000000000",
                     "sum": 0.73,
-                    "timeUnixNano": "1793501708000000000"
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -202,9 +202,9 @@
                       "offset": 1
                     },
                     "scale": 2,
-                    "startTimeUnixNano": "1793501648000000000",
+                    "startTimeUnixNano": "1793501835000000000",
                     "sum": 12.5,
-                    "timeUnixNano": "1793501708000000000",
+                    "timeUnixNano": "1793501895000000000",
                     "zeroCount": "1"
                   }
                 ]
@@ -228,9 +228,9 @@
                         "value": 0.008
                       }
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
+                    "startTimeUnixNano": "1793501835000000000",
                     "sum": 0.02,
-                    "timeUnixNano": "1793501708000000000"
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -254,8 +254,8 @@
                 "dataPoints": [
                   {
                     "asDouble": 1.0,
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -274,8 +274,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -327,8 +327,8 @@
                         }
                       }
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -340,13 +340,13 @@
                 "dataPoints": [
                   {
                     "asDouble": 4.0,
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501678000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501865000000000"
                   },
                   {
                     "asDouble": 5.0,
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -358,8 +358,8 @@
                 "dataPoints": [
                   {
                     "flags": 1,
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -370,8 +370,8 @@
                 "dataPoints": [
                   {
                     "asDouble": "NaN",
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -384,8 +384,8 @@
                 "dataPoints": [
                   {
                     "asInt": "9",
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ],
                 "isMonotonic": true
@@ -398,8 +398,8 @@
                 "dataPoints": [
                   {
                     "asInt": "-4",
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ],
                 "isMonotonic": false
@@ -418,9 +418,9 @@
                     "explicitBounds": [
                       10.0
                     ],
-                    "startTimeUnixNano": "1793501648000000000",
+                    "startTimeUnixNano": "1793501835000000000",
                     "sum": 30.0,
-                    "timeUnixNano": "1793501708000000000"
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -435,8 +435,8 @@
                     "bucketCounts": [],
                     "count": "0",
                     "explicitBounds": [],
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -456,9 +456,9 @@
                       "offset": 0
                     },
                     "scale": 0,
-                    "startTimeUnixNano": "1793501648000000000",
+                    "startTimeUnixNano": "1793501835000000000",
                     "sum": 3.0,
-                    "timeUnixNano": "1793501708000000000",
+                    "timeUnixNano": "1793501895000000000",
                     "zeroCount": "0"
                   }
                 ]
@@ -470,8 +470,8 @@
                 "dataPoints": [
                   {
                     "asDouble": 6.0,
-                    "startTimeUnixNano": "1793501648000000000",
-                    "timeUnixNano": "1793501708000000000"
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
                   }
                 ]
               },
@@ -479,6 +479,72 @@
             }
           ],
           "scope": {}
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "probe-res"
+            }
+          },
+          {
+            "key": "process.pid",
+            "value": {
+              "intValue": "42"
+            }
+          },
+          {
+            "key": "deployment.environment.name",
+            "value": {
+              "stringValue": "staging"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "metrics": [
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 7.0,
+                    "startTimeUnixNano": "1793491094000000000",
+                    "timeUnixNano": "1793491095000000000"
+                  }
+                ]
+              },
+              "name": "probe.three_hours_old"
+            },
+            {
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 8.0,
+                    "startTimeUnixNano": "1793501835000000000",
+                    "timeUnixNano": "1793501895000000000"
+                  }
+                ]
+              },
+              "name": "probe.resource_typed"
+            }
+          ],
+          "scope": {
+            "attributes": [
+              {
+                "key": "scope.n",
+                "value": {
+                  "intValue": "3"
+                }
+              }
+            ],
+            "name": "probe",
+            "version": "2"
+          }
         }
       ]
     }

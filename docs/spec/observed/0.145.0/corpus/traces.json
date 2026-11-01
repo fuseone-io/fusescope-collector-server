@@ -105,13 +105,13 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708120000000",
+              "endTimeUnixNano": "1793501895120000000",
               "events": [],
               "kind": 2,
               "links": [],
               "name": "GET /cart",
               "spanId": "b7ad6b7169203331",
-              "startTimeUnixNano": "1793501708000000000",
+              "startTimeUnixNano": "1793501895000000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
@@ -148,14 +148,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708030000000",
+              "endTimeUnixNano": "1793501895030000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "SELECT cart",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "00f067aa0ba902b7",
-              "startTimeUnixNano": "1793501708010000000",
+              "startTimeUnixNano": "1793501895010000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
@@ -168,7 +168,7 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708060000000",
+              "endTimeUnixNano": "1793501895060000000",
               "events": [
                 {
                   "attributes": [
@@ -192,7 +192,7 @@
                     }
                   ],
                   "name": "exception",
-                  "timeUnixNano": "1793501708040000000"
+                  "timeUnixNano": "1793501895040000000"
                 },
                 {
                   "attributes": [
@@ -204,7 +204,7 @@
                     }
                   ],
                   "name": "retry",
-                  "timeUnixNano": "1793501708055000000"
+                  "timeUnixNano": "1793501895055000000"
                 }
               ],
               "kind": 1,
@@ -212,7 +212,7 @@
               "name": "applyDiscount",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "53995c3f42cd8ad8",
-              "startTimeUnixNano": "1793501708035000000",
+              "startTimeUnixNano": "1793501895035000000",
               "status": {
                 "code": 2,
                 "message": "discount expired"
@@ -312,7 +312,7 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708070000000",
+              "endTimeUnixNano": "1793501895070000000",
               "events": [],
               "kind": 1,
               "links": [
@@ -332,7 +332,7 @@
               "name": "typed-attributes",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "1a2b3c4d5e6f7081",
-              "startTimeUnixNano": "1793501708061000000",
+              "startTimeUnixNano": "1793501895061000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             },
@@ -357,14 +357,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708075000000",
+              "endTimeUnixNano": "1793501895075000000",
               "events": [],
               "kind": 4,
               "links": [],
               "name": "orders publish",
               "parentSpanId": "b7ad6b7169203331",
               "spanId": "2b3c4d5e6f708192",
-              "startTimeUnixNano": "1793501708071000000",
+              "startTimeUnixNano": "1793501895071000000",
               "status": {},
               "traceId": "0af7651916cd43dd8448eb211c80319c"
             }
@@ -435,14 +435,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708115000000",
+              "endTimeUnixNano": "1793501895115000000",
               "events": [],
               "kind": 2,
               "links": [],
               "name": "POST /charge",
               "parentSpanId": "00f067aa0ba902b7",
               "spanId": "3c4d5e6f708192a3",
-              "startTimeUnixNano": "1793501708080000000",
+              "startTimeUnixNano": "1793501895080000000",
               "status": {
                 "code": 2
               },
@@ -469,13 +469,13 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708260000000",
+              "endTimeUnixNano": "1793501895260000000",
               "events": [],
               "kind": 5,
               "links": [],
               "name": "orders process",
               "spanId": "4d5e6f708192a3b4",
-              "startTimeUnixNano": "1793501708200000000",
+              "startTimeUnixNano": "1793501895200000000",
               "status": {
                 "code": 1
               },
@@ -591,14 +591,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708050000000",
+              "endTimeUnixNano": "1793501895050000000",
               "events": [],
               "flags": 769,
               "kind": 2,
               "links": [],
               "name": "GET /legacy",
               "spanId": "00000000c0ffee00",
-              "startTimeUnixNano": "1793501708000000000",
+              "startTimeUnixNano": "1793501895000000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115",
               "traceState": "vendor=a"
@@ -636,7 +636,7 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708020000000",
+              "endTimeUnixNano": "1793501895020000000",
               "events": [],
               "flags": 257,
               "kind": 3,
@@ -644,7 +644,7 @@
               "name": "GET upstream",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee01",
-              "startTimeUnixNano": "1793501708005000000",
+              "startTimeUnixNano": "1793501895005000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -669,14 +669,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708030000000",
+              "endTimeUnixNano": "1793501895030000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "legacy client",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee02",
-              "startTimeUnixNano": "1793501708021000000",
+              "startTimeUnixNano": "1793501895021000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -713,14 +713,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708040000000",
+              "endTimeUnixNano": "1793501895040000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "UPDATE stock",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee03",
-              "startTimeUnixNano": "1793501708031000000",
+              "startTimeUnixNano": "1793501895031000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -757,14 +757,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708045000000",
+              "endTimeUnixNano": "1793501895045000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "SELECT stock",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee04",
-              "startTimeUnixNano": "1793501708041000000",
+              "startTimeUnixNano": "1793501895041000000",
               "status": {
                 "code": 1,
                 "message": "ignored for ok"
@@ -773,7 +773,7 @@
             },
             {
               "attributes": [],
-              "endTimeUnixNano": "1793501708049000000",
+              "endTimeUnixNano": "1793501895049000000",
               "events": [
                 {
                   "attributes": [
@@ -797,7 +797,7 @@
                     }
                   ],
                   "name": "exception",
-                  "timeUnixNano": "1793501708047000000"
+                  "timeUnixNano": "1793501895047000000"
                 },
                 {
                   "attributes": [
@@ -809,12 +809,12 @@
                     }
                   ],
                   "name": "exception",
-                  "timeUnixNano": "1793501708048000000"
+                  "timeUnixNano": "1793501895048000000"
                 },
                 {
                   "attributes": [],
                   "name": "plain",
-                  "timeUnixNano": "1793501708048000000"
+                  "timeUnixNano": "1793501895048000000"
                 }
               ],
               "kind": 1,
@@ -822,7 +822,7 @@
               "name": "escaped",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee05",
-              "startTimeUnixNano": "1793501708046000000",
+              "startTimeUnixNano": "1793501895046000000",
               "status": {
                 "code": 2,
                 "message": "boom"
@@ -910,14 +910,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708051000000",
+              "endTimeUnixNano": "1793501895051000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "precedence",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee06",
-              "startTimeUnixNano": "1793501708050000000",
+              "startTimeUnixNano": "1793501895050000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1002,14 +1002,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708051000000",
+              "endTimeUnixNano": "1793501895051000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "precedence-reversed",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee07",
-              "startTimeUnixNano": "1793501708050000000",
+              "startTimeUnixNano": "1793501895050000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1034,14 +1034,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708051000000",
+              "endTimeUnixNano": "1793501895051000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "external-host",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee08",
-              "startTimeUnixNano": "1793501708050000000",
+              "startTimeUnixNano": "1793501895050000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1060,14 +1060,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708051000000",
+              "endTimeUnixNano": "1793501895051000000",
               "events": [],
               "kind": 3,
               "links": [],
               "name": "external-url-only",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee09",
-              "startTimeUnixNano": "1793501708050000000",
+              "startTimeUnixNano": "1793501895050000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1086,14 +1086,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708051000000",
+              "endTimeUnixNano": "1793501895051000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "collision-reversed",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee0a",
-              "startTimeUnixNano": "1793501708050000000",
+              "startTimeUnixNano": "1793501895050000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1106,14 +1106,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793490908005000000",
+              "endTimeUnixNano": "1793491095005000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "three-hours-old",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee0b",
-              "startTimeUnixNano": "1793490908000000000",
+              "startTimeUnixNano": "1793491095000000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1192,14 +1192,14 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708051000000",
+              "endTimeUnixNano": "1793501895051000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "lengths",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee0c",
-              "startTimeUnixNano": "1793501708050000000",
+              "startTimeUnixNano": "1793501895050000000",
               "status": {},
               "traceId": "5ce0e9a56015fec5aadfa328ae398115"
             },
@@ -1230,7 +1230,7 @@
                   }
                 }
               ],
-              "endTimeUnixNano": "1793501708053000000",
+              "endTimeUnixNano": "1793501895053000000",
               "events": [
                 {
                   "attributes": [
@@ -1254,7 +1254,7 @@
                     }
                   ],
                   "name": "exception",
-                  "timeUnixNano": "1793501708052000000"
+                  "timeUnixNano": "1793501895052000000"
                 }
               ],
               "kind": 0,
@@ -1268,7 +1268,7 @@
               "name": "strings",
               "parentSpanId": "00000000c0ffee00",
               "spanId": "00000000c0ffee0d",
-              "startTimeUnixNano": "1793501708052000000",
+              "startTimeUnixNano": "1793501895052000000",
               "status": {
                 "code": 0,
                 "message": "unset with message"
@@ -1300,13 +1300,13 @@
           "spans": [
             {
               "attributes": [],
-              "endTimeUnixNano": "1793501708301000000",
+              "endTimeUnixNano": "1793501895301000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "probe-resource",
               "spanId": "0000000000000001",
-              "startTimeUnixNano": "1793501708300000000",
+              "startTimeUnixNano": "1793501895300000000",
               "status": {},
               "traceId": "00000000000000000000000000000001"
             }
@@ -1334,13 +1334,13 @@
           "spans": [
             {
               "attributes": [],
-              "endTimeUnixNano": "1793501708301000000",
+              "endTimeUnixNano": "1793501895301000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "probe-resource",
               "spanId": "0000000000000002",
-              "startTimeUnixNano": "1793501708300000000",
+              "startTimeUnixNano": "1793501895300000000",
               "status": {},
               "traceId": "00000000000000000000000000000002"
             }
@@ -1386,13 +1386,13 @@
           "spans": [
             {
               "attributes": [],
-              "endTimeUnixNano": "1793501708301000000",
+              "endTimeUnixNano": "1793501895301000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "probe-resource",
               "spanId": "0000000000000004",
-              "startTimeUnixNano": "1793501708300000000",
+              "startTimeUnixNano": "1793501895300000000",
               "status": {},
               "traceId": "00000000000000000000000000000004"
             }
@@ -1450,13 +1450,13 @@
           "spans": [
             {
               "attributes": [],
-              "endTimeUnixNano": "1793501708301000000",
+              "endTimeUnixNano": "1793501895301000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "probe-resource",
               "spanId": "0000000000000005",
-              "startTimeUnixNano": "1793501708300000000",
+              "startTimeUnixNano": "1793501895300000000",
               "status": {},
               "traceId": "00000000000000000000000000000005"
             }
