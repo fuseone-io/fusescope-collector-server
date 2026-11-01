@@ -36,17 +36,17 @@ func deriveSpan(span ptrace.Span) spanDerived {
 	for k, v := range span.Attributes().All() {
 		switch k {
 		case "http.request.method", "http.method":
-			d.method = v.AsString()
+			d.method = valueString(v)
 		case "url.full", "http.url":
-			d.url = v.AsString()
+			d.url = valueString(v)
 		case "server.address", "http.host", "net.peer.name":
-			d.host = v.AsString()
+			d.host = valueString(v)
 		case "http.response.status_code", "http.status_code":
-			d.statusCode = v.AsString()
+			d.statusCode = valueString(v)
 		case "db.namespace", "db.name":
-			d.dbName = v.AsString()
+			d.dbName = valueString(v)
 		case "db.operation.name", "db.operation":
-			d.dbOperation = v.AsString()
+			d.dbOperation = valueString(v)
 		}
 	}
 	external := span.Kind() == ptrace.SpanKindClient && d.method != ""
@@ -177,7 +177,7 @@ func (e *tracesEncoder) appendSpanAttributes(m pcommon.Map, t rowTimes) {
 			c.attributesBool.Values.Append(v.Bool())
 		default:
 			c.attributesString.Keys.Append(k)
-			c.attributesString.Values.Append(v.AsString())
+			c.attributesString.Values.Append(valueString(v))
 		}
 		e.addKey(k, tagAttribute, leafType(v))
 		e.tags.addValue(t.hour, k, tagAttribute, v)

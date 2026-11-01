@@ -65,7 +65,7 @@ func (s *tagSet) addValue(hour int64, key string, t tagType, v pcommon.Value) {
 	case dataBool:
 		s.add(tagRow{hour: hour, key: key, tagType: t, dataType: dt})
 	default:
-		str := v.AsString()
+		str := valueString(v)
 		if t != tagAttribute && str == "" {
 			return
 		}

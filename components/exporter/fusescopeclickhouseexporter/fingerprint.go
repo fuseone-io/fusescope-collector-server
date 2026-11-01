@@ -82,7 +82,7 @@ func newResourceInfo(res pcommon.Resource, buf []byte) (resourceInfo, []byte) {
 // sortedStrings appends m's attributes stringified and sorted by key.
 func sortedStrings(dst []keyValue, m pcommon.Map) []keyValue {
 	for k, v := range m.All() {
-		dst = append(dst, keyValue{key: k, value: v.AsString()})
+		dst = append(dst, keyValue{key: k, value: valueString(v)})
 	}
 	slices.SortFunc(dst, func(a, b keyValue) int { return cmp.Compare(a.key, b.key) })
 	return dst

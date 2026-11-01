@@ -115,7 +115,7 @@ func (e *logsEncoder) appendRecord(res *resourceInfo, scope pcommon.Instrumentat
 			c.attributesBool.Values.Append(v.Bool())
 		default:
 			c.attributesString.Keys.Append(k)
-			c.attributesString.Values.Append(v.AsString())
+			c.attributesString.Values.Append(valueString(v))
 		}
 		e.attrKeys.add(k, leafType(v))
 		e.tags.addValue(hour, k, tagAttribute, v)
@@ -151,7 +151,7 @@ func logBody(v pcommon.Value) string {
 	case pcommon.ValueTypeBytes:
 		return string(v.Bytes().AsRaw())
 	default:
-		return v.AsString()
+		return valueString(v)
 	}
 }
 
