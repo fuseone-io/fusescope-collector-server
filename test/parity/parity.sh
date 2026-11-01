@@ -51,3 +51,18 @@ for side in reference:18123 candidate:28123; do
   done
 done
 python3 -I compare.py "$out" "${tables[@]}" || { echo "parity: differences, see report" >&2; exit 1; }
+
+# A retry resends the same batch: the deduplication token must keep every table,
+# including materialized-view targets, unchanged.
+counts() { for t in "${tables[@]}"; do echo "$t $(ch 28123 "SELECT count() FROM $t")"; done; }
+counts > "$out/candidate-counts-before.txt"
+for signal in traces logs metrics; do
+  curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' \
+    --data-binary @"$out/corpus/$signal.json" "localhost:24318/v1/$signal"
+done
+sleep 20
+counts > "$out/candidate-counts-after.txt"
+if ! diff "$out/candidate-counts-before.txt" "$out/candidate-counts-after.txt" >&2; then
+  echo "retry: resending the same batch added rows" >&2
+  exit 1
+fi
