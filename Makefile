@@ -3,7 +3,9 @@ OCB ?= $(shell go env GOPATH)/bin/builder
 BUILD_DIR := _build
 BINARY := $(BUILD_DIR)/fusescope-collector
 COMPONENTS := $(patsubst %/go.mod,%,$(wildcard components/*/*/go.mod))
-LICENSES_ALLOWED := Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
+LICENSES_ALLOWED := Apache-2.0,MIT,MIT-0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
+# Verified by hand: go-licenses cannot classify these licenses (ADR 0005, NOTICE).
+LICENSES_UNCLASSIFIED := github.com/segmentio/asm
 
 # Placeholder values so `validate` can check the example configs offline.
 VALIDATE_ENV := INGEST_TOKENS_FILE=/dev/null ENGINE_TOKEN_FILE=/dev/null GATEWAY_TOKEN_FILE=/dev/null \
@@ -27,7 +29,7 @@ $(BINARY):
 	$(MAKE) build
 
 licenses: $(BINARY)
-	cd $(BUILD_DIR) && go run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(LICENSES_ALLOWED) --ignore=github.com/fuseone-io/fusescope-collector-server
+	cd $(BUILD_DIR) && go run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(LICENSES_ALLOWED) --ignore=github.com/fuseone-io/fusescope-collector-server $(addprefix --ignore=,$(LICENSES_UNCLASSIFIED))
 
 vuln: $(BINARY)
 	scripts/govulncheck.sh $(BINARY)
