@@ -16,14 +16,22 @@ exporters:
       enabled: true
       max_elapsed_time: 30s
 
+# The batch processor accepts the copy and exports it on its own, so a full or
+# failing shadow queue drops shadow copies and never fails a demo request.
+processors:
+  batch/shadow: {}
+
 service:
   pipelines:
     traces/shadow:
       receivers: [otlp]
+      processors: [batch/shadow]
       exporters: [otlp/shadow]
     logs/shadow:
       receivers: [otlp]
+      processors: [batch/shadow]
       exporters: [otlp/shadow]
     metrics/shadow:
       receivers: [otlp]
+      processors: [batch/shadow]
       exporters: [otlp/shadow]

@@ -76,31 +76,39 @@ receiver (its own telemetry names it `otlp`), leaving its existing pipelines as 
 ```yaml
 exporters:
   otlp/shadow:
-    endpoint: dns:///fusescope-collector-shadow:4317   # re-resolved on reconnect
+    endpoint: dns:///fusescope-collector-shadow:4317
     tls:
       insecure: true
     timeout: 5s
-    keepalive:            # a dead connection is found in about 15 s, not left hanging
+    keepalive:
       time: 10s
       timeout: 5s
       permit_without_stream: true
     sending_queue:
       enabled: true
       queue_size: 5000
-    retry_on_failure:     # the queue drains instead of filling while the shadow is away
+    retry_on_failure:
       enabled: true
       max_elapsed_time: 30s
+
+# The batch processor accepts the copy and exports it on its own, so a full or
+# failing shadow queue drops shadow copies and never fails a demo request.
+processors:
+  batch/shadow: {}
 
 service:
   pipelines:
     traces/shadow:
       receivers: [otlp]
+      processors: [batch/shadow]
       exporters: [otlp/shadow]
     logs/shadow:
       receivers: [otlp]
+      processors: [batch/shadow]
       exporters: [otlp/shadow]
     metrics/shadow:
       receivers: [otlp]
+      processors: [batch/shadow]
       exporters: [otlp/shadow]
 ```
 
@@ -143,6 +151,16 @@ keys, and series per metric must be equal. Phase 6 asks for a week with every ho
 5 * * * * cd /opt/fusescope && docker compose -f compose.yaml -f shadow/compose.shadow.yaml run --rm shadow-compare >> /var/log/fusescope-shadow.log 2>&1
 ```
 
+## Upgrading from the tee version
+
+The first version (#32) pointed the sources at an `otel-tee`. Before merging the exporter block, put the sources back
+on the demo collector and remove the tee, or the shadow gets every item twice:
+
+```sh
+docker compose -f compose.yaml --profile generators up -d --no-deps hotrod logs-checkout logs-payment-error traces-payment-errors fusescope
+docker rm -f fusescope-demo-otel-tee-1
+```
+
 ## Rollback
 
 Restore `otel-collector/config.yaml.bak-pre-shadow`, restart the demo collector with the demo's compose alone, then stop
@@ -157,9 +175,9 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 
 ## Risks
 
-- A full `otlp/shadow` queue fails the request at the demo's OTLP receiver, as any exporter of a pipeline does, and
-  senders retry. The keepalive, the 5 s timeout and the 30 s retry limit keep the queue (5 000 requests) from filling
-  at the demo's few requests a second, even while the shadow collector is down; if it stays unreachable, roll back.
+- The shadow pipelines sit behind a `batch/shadow` processor, which accepts the copy and exports it on its own: a
+  full or failing `otlp/shadow` queue (5 000 requests) drops shadow copies and never fails a demo request. The
+  keepalive, the 5 s timeout and the 30 s retry limit keep that queue draining while the shadow collector is away.
 - The demo collector holds the queued copies in its own memory (768 MiB, limiter at 640 MiB); at the demo's volume
   that is a few MiB at most.
 - The shadow collector shares the host's CPU and memory with the demo; the limits above bound it.
