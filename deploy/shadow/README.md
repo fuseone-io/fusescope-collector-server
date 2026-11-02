@@ -16,7 +16,8 @@ hotrod, telemetrygen, RUM (via fusescope) ──► otel-tee ──► otel-coll
 | `tee.yaml` | upstream core collector: OTLP in, OTLP to the demo collector and, through a shadow-only pipeline, to the shadow collector |
 | `collector.yaml` | this collector's configuration in shadow |
 | `clickhouse/cluster.xml` | single-node `cluster` with an embedded keeper, named `clickhouse-shadow` |
-| `compare.py` | the comparison; exits 1 on a difference |
+| `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
+| `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
 
 ## Derived from the demo's data
 
@@ -30,11 +31,13 @@ demo's `compose.yaml` and from what the demo's ClickHouse holds (read-only queri
 - **Host metrics** are `system.cpu.time`, `system.cpu.load_average.{1m,5m,15m}`, `system.disk.*`,
   `system.filesystem.{usage,inodes.usage}` and `system.memory.usage`, one point a minute, with resource
   `host.name` = the host's name and `os.type`; the demo mounts the host at `/hostfs` and shares its UTS namespace.
-  Hence the `cpu`, `load`, `disk`, `filesystem` and `memory` scrapers at 60 s and the `system` detector.
+  Hence the `cpu`, `load`, `disk`, `filesystem` and `memory` scrapers at 60 s and the `system` detector. The demo's
+  `system.cpu.time` has a `cpu` label (opt-in in the receiver), it writes no `system.cpu.logical.count` (on by
+  default) and no disk series for the optical drive `sr0`; the configuration matches each.
 - **APM metrics** (`signoz_calls_total`, `signoz_latency`, `signoz_external_call_latency_*`) come from spans: the
   `fusescope_spanmetrics` connector.
 - **Not reproduced:** the demo collector scrapes its own telemetry (`otelcol_*`, `exporter_*`, `scrape_*`, `up`);
-  `compare.py` leaves those out. The demo collector runs without OpAMP (its command line is `--config` only), so the
+  `compare.py` leaves those out, and ignores the scope version, which is each collector's build version. The demo collector runs without OpAMP (its command line is `--config` only), so the
   shadow does not connect to the backend either.
 
 ## Install
@@ -60,7 +63,7 @@ Recreating `fusescope` restarts the backend (a few seconds of UI and RUM unavail
 Check: `docker logs fusescope-demo-otel-tee-1` and `fusescope-demo-fusescope-collector-shadow-1` show no export
 errors, and the demo's UI keeps showing new data.
 
-Resources: about 2.3 GiB and 1.3 CPU more (`clickhouse-shadow` 1.5 GiB, collector 384 MiB, tee 384 MiB).
+Resources: about 3.3 GiB and 1.3 CPU more (`clickhouse-shadow` 2.5 GiB, collector 384 MiB, tee 384 MiB).
 
 ## Compare
 

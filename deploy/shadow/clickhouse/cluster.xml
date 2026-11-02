@@ -38,5 +38,4 @@
         <shard>01</shard>
         <replica>01</replica>
     </macros>
-    <max_server_memory_usage>1200000000</max_server_memory_usage>
 </clickhouse>
