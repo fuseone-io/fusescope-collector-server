@@ -44,25 +44,25 @@
           "spans": [
             {
               "attributes": [],
-              "endTimeUnixNano": "1793591510003000000",
+              "endTimeUnixNano": "1793592033003000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "agg",
               "spanId": "0000000000000e00",
-              "startTimeUnixNano": "1793591510001000000",
+              "startTimeUnixNano": "1793592033001000000",
               "status": {},
               "traceId": "6d1f0a2b3c4d5e6f708192a3b4c5d6e7"
             },
             {
               "attributes": [],
-              "endTimeUnixNano": "1793591510003000000",
+              "endTimeUnixNano": "1793592033003000000",
               "events": [],
               "kind": 1,
               "links": [],
               "name": "agg",
               "spanId": "0000000000000e01",
-              "startTimeUnixNano": "1793591510001000000",
+              "startTimeUnixNano": "1793592033001000000",
               "status": {},
               "traceId": "6d1f0a2b3c4d5e6f708192a3b4c5d6e7"
             }

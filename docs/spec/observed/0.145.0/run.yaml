@@ -1,4 +1,4 @@
-t0_unix_nanos: 1793591510000000000
+t0_unix_nanos: 1793592033000000000
 reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0
 clickhouse: 25.12.5.44
 invalid_utf8_status: traces=200 logs=200
