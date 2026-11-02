@@ -548,3 +548,26 @@ func TestMutatedPartialRefusalIsDropped(t *testing.T) {
 		t.Errorf("pending kept %d mutated points", c.pending.DataPointCount())
 	}
 }
+
+// Histogram counters and bounds count against max_series_bytes.
+func TestHistogramStorageCounts(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Dimensions = nil
+	cfg.LatencyHistogramBuckets = nil
+	for i := range 10_000 {
+		cfg.LatencyHistogramBuckets = append(cfg.LatencyHistogramBuckets, time.Duration(i+1)*time.Microsecond)
+	}
+	cfg.MaxSeriesBytes = 1 << 20
+	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), consumertest.NewNop())
+	td := traceWith(100, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	if n, buckets := len(c.latency.order), len(c.bounds)+1; n*buckets*8 > cfg.MaxSeriesBytes {
+		t.Errorf("%d latency series hold %d bytes of counters, over max_series_bytes", n, n*buckets*8)
+	}
+	md := c.build()
+	if got := metricsBytes(md); got < len(c.latency.order)*len(c.bounds)*8 {
+		t.Errorf("metricsBytes = %d, want at least the bounds and counters", got)
+	}
+}

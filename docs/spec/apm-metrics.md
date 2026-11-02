@@ -157,7 +157,7 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   has none. It is set as if it were a resource attribute, so its `resource_` copy appears as in
   the reference.
 - **Series limits.** At most `max_series` (100000) series, holding at most `max_series_bytes`
-  (64 MiB) of keys and attributes, are kept between flushes, across the six metrics; a
+  (64 MiB) of keys, attributes and histogram counters, are kept between flushes, across the six metrics; a
   database or external-call series counts twice, as it emits a count and a sum. Spans of
   further series are dropped from the metrics with a warning. The reference's
   `dimensions_cache_size` was not observed when exceeded (§7).

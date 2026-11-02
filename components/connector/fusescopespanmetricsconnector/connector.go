@@ -50,8 +50,9 @@ func attr(key string, v pcommon.Value) kv {
 type family struct {
 	series map[string]*series
 	order  []string
-	// points is how many points each series emits, as it counts against max_series.
-	points int
+	// points is how many points each series emits, as it counts against max_series;
+	// bytes is what each series holds beyond its key and attributes.
+	points, bytes int
 }
 
 type series struct {
@@ -107,6 +108,8 @@ func newConnector(cfg *Config, set connector.Settings, next consumer.Metrics) *s
 		c.resourceKeys = append(c.resourceKeys, "resource_"+d.Name)
 	}
 	c.calls.points, c.latency.points, c.db.points, c.external.points = 1, 1, 2, 2
+	// A latency series holds its counters, and its point a copy of the bounds.
+	c.latency.bytes = 8 * (2*len(c.bounds) + 1)
 	c.reset()
 	return c
 }
@@ -297,7 +300,7 @@ func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series 
 		return s
 	}
 	// The series keeps its key and a copy of its attributes.
-	size += len(b) + seriesOverhead
+	size += len(b) + seriesOverhead + f.bytes
 	if c.total+f.points > c.cfg.MaxSeries || c.bytes+size > c.cfg.MaxSeriesBytes {
 		c.dropped++
 		return nil
@@ -453,6 +456,7 @@ func metricsBytes(md pmetric.Metrics) int {
 				case pmetric.MetricTypeHistogram:
 					for _, p := range m.Histogram().DataPoints().All() {
 						add(p.Attributes())
+						n += 8 * (p.ExplicitBounds().Len() + p.BucketCounts().Len())
 					}
 				}
 			}
