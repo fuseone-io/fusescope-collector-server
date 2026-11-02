@@ -55,7 +55,7 @@ configuration goes through OpAMP with an allow-list (§5), never an arbitrary UR
 | `signozlogspipeline` | processor | Log pipelines configured in the FuseScope UI |
 | `signozspanmapper`, `signozllmpricing`, `signoz_tail_sampling` | processors | Other UI-managed processing the backend pushes today |
 | `fusescope_spanmetrics` | connector | Service RED metrics under the names the Services page queries ([apm-metrics](docs/spec/apm-metrics.md)) |
-| `fusescope_opamp` | extension | Applies backend-managed config fragments within an allow-list, and receives the ingest policy (§5) |
+| `fusescope_opamp` | confmap provider | OpAMP agent: applies the backend-managed processors of a pushed configuration within an allow-list, and receives the ingest policy (§5, [ADR 0008](docs/adr/0008-opamp-remote-config.md)) |
 | `ingestauth` | extension | Validates ingestion keys locally against the ingest policy, stamps `fusescope.ingest.key_id`, per-key rate limits ([ADR 0006](docs/adr/0006-single-ingress.md)) |
 | `rumreceiver` | receiver | RUM ingest (`/rum/v1/*`): public keys, per-application CORS, PII scrubbing, moved from the backend gateway |
 | `artifactreceiver` | receiver | Source maps, R8 mappings and debug files, streamed to the backend's internal intake |
@@ -120,8 +120,10 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
   credential (ADR 0006).
 - **Tenancy:** one engine token per tenant; a shared gateway serving several tenants routes by
   the authenticated identity, never by an attribute in the payload.
-- **Remote configuration (OpAMP):** mTLS to the FuseScope backend. Accepted config fragments are
-  limited to an allow-list of processor types (§3.2). The ingest policy custom message can only
+- **Remote configuration (OpAMP):** TLS to the FuseScope backend, plaintext only by explicit
+  opt-in for today's in-cluster port ([ADR 0008](docs/adr/0008-opamp-remote-config.md)). A pushed
+  configuration is applied only where it differs from the local one in allow-listed processors
+  (`signozlogspipeline`, `signozspanmapper`, `signozllmpricing`) and their place in pipelines. The ingest policy custom message can only
   restrict what is accepted. Receivers, exporters, extensions, endpoints and outbound
   credentials can never be changed remotely, so a compromised backend cannot redirect telemetry.
 - **Limits:** gRPC message size, concurrent streams, and request timeouts on receivers; the
