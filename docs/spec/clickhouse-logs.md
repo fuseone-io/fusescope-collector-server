@@ -19,6 +19,10 @@ Distributed tables only; ClickHouse fills the local tables [obs `inserts.jsonl`]
 `_retention_days`, `_retention_days_cold`, `created_at` and the `$$` columns are defaults computed
 by ClickHouse and are not sent. The key tables' local `timestamp` defaults to the insert time.
 
+**Chunks (deliberate difference).** As traces §1: every record copies its resource into
+`resources_string` and `resource`, and the rows are inserted in chunks once those copies, plus
+256 bytes per record, pass 256 MiB.
+
 ## 2. Shared with traces
 
 - **Resource fingerprint, `labels`, `resources_string`, `resource`**: exactly as traces §2.1 and §5.

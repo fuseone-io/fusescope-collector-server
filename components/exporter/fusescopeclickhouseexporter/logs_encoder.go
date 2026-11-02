@@ -17,6 +17,8 @@ import (
 // logsEncoder turns plog.Logs into one column block per table. It is reused
 // across batches and is not safe for concurrent use.
 type logsEncoder struct {
+	chunker
+
 	rows      *logColumns
 	resources *resourceSet
 	tags      *tagSet
@@ -37,6 +39,7 @@ func (e *logsEncoder) setAttempt(now time.Time, random func([]byte)) {
 
 func newLogsEncoder() *logsEncoder {
 	return &logsEncoder{
+		chunker:   newChunker(),
 		rows:      newLogColumns(),
 		resources: newResourceSet(),
 		tags:      newTagSet(),
@@ -55,8 +58,12 @@ func (e *logsEncoder) reset() {
 	e.resKeys.reset()
 }
 
-func (e *logsEncoder) encode(ld plog.Logs) {
+// encode builds the rows of ld, inserting a chunk through emit whenever the
+// copies of resources exceed maxChunkBytes; the last chunk is left for the
+// caller. It returns the first error of emit.
+func (e *logsEncoder) encode(ld plog.Logs, emit func() error) error {
 	e.reset()
+	e.begin(emit)
 	now := e.now()
 	hour := hourBucket(uint64(now.UnixNano()))
 	for _, rl := range ld.ResourceLogs().All() {
@@ -74,9 +81,14 @@ func (e *logsEncoder) encode(ld plog.Logs) {
 			}
 			for _, lr := range sl.LogRecords().All() {
 				e.appendRecord(&res, scope, lr, now, hour)
+				// resources_string and resource each copy the resource.
+				if !e.add(2*len(res.labels), e.reset) {
+					return e.err
+				}
 			}
 		}
 	}
+	return nil
 }
 
 func (e *logsEncoder) appendRecord(res *resourceInfo, scope pcommon.InstrumentationScope, lr plog.LogRecord, now time.Time, hour int64) {

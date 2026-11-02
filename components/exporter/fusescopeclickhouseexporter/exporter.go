@@ -97,11 +97,16 @@ func newSignalExporter[E attempter, D any](cfg *Config, database string, logger 
 }
 
 func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
-	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newTracesEncoder, infallible((*tracesEncoder).encode))
+	newEncoder := func() *tracesEncoder {
+		e := newTracesEncoder()
+		e.logger = logger
+		return e
+	}
+	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newEncoder, (*tracesEncoder).encode)
 }
 
 func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
-	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, infallible((*logsEncoder).encode))
+	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode)
 }
 
 func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metricsEncoder, pmetric.Metrics] {
@@ -134,14 +139,6 @@ func tableToken(request, table string, chunk int) string {
 		token += "-" + strconv.Itoa(chunk)
 	}
 	return token
-}
-
-// infallible adapts an encoder that builds one chunk and cannot fail.
-func infallible[E any, D any](encode func(E, D)) func(E, D, func() error) error {
-	return func(e E, d D, _ func() error) error {
-		encode(e, d)
-		return nil
-	}
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
