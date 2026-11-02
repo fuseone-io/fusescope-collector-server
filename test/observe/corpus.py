@@ -281,6 +281,155 @@ def apm_spans(t0):
     ]
 
 
+ADDRESS_KEYS = {
+    "http.host": "hh.example.com",
+    "net.peer.name": "npn.example.com",
+    "server.address": "sa.example.com",
+    "http.url": "http://hu.example.com/p",
+    "url.full": "https://uf.example.com/p",
+    "peer.service": "ps-service",
+    "network.peer.address": "10.0.0.1",
+    "net.peer.ip": "10.0.0.2",
+    "net.sock.peer.addr": "10.0.0.3",
+    "net.sock.peer.name": "nspn.example.com",
+}
+
+
+def address_spans(t0):
+    """External-call address probes: every candidate key alone, every ordered pair, ports, RPC and db spans."""
+    ids = (f"{i:016x}" for i in range(0x1000, 0x1200))
+    root = f"{0xd00:016x}"
+
+    # container.name, a dimension, tells the probes' series apart.
+    def sub(name, kind, a, **kw):
+        return span(TRACE_D, next(ids), root, name, kind, 20, 21, a | {"container.name": name}, t0, **kw)
+
+    keys = list(ADDRESS_KEYS)
+    spans = [sub(f"addr-only {k}", 3, {k: ADDRESS_KEYS[k]}) for k in keys]
+    spans += [sub(f"addr-pair {a} {b}", 3, {a: ADDRESS_KEYS[a], b: ADDRESS_KEYS[b]})
+              for a in keys for b in keys if a != b]
+    spans += [
+        # Nothing that names a peer, on a client span.
+        sub("addr-none", 3, {"custom.key": "x"}),
+        # Empty values.
+        sub("addr-empty peer.service", 3, {"peer.service": ""}),
+        sub("addr-empty network.peer.address", 3, {"network.peer.address": ""}),
+        sub("addr-empty-then peer.service", 3, {"peer.service": "", "network.peer.address": "10.0.1.1"}),
+        sub("addr-empty-then network.peer.address", 3, {"network.peer.address": "", "peer.service": "empty-then-ps"}),
+        sub("addr-empty-then server.address", 3, {"server.address": "", "peer.service": "empty-sa-ps"}),
+        # Ports beside each host key, as int and as string.
+        sub("port network.peer.port int", 3, {"network.peer.address": "10.0.2.1", "network.peer.port": 7001}),
+        sub("port network.peer.port str", 3, {"network.peer.address": "10.0.2.2", "network.peer.port": "7002"}),
+        sub("port net.sock.peer.port str", 3, {"net.sock.peer.addr": "10.0.2.3", "net.sock.peer.port": "7003"}),
+        sub("port net.peer.ip net.peer.port str", 3, {"net.peer.ip": "10.0.2.4", "net.peer.port": "7004"}),
+        sub("port peer.service server.port str", 3, {"peer.service": "ps-port", "server.port": "7005"}),
+        sub("port peer.service net.peer.port str", 3, {"peer.service": "ps-port2", "net.peer.port": "7006"}),
+        sub("port http.host server.port str", 3, {"http.host": "hh-port.example.com", "server.port": "7007"}),
+        sub("port server.address net.peer.port str", 3, {"server.address": "sa-cross.example.com", "net.peer.port": "7008"}),
+        sub("port net.peer.ip network.peer.port str", 3, {"net.peer.ip": "10.0.2.5", "network.peer.port": "7010"}),
+        sub("port network.peer.address net.peer.port str", 3, {"network.peer.address": "10.0.2.6", "net.peer.port": "7011"}),
+        sub("port net.sock.peer.addr net.peer.port str", 3, {"net.sock.peer.addr": "10.0.2.7", "net.peer.port": "7012"}),
+        sub("port net.peer.ip net.sock.peer.port str", 3, {"net.peer.ip": "10.0.2.8", "net.sock.peer.port": "7013"}),
+        sub("port net.peer.ip server.port str", 3, {"net.peer.ip": "10.0.2.9", "server.port": "7014"}),
+        sub("port network.peer.address server.port str", 3, {"network.peer.address": "10.0.2.10", "server.port": "7015"}),
+        sub("port net.peer.name net.sock.peer.port str", 3, {"net.peer.name": "npn-sock.example.com", "net.sock.peer.port": "7016"}),
+        sub("port server.address net.peer.ip net.peer.port str", 3, {"server.address": "sa-over-ip.example.com",
+                                                                     "net.peer.ip": "10.0.2.11", "net.peer.port": "7017"}),
+        sub("port net.peer.ip net.peer.port int", 3, {"net.peer.ip": "10.0.2.12", "net.peer.port": 7018}),
+        sub("port net.sock.peer.addr net.sock.peer.port int", 3, {"net.sock.peer.addr": "10.0.2.13", "net.sock.peer.port": 7019}),
+        sub("port network.peer.address network.peer.port empty", 3, {"network.peer.address": "10.0.2.14", "network.peer.port": ""}),
+        sub("port server.address network.peer.port str", 3, {"server.address": "sa-np.example.com", "network.peer.port": "7009"}),
+        # Span kinds other than client.
+        sub("kind-producer peer.service", 4, {"peer.service": "producer-ps"}),
+        sub("kind-consumer peer.service", 5, {"peer.service": "consumer-ps"}),
+        sub("kind-server peer.service", 2, {"peer.service": "server-ps"}),
+        sub("kind-internal peer.service", 1, {"peer.service": "internal-ps"}),
+        sub("kind-unspecified peer.service", 0, {"peer.service": "unspecified-ps"}),
+        sub("kind-producer server.address", 4, {"server.address": "producer-sa.example.com"}),
+        # RPC spans.
+        sub("rpc-a", 3, {"rpc.system": "grpc", "rpc.service": "a.Svc", "rpc.method": "Ma",
+                         "server.address": "127.0.0.1", "server.port": 8082}),
+        sub("b.Svc/Mb", 3, {"rpc.system": "grpc", "rpc.service": "b.Svc", "rpc.method": "Mb",
+                            "server.address": "127.0.0.1", "server.port": 8082}),
+        sub("rpc-c no system", 3, {"rpc.service": "c.Svc", "rpc.method": "Mc", "server.address": "c.example.com"}),
+        sub("rpc-d no method", 3, {"rpc.system": "grpc", "rpc.service": "d.Svc", "server.address": "d.example.com"}),
+        sub("rpc-e no service", 3, {"rpc.system": "grpc", "rpc.method": "Me", "server.address": "e.example.com"}),
+        sub("rpc-f system address", 3, {"rpc.system": "grpc", "server.address": "f.example.com"}),
+        sub("rpc-g system only", 3, {"rpc.system": "grpc"}),
+        sub("rpc-h no address", 3, {"rpc.system": "grpc", "rpc.service": "h.Svc", "rpc.method": "Mh"}),
+        sub("rpc-i http.host", 3, {"rpc.system": "grpc", "rpc.service": "i.Svc", "rpc.method": "Mi", "http.host": "i.example.com"}),
+        sub("rpc-j peer.service", 3, {"rpc.system": "grpc", "rpc.service": "j.Svc", "rpc.method": "Mj", "peer.service": "j-ps"}),
+        sub("rpc-k other system", 3, {"rpc.system": "apache_dubbo", "rpc.service": "k.Svc", "rpc.method": "Mk",
+                                      "server.address": "k.example.com"}),
+        sub("rpc-l service method only", 3, {"rpc.service": "l.Svc", "rpc.method": "Ml"}),
+        sub("rpc-m server kind", 2, {"rpc.system": "grpc", "rpc.service": "m.Svc", "rpc.method": "Mm",
+                                     "server.address": "m.example.com"}),
+        sub("rpc-n empty system", 3, {"rpc.system": "", "rpc.service": "n.Svc", "rpc.method": "Mn",
+                                      "server.address": "n.example.com"}),
+        sub("rpc-s method only", 3, {"rpc.system": "grpc", "rpc.method": "Ms"}),
+        sub("rpc-t service only", 3, {"rpc.system": "grpc", "rpc.service": "t.Svc"}),
+        sub("rpc-u empty service method", 3, {"rpc.system": "grpc", "rpc.service": "", "rpc.method": "",
+                                               "server.address": "u.example.com"}),
+        sub("rpc-v int service", 3, {"rpc.system": "grpc", "rpc.service": 5, "rpc.method": "Mv"}),
+        sub("x.Other/FromName", 3, {"rpc.system": "grpc", "rpc.service": "o.Svc", "rpc.method": "Mo"}),
+        sub("rpc-p service first", 3, {"rpc.service": "p.Svc", "rpc.method": "Mp", "rpc.system": "grpc",
+                                       "server.address": "p.example.com"}),
+        sub("rpc-q net.peer.name", 3, {"rpc.system": "grpc", "rpc.service": "q.Svc", "rpc.method": "Mq",
+                                       "net.peer.name": "q.example.com", "net.peer.port": "9"}),
+        sub("rpc-r http.url", 3, {"rpc.system": "grpc", "rpc.service": "r.Svc", "rpc.method": "Mr",
+                                  "http.url": "http://r.example.com/x"}),
+        # Database spans with peer keys.
+        sub("SQL SELECT", 3, {"peer.service": "mysql", "sql.query": "SELECT 1"}),
+        sub("db-peer-service", 3, {"db.system": "mysql", "db.name": "ps_db", "peer.service": "db-ps"}),
+        sub("db-net-peer-name", 3, {"db.system": "mysql", "db.name": "npn_db", "net.peer.name": "db-npn.example.com"}),
+        sub("db-network-peer-address", 3, {"db.system": "redis", "network.peer.address": "10.0.3.1"}),
+        sub("db-internal peer.service", 1, {"db.system": "sqlite", "db.name": "int_db", "peer.service": "db-int-ps"}),
+        sub("db-only-name", 3, {"db.name": "orphan_db"}),
+        # Other peer-ish keys.
+        sub("other net.host.name", 3, {"net.host.name": "nhn.example.com"}),
+        sub("other server.socket.address", 3, {"server.socket.address": "10.0.4.1"}),
+        sub("other messaging", 4, {"messaging.system": "kafka", "messaging.destination.name": "topic-x"}),
+        sub("other http status", 3, {"peer.service": "status-ps", "http.response.status_code": 503}),
+        # Empty, unparseable and non-string values ahead of a lower key.
+        sub("empty http.host", 3, {"http.host": "", "net.peer.name": "eh-npn.example.com"}),
+        sub("empty net.peer.name", 3, {"net.peer.name": "", "server.address": "en-sa.example.com"}),
+        sub("empty net.peer.ip", 3, {"net.peer.ip": "", "peer.service": "eip-ps"}),
+        sub("empty net.sock.peer.addr", 3, {"net.sock.peer.addr": "", "peer.service": "esock-ps"}),
+        sub("empty http.url", 3, {"http.url": "", "url.full": "https://ehu-uf.example.com/x"}),
+        sub("empty url.full", 3, {"url.full": "", "peer.service": "euf-ps"}),
+        sub("url not a url", 3, {"http.url": "not a url", "peer.service": "nau-ps"}),
+        sub("url relative", 3, {"http.url": "/relative/path", "peer.service": "rel-ps"}),
+        sub("url parse error", 3, {"http.url": "http://[::1", "peer.service": "perr-ps"}),
+        sub("url relative no slash", 3, {"http.url": "relative/path", "peer.service": "reln-ps"}),
+        sub("url no spaces", 3, {"http.url": "not-a-url", "peer.service": "nas-ps"}),
+        sub("url scheme-relative", 3, {"http.url": "//scheme-rel.example.com/x", "peer.service": "srel-ps"}),
+        sub("url space in path", 3, {"http.url": "http://space-path.example.com/a b", "peer.service": "spath-ps"}),
+        sub("url query only", 3, {"http.url": "?q=1", "peer.service": "q-ps"}),
+        sub("url asterisk", 3, {"http.url": "*", "peer.service": "ast-ps"}),
+        sub("url upper case", 3, {"http.url": "HTTP://Upper.EXAMPLE.com:81/x"}),
+        sub("url.full not a url", 3, {"url.full": "not a url", "peer.service": "ufnau-ps"}),
+        sub("url opaque", 3, {"http.url": "mailto:someone@example.com", "peer.service": "opq-ps"}),
+        sub("url other scheme", 3, {"http.url": "ftp://ftp.example.com/x"}),
+        sub("url http prefix", 3, {"http.url": "httpx.example.com/x"}),
+        sub("url http single slash", 3, {"http.url": "http:/single.example.com/x"}),
+        sub("url.full relative no slash", 3, {"url.full": "uf-relative/path"}),
+        sub("url.full upper case", 3, {"url.full": "HTTPS://UF-Upper.example.com/x"}),
+        sub("url userinfo", 3, {"url.full": "http://user:pw@ui.example.com:99/x"}),
+        sub("url int", 3, {"http.url": 5, "peer.service": "uint-ps"}),
+        sub("empty host network.peer.port", 3, {"network.peer.address": "", "network.peer.port": "1"}),
+        sub("empty host net.peer.port", 3, {"net.peer.name": "", "net.peer.port": "2"}),
+        sub("port peer.service network.peer.port str", 3, {"peer.service": "ps-port3", "network.peer.port": "7020"}),
+        sub("port http.host net.peer.port str", 3, {"http.host": "hh-port2.example.com", "net.peer.port": "7021"}),
+        sub("int net.peer.name", 3, {"net.peer.name": 7, "net.peer.port": "3"}),
+        sub("int peer.service", 3, {"peer.service": 8}),
+        sub("bool network.peer.address", 3, {"network.peer.address": True}),
+        sub("int http.host", 3, {"http.host": 9}),
+        sub("rpc-w int method", 3, {"rpc.system": "grpc", "rpc.service": "w.Svc", "rpc.method": 6}),
+        sub("rpc-x int system", 3, {"rpc.system": 4, "rpc.service": "x.Svc", "rpc.method": "Mx"}),
+    ]
+    return spans
+
+
 def apm_late_spans(t0):
     """Spans of the `agg` series in t0's minute, sent after the reference has flushed."""
     ids = (f"{i:016x}" for i in range(0xe00, 0xe10))
@@ -360,7 +509,7 @@ def traces(t0):
             span(f"{i + 1:032x}", f"{i + 1:016x}", None, "probe-resource", 1, 300, 301, {}, t0)]}]}
         for i, r in enumerate(PROBE_RESOURCES) if i != 2
     ] + [
-        {"resource": {"attributes": attrs(APM_RESOURCE)}, "scopeSpans": [{"scope": SCOPE, "spans": apm_spans(t0)}]},
+        {"resource": {"attributes": attrs(APM_RESOURCE)}, "scopeSpans": [{"scope": SCOPE, "spans": apm_spans(t0) + address_spans(t0)}]},
         # An empty rather than absent service.name.
         {"resource": {"attributes": attrs({"service.name": ""})}, "scopeSpans": [{"scope": SCOPE, "spans": [
             span(TRACE_D, "0000000000000f01", None, "empty-service", 1, 14, 15, {}, t0)]}]},
