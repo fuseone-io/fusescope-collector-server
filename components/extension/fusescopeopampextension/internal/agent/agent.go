@@ -1,0 +1,310 @@
+// Copyright FuseOne
+// SPDX-License-Identifier: Apache-2.0
+
+// Package agent is the OpAMP agent shared by the fusescopeopamp provider and
+// the fusescope_opamp extension (ADR 0008): it merges and preflights pushes,
+// persists their lifecycle, triggers reloads and reports status.
+package agent // import "github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/processor"
+	"go.uber.org/zap"
+
+	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/merge"
+	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/preflight"
+	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/state"
+)
+
+const (
+	// ExtensionName is the extension whose Ready confirms a revision.
+	ExtensionName = "fusescope_opamp"
+	// MaxPushBytes and MaxManagedProcessors bound what a push may hold.
+	MaxPushBytes         = 4 << 20
+	MaxManagedProcessors = 256
+	// PreflightTimeout bounds the start of each preflighted processor.
+	PreflightTimeout = 10 * time.Second
+)
+
+// Status is reported to the backend for one push.
+type Status struct {
+	Hash    []byte
+	Applied bool
+	Message string // on failure: what failed, never configuration values
+}
+
+// Reporter sends status and the effective configuration to the backend. Its
+// calls must not block on the network.
+type Reporter interface {
+	Report(Status)
+	EffectiveConfigChanged()
+}
+
+// Agent holds what runs, what is pending, and the persisted lifecycle.
+type Agent struct {
+	logger    *zap.Logger
+	store     *state.Store
+	factories map[component.Type]processor.Factory
+
+	mu       sync.Mutex
+	base     merge.Config
+	running  merge.Config // merged configuration the collector runs or will
+	revision string       // injected into the extension; confirms running
+	applied  []byte       // body of the last applied push, merged again on a new base
+	pending  *state.Push
+	pendingM merge.Config
+	reload   func()
+	reporter Reporter
+	failed   *state.Push // from the last start, reported once connected
+}
+
+// New opens the agent's state.
+func New(logger *zap.Logger, dir string, factories map[component.Type]processor.Factory) (*Agent, error) {
+	store, err := state.Open(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open OpAMP state %s: %w", dir, err)
+	}
+	return &Agent{logger: logger, store: store, factories: factories}, nil
+}
+
+// InstanceUID is the agent's persistent identity.
+func (a *Agent) InstanceUID() ([16]byte, error) { return a.store.InstanceUID() }
+
+// Start reads the persisted lifecycle and decides what the collector runs
+// first: the base merged again with the last applied push, if it still
+// fits the base, else the base alone. It returns a push that failed while
+// being applied before the last exit, to report FAILED.
+func (a *Agent) Start(base merge.Config) (*Status, error) {
+	st, err := a.store.Start()
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.base, a.running = base, base
+	if st.DroppedCache {
+		a.logger.Warn("the last start from the cached OpAMP configuration never completed; running the local configuration alone")
+	}
+	if st.Applied != nil {
+		if m, err := a.mergePush(base, st.Applied.Config); err != nil {
+			a.logger.Warn("the cached OpAMP configuration no longer fits the local one; running the local configuration alone", zap.Error(err))
+		} else {
+			a.running, a.revision, a.applied = m, st.Applied.Revision, st.Applied.Config
+		}
+	}
+	if st.Failed != nil {
+		a.failed = st.Failed
+		return &Status{Hash: st.Failed.Hash, Message: "the collector exited while applying this configuration"}, nil
+	}
+	return nil, nil
+}
+
+// SetReloader sets how to ask the collector to reload, and the reporter.
+func (a *Agent) SetReloader(reload func(), reporter Reporter) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.reload, a.reporter = reload, reporter
+}
+
+// Config is what the provider returns: the merged configuration with the
+// revision to confirm injected into the extension's config.
+func (a *Agent) Config(base merge.Config) merge.Config {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !equalConfig(a.base, base) {
+		// The local file changed: merge the applied push again on the new base.
+		a.base, a.running = base, base
+		if a.applied != nil {
+			if m, err := a.mergePush(base, a.applied); err != nil {
+				a.logger.Warn("the applied OpAMP configuration no longer fits the changed local one; running the local configuration alone", zap.Error(err))
+			} else {
+				a.running = m
+			}
+		}
+	}
+	cfg, rev := a.running, a.revision
+	if a.pendingM != nil {
+		cfg, rev = a.pendingM, a.pending.Revision
+	}
+	return withRevision(cfg, rev)
+}
+
+// Effective is the configuration reported as effective: what runs, without
+// the injected revision.
+func (a *Agent) Effective() merge.Config {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.running
+}
+
+// Push handles one pushed configuration and returns the status to report
+// now: a failure, or nil while the push is pending.
+func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
+	fail := func(msg string) *Status { return &Status{Hash: hash, Message: msg} }
+	if len(body) > MaxPushBytes {
+		return fail(fmt.Sprintf("the pushed configuration exceeds %d bytes", MaxPushBytes))
+	}
+	a.mu.Lock()
+	base := a.base
+	a.mu.Unlock()
+	merged, err := a.mergePush(base, body)
+	if err != nil {
+		return fail(err.Error())
+	}
+	procs, pipelines := managed(merged)
+	if len(procs) > MaxManagedProcessors {
+		return fail(fmt.Sprintf("the pushed configuration has more than %d managed processors", MaxManagedProcessors))
+	}
+	a.mu.Lock()
+	same := a.pending == nil && equalConfig(merged, a.running)
+	a.mu.Unlock()
+	if same {
+		// Already running, as after a reconnect: no reload needed.
+		return &Status{Hash: hash, Applied: true}
+	}
+	if !extensionEnabled(merged) {
+		return fail("the local configuration does not enable the " + ExtensionName + " extension, so the collector cannot confirm a push")
+	}
+	if err := preflight.Check(ctx, a.logger, a.factories, procs, pipelines, PreflightTimeout); err != nil {
+		return fail("preflight: " + err.Error())
+	}
+	p := &state.Push{Hash: hash, Revision: newRevision(), Config: body}
+	if err := a.store.Begin(p); err != nil {
+		return fail("could not record the pending configuration")
+	}
+	a.mu.Lock()
+	a.pending, a.pendingM = p, merged
+	reload := a.reload
+	a.mu.Unlock()
+	if reload != nil {
+		reload()
+	}
+	return nil
+}
+
+// Confirm is called by the extension when revision runs. A pending push of
+// that revision is promoted on disk first, then reported APPLIED.
+func (a *Agent) Confirm(revision string) {
+	promoted, err := a.store.Confirm(revision)
+	if err != nil {
+		a.logger.Error("could not record the applied OpAMP configuration", zap.Error(err))
+		return
+	}
+	a.mu.Lock()
+	var reporter Reporter
+	if promoted != nil && a.pending != nil && a.pending.Revision == revision {
+		a.running, a.revision, a.applied = a.pendingM, revision, a.pending.Config
+		a.pending, a.pendingM = nil, nil
+		reporter = a.reporter
+	}
+	a.mu.Unlock()
+	if reporter != nil {
+		reporter.Report(Status{Hash: promoted.Hash, Applied: true})
+		reporter.EffectiveConfigChanged()
+	}
+}
+
+func (a *Agent) mergePush(base merge.Config, body []byte) (merge.Config, error) {
+	push, err := parseYAML(body)
+	if err != nil {
+		return nil, fmt.Errorf("the pushed configuration is not valid YAML")
+	}
+	return merge.Merge(base, withoutRevision(push))
+}
+
+// managed returns the allow-listed processors and every pipeline's processors.
+func managed(cfg merge.Config) (map[string]any, map[string][]string) {
+	procs := map[string]any{}
+	for name, v := range asMap(cfg["processors"]) {
+		if merge.AllowListed(name) {
+			procs[name] = v
+		}
+	}
+	pipelines := map[string][]string{}
+	for name, p := range asMap(asMap(cfg["service"])["pipelines"]) {
+		raw, _ := asMap(p)["processors"].([]any)
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				pipelines[name] = append(pipelines[name], s)
+			}
+		}
+	}
+	return procs, pipelines
+}
+
+func extensionEnabled(cfg merge.Config) bool {
+	if _, ok := asMap(cfg["extensions"])[ExtensionName]; !ok {
+		return false
+	}
+	list, _ := asMap(cfg["service"])["extensions"].([]any)
+	return slices.Contains(list, any(ExtensionName))
+}
+
+// withRevision returns cfg with extensions.fusescope_opamp.revision set.
+func withRevision(cfg merge.Config, rev string) merge.Config {
+	exts := asMap(cfg["extensions"])
+	ext, ok := exts[ExtensionName]
+	if !ok {
+		return cfg
+	}
+	out := shallowCopy(cfg)
+	e := shallowCopy(exts)
+	x := shallowCopy(asMap(ext))
+	x["revision"] = rev
+	e[ExtensionName] = x
+	out["extensions"] = e
+	return out
+}
+
+// withoutRevision drops the injected revision a backend may echo back.
+func withoutRevision(cfg merge.Config) merge.Config {
+	ext, ok := asMap(cfg["extensions"])[ExtensionName].(map[string]any)
+	if !ok {
+		return cfg
+	}
+	delete(ext, "revision")
+	return cfg
+}
+
+func newRevision() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+func asMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+func shallowCopy(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m)+1)
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+var current atomic.Pointer[Agent]
+
+// SetCurrent makes a the agent the extension confirms revisions to.
+func SetCurrent(a *Agent) { current.Store(a) }
+
+// Current is the process's agent, or nil without the provider.
+func Current() *Agent { return current.Load() }
+
+// ErrNoSettings is returned when the local file has no fusescope_opamp section.
+var ErrNoSettings = errors.New("the local configuration has no fusescope_opamp section")

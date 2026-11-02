@@ -1,0 +1,13 @@
+display_name: FuseScope OpAMP Extension
+type: fusescope_opamp
+github_project: fuseone-io/fusescope-collector-server
+
+status:
+  disable_codecov_badge: true
+  class: extension
+  stability:
+    alpha: [extension]
+  distributions: []
+
+tests:
+  config: {}

@@ -1,0 +1,250 @@
+// Copyright FuseOne
+// SPDX-License-Identifier: Apache-2.0
+
+// Package merge applies the allow-list of ADR 0008 §2: it merges a pushed
+// configuration into the local base, or names the paths where the push
+// differs from the base in ways it may not.
+package merge // import "github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/merge"
+
+import (
+	"fmt"
+	"reflect"
+	"slices"
+	"sort"
+	"strings"
+)
+
+const (
+	// LogsPipelinePrefix names the processors the backend places in the logs pipeline.
+	LogsPipelinePrefix = "signozlogspipeline/pipeline_"
+	// LogsPipeline is the only pipeline log pipelines may be placed in.
+	LogsPipeline = "logs"
+	// maxPaths bounds the paths a rejection names.
+	maxPaths = 20
+)
+
+// blockOnly are processors whose block may change, but not their position.
+var blockOnly = []string{"signozspanmapper", "signozllmpricing"}
+
+// Config is a collector configuration as nested maps.
+type Config = map[string]any
+
+// Rejection lists the configuration paths a push may not change. It never
+// holds values (ADR 0008 §2).
+type Rejection struct{ Paths []string }
+
+func (r *Rejection) Error() string {
+	return "the pushed configuration changes what the allow-list keeps local: " + strings.Join(r.Paths, ", ")
+}
+
+// Merge returns base with the allow-listed parts of push, or a *Rejection.
+func Merge(base, push Config) (Config, error) {
+	d := &differ{}
+	merged := Config{}
+	for k := range union(base, push) {
+		switch k {
+		case "processors":
+			merged[k] = d.processors(asMap(base[k]), asMap(push[k]))
+		case "service":
+			merged[k] = d.service(asMap(base[k]), asMap(push[k]))
+		default:
+			d.equal(k, base[k], push[k])
+			if v, ok := base[k]; ok {
+				merged[k] = v
+			}
+		}
+	}
+	if len(d.paths) > 0 {
+		sort.Strings(d.paths)
+		return nil, &Rejection{Paths: d.paths}
+	}
+	d.checkWiring(merged)
+	if len(d.paths) > 0 {
+		return nil, &Rejection{Paths: d.paths}
+	}
+	return merged, nil
+}
+
+// AllowListed reports whether a processor name belongs to the allow-list.
+func AllowListed(name string) bool {
+	return strings.HasPrefix(name, LogsPipelinePrefix) || slices.Contains(blockOnly, name)
+}
+
+type differ struct{ paths []string }
+
+func (d *differ) add(path string) {
+	if len(d.paths) < maxPaths && !slices.Contains(d.paths, path) {
+		d.paths = append(d.paths, path)
+	}
+}
+
+// equal records the leaf paths where a and b differ.
+func (d *differ) equal(path string, a, b any) {
+	if reflect.DeepEqual(a, b) {
+		return
+	}
+	am, aok := a.(Config)
+	bm, bok := b.(Config)
+	if !aok || !bok {
+		d.add(path)
+		return
+	}
+	for k := range union(am, bm) {
+		d.equal(path+"."+k, am[k], bm[k])
+	}
+}
+
+func (d *differ) processors(base, push Config) Config {
+	out := Config{}
+	for name := range union(base, push) {
+		bv, inBase := base[name]
+		pv, inPush := push[name]
+		switch {
+		case strings.HasPrefix(name, LogsPipelinePrefix):
+			if inPush {
+				out[name] = pv
+			}
+		case slices.Contains(blockOnly, name):
+			switch {
+			case !inBase:
+				d.add("processors." + name) // the base must declare and wire it
+			case inPush:
+				out[name] = pv
+			default:
+				out[name] = bv
+			}
+		default:
+			d.equal("processors."+name, bv, pv)
+			if inBase {
+				out[name] = bv
+			}
+		}
+	}
+	return out
+}
+
+func (d *differ) service(base, push Config) Config {
+	out := Config{}
+	for k := range union(base, push) {
+		if k != "pipelines" {
+			d.equal("service."+k, base[k], push[k])
+			if v, ok := base[k]; ok {
+				out[k] = v
+			}
+			continue
+		}
+		bp, pp := asMap(base[k]), asMap(push[k])
+		pipelines := Config{}
+		for name := range union(bp, pp) {
+			path := "service.pipelines." + name
+			b, inBase := bp[name].(Config)
+			p, inPush := pp[name].(Config)
+			if !inBase || !inPush {
+				d.add(path)
+				continue
+			}
+			pipelines[name] = d.pipeline(path, name, b, p)
+		}
+		out[k] = pipelines
+	}
+	return out
+}
+
+func (d *differ) pipeline(path, name string, base, push Config) Config {
+	out := Config{}
+	for k := range union(base, push) {
+		if k != "processors" {
+			d.equal(path+"."+k, base[k], push[k])
+			if v, ok := base[k]; ok {
+				out[k] = v
+			}
+			continue
+		}
+		bl, bok := asList(base[k])
+		pl, pok := asList(push[k])
+		if !bok || !pok {
+			d.add(path + ".processors")
+			continue
+		}
+		if name != LogsPipeline {
+			// Span mapping and LLM pricing keep the base's position (ADR 0008 §2).
+			if !slices.Equal(bl, pl) {
+				d.add(path + ".processors")
+			}
+			out[k] = toAny(bl)
+			continue
+		}
+		if !slices.Equal(withoutLogsPipelines(bl), withoutLogsPipelines(pl)) {
+			d.add(path + ".processors")
+			continue
+		}
+		out[k] = toAny(pl)
+	}
+	return out
+}
+
+// checkWiring rejects log pipelines listed without a block, and blocks
+// listed in a pipeline other than logs (which the comparison already refuses).
+func (d *differ) checkWiring(merged Config) {
+	procs := asMap(merged["processors"])
+	for name, p := range asMap(asMap(merged["service"])["pipelines"]) {
+		list, _ := asList(asMap(p)["processors"])
+		for _, proc := range list {
+			if strings.HasPrefix(proc, LogsPipelinePrefix) {
+				if _, ok := procs[proc]; !ok {
+					d.add(fmt.Sprintf("service.pipelines.%s.processors", name))
+				}
+			}
+		}
+	}
+}
+
+func withoutLogsPipelines(l []string) []string {
+	return slices.DeleteFunc(slices.Clone(l), func(s string) bool { return strings.HasPrefix(s, LogsPipelinePrefix) })
+}
+
+func union(a, b Config) map[string]struct{} {
+	out := make(map[string]struct{}, len(a)+len(b))
+	for k := range a {
+		out[k] = struct{}{}
+	}
+	for k := range b {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+func asMap(v any) Config {
+	m, _ := v.(Config)
+	if m == nil {
+		return Config{}
+	}
+	return m
+}
+
+func asList(v any) ([]string, bool) {
+	if v == nil {
+		return nil, true
+	}
+	raw, ok := v.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		s, ok := e.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
+func toAny(l []string) []any {
+	out := make([]any, len(l))
+	for i, s := range l {
+		out[i] = s
+	}
+	return out
+}

@@ -98,3 +98,27 @@ Recorded so it is not mistaken for collector bugs ([fuseone-io/fusescope#261](ht
 - the span mapping and LLM pricing features have no element type, so their part of the hash
   is `:<version>` and their status rows are likely never updated
   (`pkg/types/opamptypes/agent.go:126-138`, `manager.go:112-133`).
+
+## 8. Running it
+
+The collector runs with `--config fusescopeopamp:<file>`. The file is the base configuration
+plus a top-level section that never reaches the collector:
+
+```yaml
+fusescope_opamp:
+  endpoint: wss://backend:4320/v1/opamp   # ws:// only with tls.insecure: true
+  tls: {ca_file: /etc/fusescope/ca.pem}   # configtls client settings
+  storage: /var/lib/fusescope-collector/opamp
+extensions:
+  fusescope_opamp: {}                     # confirms pushes; required to accept any
+service:
+  extensions: [fusescope_opamp]
+  pipelines:
+    logs: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [fusescope_clickhouse]}
+    traces: {receivers: [otlp], processors: [memory_limiter, signozspanmapper, batch, signozllmpricing], exporters: [fusescope_clickhouse]}
+```
+
+Limits, each rejecting a push with `FAILED`: 4 MiB of pushed YAML, 256 allow-listed processors,
+10 s for each processor's preflight start. A processor type this build lacks fails the
+preflight, so pushes with it are rejected until the build has it.
+
