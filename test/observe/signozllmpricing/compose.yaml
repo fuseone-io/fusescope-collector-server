@@ -1,0 +1,13 @@
+name: observe-llmpricing
+
+services:
+  reference:
+    image: ghcr.io/fuseone-io/fusescope-otel-collector:${REFERENCE_VERSION:-0.145.0}
+    entrypoint: [/fusescope-otel-collector]
+    command: [--config=/etc/reference.yaml]
+    volumes:
+      - ${CASE_CONFIG:?}:/etc/reference.yaml:ro
+      - ${CASE_OUT:?}:/out
+    ports:
+      - "127.0.0.1:24418:4318"
+      - "127.0.0.1:24433:13133"

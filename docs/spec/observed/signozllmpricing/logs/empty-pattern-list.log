@@ -1,0 +1,1 @@
+{"level":"fatal","caller":"signozotelcollector/main.go:88","msg":"failed to run service:","error":"failed to start collector service: failed to start : invalid configuration: processors::signozllmpricing: default_pricing.rules[0]: pattern must not be empty"}

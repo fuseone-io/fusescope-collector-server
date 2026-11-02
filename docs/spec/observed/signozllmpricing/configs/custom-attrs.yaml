@@ -1,0 +1,74 @@
+{
+  "receivers": {
+    "otlp": {
+      "protocols": {
+        "http": {
+          "endpoint": "0.0.0.0:4318"
+        }
+      }
+    }
+  },
+  "processors": {
+    "signozllmpricing": {
+      "attrs": {
+        "model": "llm.model",
+        "in": "llm.in",
+        "out": "llm.out",
+        "cache_read": "llm.cr",
+        "cache_write": "llm.cw"
+      },
+      "default_pricing": {
+        "rules": [
+          {
+            "name": "gpt-4o",
+            "pattern": [
+              "gpt-4o*"
+            ],
+            "cache": {
+              "mode": "subtract",
+              "read": 2.5,
+              "write": 3.75
+            },
+            "in": 5,
+            "out": 15
+          }
+        ]
+      },
+      "output_attrs": {
+        "in": "c.in",
+        "out": "c.out",
+        "cache_read": "c.cr",
+        "cache_write": "c.cw",
+        "total": "c.total"
+      }
+    }
+  },
+  "exporters": {
+    "file": {
+      "path": "/out/output.jsonl"
+    }
+  },
+  "extensions": {
+    "health_check": {
+      "endpoint": "0.0.0.0:13133"
+    }
+  },
+  "service": {
+    "extensions": [
+      "health_check"
+    ],
+    "pipelines": {
+      "traces": {
+        "receivers": [
+          "otlp"
+        ],
+        "processors": [
+          "signozllmpricing"
+        ],
+        "exporters": [
+          "file"
+        ]
+      }
+    }
+  }
+}

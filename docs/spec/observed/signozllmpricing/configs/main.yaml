@@ -1,0 +1,251 @@
+{
+  "receivers": {
+    "otlp": {
+      "protocols": {
+        "http": {
+          "endpoint": "0.0.0.0:4318"
+        }
+      }
+    }
+  },
+  "processors": {
+    "signozllmpricing": {
+      "attrs": {
+        "model": "gen_ai.request.model",
+        "in": "gen_ai.usage.input_tokens",
+        "out": "gen_ai.usage.output_tokens",
+        "cache_read": "gen_ai.usage.cache_read.input_tokens",
+        "cache_write": "gen_ai.usage.cache_creation.input_tokens"
+      },
+      "default_pricing": {
+        "rules": [
+          {
+            "name": "gpt-4o",
+            "pattern": [
+              "gpt-4o*"
+            ],
+            "cache": {
+              "mode": "subtract",
+              "read": 2.5,
+              "write": 3.75
+            },
+            "in": 5,
+            "out": 15
+          },
+          {
+            "name": "gpt-4o-mini",
+            "pattern": [
+              "gpt-4o-mini*"
+            ],
+            "cache": {
+              "mode": "subtract",
+              "read": 0.075,
+              "write": 0
+            },
+            "in": 0.15,
+            "out": 0.6
+          },
+          {
+            "name": "o1-mini",
+            "pattern": [
+              "o1-mini"
+            ],
+            "in": 1.1,
+            "out": 4.4
+          },
+          {
+            "name": "o1",
+            "pattern": [
+              "o1*"
+            ],
+            "in": 15,
+            "out": 60
+          },
+          {
+            "name": "claude-3-5-sonnet",
+            "pattern": [
+              "claude-3-5-sonnet*",
+              "anthropic/claude-3.5-sonnet"
+            ],
+            "cache": {
+              "mode": "additive",
+              "read": 0.3,
+              "write": 3.75
+            },
+            "in": 3,
+            "out": 15
+          },
+          {
+            "name": "mistral-large",
+            "pattern": [
+              "mistral-*"
+            ],
+            "cache": {
+              "read": 1,
+              "write": 2
+            },
+            "in": 2,
+            "out": 6
+          },
+          {
+            "name": "llama",
+            "pattern": [
+              "llama-?-8b",
+              "meta/*/llama-70b"
+            ],
+            "in": 0.1,
+            "out": 0.2
+          },
+          {
+            "name": "gemini",
+            "pattern": [
+              "gemini-[12].[05]-pro",
+              "gemini-[!3]*-flash"
+            ],
+            "in": 1.25,
+            "out": 5
+          },
+          {
+            "name": "literal-star",
+            "pattern": [
+              "model\\*star"
+            ],
+            "in": 7,
+            "out": 7
+          },
+          {
+            "name": "gpt-4o",
+            "pattern": [
+              "dup-*"
+            ],
+            "in": 9,
+            "out": 9
+          },
+          {
+            "name": "free",
+            "pattern": [
+              "free-*"
+            ],
+            "in": 0,
+            "out": 0
+          },
+          {
+            "name": "fp",
+            "pattern": [
+              "fp-*"
+            ],
+            "cache": {
+              "mode": "subtract",
+              "read": 0.07,
+              "write": 0.33
+            },
+            "in": 0.1,
+            "out": 0.3
+          },
+          {
+            "name": "fp-additive",
+            "pattern": [
+              "fpa-*"
+            ],
+            "cache": {
+              "mode": "additive",
+              "read": 0.07,
+              "write": 0.33
+            },
+            "in": 0.1,
+            "out": 0.3
+          },
+          {
+            "name": "numeric",
+            "pattern": [
+              "42"
+            ],
+            "in": 1,
+            "out": 1
+          },
+          {
+            "name": "mode-subtract",
+            "pattern": [
+              "ms-*"
+            ],
+            "cache": {
+              "mode": "subtract",
+              "read": 4,
+              "write": 8
+            },
+            "in": 1,
+            "out": 2
+          },
+          {
+            "name": "mode-additive",
+            "pattern": [
+              "ma-*"
+            ],
+            "cache": {
+              "mode": "additive",
+              "read": 4,
+              "write": 8
+            },
+            "in": 1,
+            "out": 2
+          },
+          {
+            "name": "mode-none",
+            "pattern": [
+              "mu-*"
+            ],
+            "cache": {
+              "read": 4,
+              "write": 8
+            },
+            "in": 1,
+            "out": 2
+          },
+          {
+            "name": "no-cache",
+            "pattern": [
+              "mn-*"
+            ],
+            "in": 1,
+            "out": 2
+          }
+        ]
+      },
+      "output_attrs": {
+        "in": "signoz.gen_ai.usage.input_tokens.cost",
+        "out": "signoz.gen_ai.usage.output_tokens.cost",
+        "cache_read": "signoz.gen_ai.usage.cache_read.input_tokens.cost",
+        "cache_write": "signoz.gen_ai.usage.cache_write.input_tokens.cost",
+        "total": "signoz.gen_ai.usage.tokens.cost"
+      }
+    }
+  },
+  "exporters": {
+    "file": {
+      "path": "/out/output.jsonl"
+    }
+  },
+  "extensions": {
+    "health_check": {
+      "endpoint": "0.0.0.0:13133"
+    }
+  },
+  "service": {
+    "extensions": [
+      "health_check"
+    ],
+    "pipelines": {
+      "traces": {
+        "receivers": [
+          "otlp"
+        ],
+        "processors": [
+          "signozllmpricing"
+        ],
+        "exporters": [
+          "file"
+        ]
+      }
+    }
+  }
+}
