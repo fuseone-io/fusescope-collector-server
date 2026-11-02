@@ -111,6 +111,18 @@ service:
 		{"telemetry", replace(base, "level: info", "level: debug"),
 			[]string{"service.telemetry.logs.level"}, nil},
 		{"extension added", base + "extensions: {pprof: {}}\n", []string{"extensions"}, nil},
+		// The resolver would expand a reference in a pushed block, reading a
+		// local file or variable into telemetry (ADR 0004).
+		{"provider reference in the span mapper", replace(base, "signozspanmapper: {groups: []}",
+			"signozspanmapper: {groups: [{id: g, attributes: [{target: '${file:/run/secrets/token}'}]}]}"),
+			[]string{"processors.signozspanmapper.groups[0].attributes[0].target"}, nil},
+		{"reference after an escaped dollar", replace(base, "signozllmpricing: {}", "signozllmpricing: {rules: ['$$${env:TOKEN}']}"),
+			[]string{"processors.signozllmpricing.rules[0]"}, nil},
+		{"embedded reference in a log pipeline", replace(base, "  batch: {}\n",
+			"  batch: {}\n  signozlogspipeline/pipeline_x: {operators: [{value: 'a ${env:TOKEN} b'}]}\n"),
+			[]string{"processors.signozlogspipeline/pipeline_x.operators[0].value"}, nil},
+		{"escaped reference is literal", replace(base, "signozspanmapper: {groups: []}",
+			"signozspanmapper: {groups: [{id: '$${file:/x}', attributes: [{target: 'cost $$5 {}'}]}]}"), nil, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

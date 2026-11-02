@@ -317,6 +317,12 @@ func TestPushLifecycle(t *testing.T) {
 			procs["signozlogspipeline/pipeline_unused"] = block
 		}
 	}
+	// A mounted credential the push points at; resolved, it would be a valid
+	// value and the push would apply.
+	credential := filepath.Join(t.TempDir(), "engine-token")
+	if err := os.WriteFile(credential, []byte("false"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name        string
 		edit        func(cfg map[string]any)
@@ -325,6 +331,9 @@ func TestPushLifecycle(t *testing.T) {
 		forbidden   string
 		noFactory   bool
 	}{
+		{"provider reference to a local file", func(cfg map[string]any) {
+			addLogsPipeline(cfg, map[string]any{"fail_start": "${file:" + credential + "}"})
+		}, false, "processors.signozlogspipeline/pipeline_test.fail_start", credential, false},
 		{"log pipeline applied", func(cfg map[string]any) { addLogsPipeline(cfg, map[string]any{}) }, true, "", "", false},
 		{"exporter changed", func(cfg map[string]any) {
 			cfg["exporters"].(map[string]any)["nop"] = map[string]any{"secret": "s3cr3t-value"}

@@ -3,6 +3,7 @@ module github.com/fuseone-io/fusescope-collector-server/components/extension/fus
 go 1.26.0
 
 require (
+	github.com/fuseone-io/fusescope-collector-server/components/processor/signozspanmapperprocessor v0.0.0
 	github.com/open-telemetry/opamp-go v0.25.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.70.0
@@ -175,5 +176,7 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/fuseone-io/fusescope-collector-server/components/processor/signozspanmapperprocessor => ../../processor/signozspanmapperprocessor
 
 replace github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor => ../../processor/signozlogspipelineprocessor
