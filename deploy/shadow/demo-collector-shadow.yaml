@@ -1,0 +1,29 @@
+# Merged into the demo collector's configuration to feed the shadow (README.md, Install).
+exporters:
+  otlp/shadow:
+    endpoint: dns:///fusescope-collector-shadow:4317
+    tls:
+      insecure: true
+    timeout: 5s
+    keepalive:
+      time: 10s
+      timeout: 5s
+      permit_without_stream: true
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 30s
+
+service:
+  pipelines:
+    traces/shadow:
+      receivers: [otlp]
+      exporters: [otlp/shadow]
+    logs/shadow:
+      receivers: [otlp]
+      exporters: [otlp/shadow]
+    metrics/shadow:
+      receivers: [otlp]
+      exporters: [otlp/shadow]
