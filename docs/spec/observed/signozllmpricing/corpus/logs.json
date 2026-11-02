@@ -1,0 +1,63 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "llm-app"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "observe"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1767225600000000000",
+       "body": {
+        "stringValue": "llm call"
+       },
+       "attributes": [
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gpt-4o"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "1000"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "200"
+         }
+        },
+        {
+         "key": "gen_ai.usage.cache_read.input_tokens",
+         "value": {
+          "intValue": "300"
+         }
+        },
+        {
+         "key": "gen_ai.usage.cache_creation.input_tokens",
+         "value": {
+          "intValue": "50"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

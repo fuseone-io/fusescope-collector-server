@@ -1,0 +1,70 @@
+{
+ "resourceMetrics": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "llm-app"
+      }
+     }
+    ]
+   },
+   "scopeMetrics": [
+    {
+     "scope": {
+      "name": "observe"
+     },
+     "metrics": [
+      {
+       "name": "llm.calls",
+       "sum": {
+        "aggregationTemporality": 1,
+        "isMonotonic": true,
+        "dataPoints": [
+         {
+          "timeUnixNano": "1767225600000000000",
+          "asInt": "1",
+          "attributes": [
+           {
+            "key": "gen_ai.request.model",
+            "value": {
+             "stringValue": "gpt-4o"
+            }
+           },
+           {
+            "key": "gen_ai.usage.input_tokens",
+            "value": {
+             "intValue": "1000"
+            }
+           },
+           {
+            "key": "gen_ai.usage.output_tokens",
+            "value": {
+             "intValue": "200"
+            }
+           },
+           {
+            "key": "gen_ai.usage.cache_read.input_tokens",
+            "value": {
+             "intValue": "300"
+            }
+           },
+           {
+            "key": "gen_ai.usage.cache_creation.input_tokens",
+            "value": {
+             "intValue": "50"
+            }
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

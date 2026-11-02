@@ -1,0 +1,80 @@
+reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0
+cases:
+  bad-cache-mode:
+    start: refused
+  bad-glob:
+    start: refused
+  control-no-processor:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  custom-attrs:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-attrs-cache:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-attrs-in:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-attrs-model:
+    start: refused
+  empty-attrs-out:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-cache-block:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-cache-mode:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-output-attrs:
+    start: refused
+  empty-output-cache-read:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-output-in:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  empty-pattern-list:
+    start: refused
+  empty-pattern:
+    start: refused
+  logs-pipeline:
+    start: refused
+  main:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  metrics-pipeline:
+    start: refused
+  negative-cache-read:
+    start: refused
+  negative-in:
+    start: refused
+  no-attrs:
+    start: refused
+  no-default-pricing:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  no-output-attrs:
+    start: refused
+  no-pattern:
+    start: refused
+  no-rule-name:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  no-rule-out:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  no-rules:
+    start: started
+    post_traces: 200 {"partialSuccess":{}}
+  null-config:
+    start: refused
+  string-price:
+    start: refused
+  unknown-field:
+    start: refused
+  unknown-top-field:
+    start: refused
+  uppercase-cache-mode:
+    start: refused
