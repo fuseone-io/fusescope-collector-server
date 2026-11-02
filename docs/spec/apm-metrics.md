@@ -70,10 +70,11 @@ none.]
 | `operation` | span name |
 | `span.kind` | `SPAN_KIND_UNSPECIFIED`, `_INTERNAL`, `_SERVER`, `_CLIENT`, `_PRODUCER`, `_CONSUMER` |
 | `status.code` | `STATUS_CODE_UNSET`, `STATUS_CODE_OK`, `STATUS_CODE_ERROR` |
-| `http.status_code` | if the span has `http.status_code`, else `http.response.status_code`, stringified; absent otherwise |
+| `http.status_code` | `signoz_calls_total` only, not `signoz_latency`: the span's `http.status_code`, else `http.response.status_code`, stringified; absent otherwise |
 | dimensions | §3.3 |
 
-[obs: `status-ok`, `status-error`, `strings` (kind 0), `GET /cart` (new key only: `200`),
+[obs: `status-ok`, `status-error`, `strings` (kind 0), `GET /cart` (new key only: `200` on calls, no
+`http.status_code` on any `signoz_latency` series),
 `GET /legacy` (old key), `precedence` and `precedence-reversed` (both keys, in either order:
 `410`, the old one)]
 
