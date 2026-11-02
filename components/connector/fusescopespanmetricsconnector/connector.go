@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -49,6 +50,8 @@ func attr(key string, v pcommon.Value) kv {
 type family struct {
 	series map[string]*series
 	order  []string
+	// points is how many points each series emits, as it counts against max_series.
+	points int
 }
 
 type series struct {
@@ -103,6 +106,7 @@ func newConnector(cfg *Config, set connector.Settings, next consumer.Metrics) *s
 	for _, d := range cfg.Dimensions {
 		c.resourceKeys = append(c.resourceKeys, "resource_"+d.Name)
 	}
+	c.calls.points, c.latency.points, c.db.points, c.external.points = 1, 1, 2, 2
 	c.reset()
 	return c
 }
@@ -294,7 +298,7 @@ func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series 
 	}
 	// The series keeps its key and a copy of its attributes.
 	size += len(b) + seriesOverhead
-	if c.total >= c.cfg.MaxSeries || c.bytes+size > c.cfg.MaxSeriesBytes {
+	if c.total+f.points > c.cfg.MaxSeries || c.bytes+size > c.cfg.MaxSeriesBytes {
 		c.dropped++
 		return nil
 	}
@@ -311,7 +315,7 @@ func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series 
 	}
 	f.series[key] = s
 	f.order = append(f.order, key)
-	c.total++
+	c.total += f.points
 	return s
 }
 
@@ -345,6 +349,11 @@ func (c *spanMetricsConnector) flush(ctx context.Context) error {
 		md.CopyTo(sent)
 	}
 	err := c.next.ConsumeMetrics(ctx, sent)
+	// After a partial acceptance only the failed part may be sent again.
+	var partial consumererror.Metrics
+	if errors.As(err, &partial) {
+		md = partial.Data()
+	}
 	switch {
 	case err == nil:
 		return nil

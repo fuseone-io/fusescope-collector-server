@@ -455,3 +455,41 @@ func TestRetryResendsUnmutatedMetrics(t *testing.T) {
 		t.Errorf("%d points named x.signoz_calls_total, want 1 (renamed once)", n)
 	}
 }
+
+// A database series emits two points (count and sum) and counts as two
+// against max_series, so its batch can be retried within the limit.
+func TestTwoPointSeriesCountTwice(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxSeries = 4
+	sink := &flakySink{refuse: []error{errors.New("queue is full")}}
+	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), sink)
+	td := traceWith(1, "svc", func(_ int, s ptrace.Span) { s.Attributes().PutStr("db.system", "redis") })
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	if c.total != 4 {
+		t.Fatalf("one database span counts %d series, want 4 (calls, latency, db count and sum)", c.total)
+	}
+	_ = c.flush(context.Background())
+	if c.pending.DataPointCount() != 4 {
+		t.Errorf("pending holds %d points, want the refused 4", c.pending.DataPointCount())
+	}
+}
+
+// After a partial acceptance only the failed points are sent again.
+func TestRetryOnlyTheFailedPart(t *testing.T) {
+	failed := pmetric.NewMetrics()
+	m := failed.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	m.SetName("signoz_calls_total")
+	m.SetEmptySum().DataPoints().AppendEmpty().SetDoubleValue(1)
+	sink := &flakySink{refuse: []error{consumererror.NewMetrics(errors.New("partly refused"), failed)}}
+	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.flush(context.Background())
+	_ = c.flush(context.Background())
+	if got := sink.DataPointCount(); got != 1 {
+		t.Errorf("retry sent %d points, want the 1 that failed", got)
+	}
+}
