@@ -68,3 +68,9 @@ receivers: {otlp: {}}
 		t.Error("the settings section reached the collector")
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	if got := redactURL("ws://user:secret@backend:4320/v1/opamp?token=t0k3n"); got != "ws://backend:4320/v1/opamp" {
+		t.Errorf("redactURL = %q", got)
+	}
+}

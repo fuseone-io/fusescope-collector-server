@@ -334,3 +334,33 @@ func TestLatestPushWins(t *testing.T) {
 	}
 	t.Errorf("an older push replaced the newest; effective:\n%s", fmtConfig(a.Effective()))
 }
+
+// A push matching what runs, arriving while an older push is being recorded,
+// does not overtake it: it waits, and the newer push is what runs in the end.
+func TestMatchingPushWaitsForARecordingOne(t *testing.T) {
+	a, r, _ := started(t, base)
+	a.Confirm(revisionOf(a))
+	recording, release := make(chan struct{}), make(chan struct{})
+	a.beforeBegin = func() { close(recording); <-release }
+	go func() { _ = a.Push(context.Background(), []byte("older"), []byte(push)) }()
+	<-recording
+	a.beforeBegin = nil
+	done := make(chan *Status, 1)
+	go func() { done <- a.Push(context.Background(), []byte("newer"), []byte(base)) }()
+	select {
+	case st := <-done:
+		t.Fatalf("the matching push returned %+v while the older one was being recorded", st)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if st := <-done; st != nil {
+		t.Fatalf("the newer push = %+v, want queued behind the older one", st)
+	}
+	a.Confirm(revisionOf(a)) // older applied; newer processed next
+	waitFor(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.pending != nil })
+	a.Confirm(revisionOf(a))
+	waitFor(t, func() bool { st := r.find("newer"); return st != nil && st.Applied })
+	if strings.Contains(fmtConfig(a.Effective()), "pipeline_a") {
+		t.Error("the older push overwrote the newer one")
+	}
+}

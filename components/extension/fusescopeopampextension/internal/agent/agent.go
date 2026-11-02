@@ -83,6 +83,8 @@ type Agent struct {
 	seq    uint64
 	// retrying is set while a confirmation that could not be recorded is retried.
 	retrying bool
+	// beforeBegin, set in tests, runs while a push is being recorded.
+	beforeBegin func()
 }
 
 type queuedPush struct {
@@ -229,8 +231,21 @@ func (a *Agent) push(ctx context.Context, seq uint64, hash, body []byte) *Status
 	if len(procs) > MaxManagedProcessors {
 		return fail(fmt.Sprintf("the pushed configuration has more than %d managed processors", MaxManagedProcessors))
 	}
+	// Under the lifecycle lock, so a push being recorded is either published
+	// as pending or not started: a matching push never overtakes it.
+	a.lifecycle.Lock()
 	a.mu.Lock()
-	if equalConfig(merged, a.running) {
+	switch {
+	case seq < a.seq:
+		a.mu.Unlock()
+		a.lifecycle.Unlock()
+		return nil // superseded
+	case a.pending != nil:
+		a.queue(seq, hash, body)
+		a.mu.Unlock()
+		a.lifecycle.Unlock()
+		return nil
+	case equalConfig(merged, a.running):
 		// Already running, as after a reconnect: no reload needed, but not
 		// APPLIED before the startup graph is confirmed.
 		ready := a.ready
@@ -238,12 +253,14 @@ func (a *Agent) push(ctx context.Context, seq uint64, hash, body []byte) *Status
 			a.deferred = hash
 		}
 		a.mu.Unlock()
+		a.lifecycle.Unlock()
 		if ready {
 			return &Status{Hash: hash, Applied: true}
 		}
 		return nil
 	}
 	a.mu.Unlock()
+	a.lifecycle.Unlock()
 	if !extensionEnabled(merged) {
 		return fail("the local configuration does not enable the " + ExtensionName + " extension, so the collector cannot confirm a push")
 	}
@@ -266,6 +283,9 @@ func (a *Agent) push(ctx context.Context, seq uint64, hash, body []byte) *Status
 		return nil
 	}
 	a.mu.Unlock()
+	if a.beforeBegin != nil {
+		a.beforeBegin()
+	}
 	p := &state.Push{Hash: hash, Revision: newRevision(), Config: body}
 	if err := a.store.Begin(p); err != nil {
 		a.lifecycle.Unlock()

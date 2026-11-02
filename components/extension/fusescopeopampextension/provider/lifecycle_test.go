@@ -33,6 +33,7 @@ import (
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/nopreceiver"
 	"go.opentelemetry.io/collector/service/telemetry/otelconftelemetry"
+	"go.uber.org/zap"
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension"
@@ -420,4 +421,33 @@ func TestBackendGoneAtConfirmation(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	r.stillRunning(t)
+}
+
+// A change of the provider's own settings is refused at the next reload
+// instead of being ignored.
+func TestSettingsChangeNeedsRestart(t *testing.T) {
+	b := startBackend(t)
+	storage := t.TempDir()
+	path := writeBase(t, b.endpoint, storage)
+	p := NewFactory().Create(confmap.ProviderSettings{Logger: zap.NewNop()})
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	if _, err := p.Retrieve(context.Background(), Scheme+":"+path, nil); err != nil {
+		t.Fatal(err)
+	}
+	b2 := startBackend(t)
+	if err := os.WriteFile(path, []byte(strings.Replace(mustRead(t, path), b.endpoint, b2.endpoint, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Retrieve(context.Background(), Scheme+":"+path, nil); err == nil || !strings.Contains(err.Error(), "restart") {
+		t.Errorf("Retrieve after a settings change = %v, want a restart-required error", err)
+	}
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

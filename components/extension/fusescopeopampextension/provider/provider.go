@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -76,11 +77,12 @@ type provider struct {
 	logger    *zap.Logger
 	factories map[component.Type]processor.Factory
 
-	once    sync.Once
-	initErr error
-	agent   *agent.Agent
-	client  *opampClient
-	watcher atomic.Pointer[confmap.WatcherFunc]
+	once     sync.Once
+	initErr  error
+	settings *Settings // the settings the client started with
+	agent    *agent.Agent
+	client   *opampClient
+	watcher  atomic.Pointer[confmap.WatcherFunc]
 }
 
 func (p *provider) Scheme() string { return Scheme }
@@ -101,9 +103,15 @@ func (p *provider) Retrieve(ctx context.Context, uri string, watcher confmap.Wat
 	if watcher != nil {
 		p.watcher.Store(&watcher)
 	}
-	p.once.Do(func() { p.initErr = p.start(ctx, base, settings) })
+	p.once.Do(func() {
+		p.settings = settings
+		p.initErr = p.start(ctx, base, settings)
+	})
 	if p.initErr != nil {
 		return nil, p.initErr
+	}
+	if !reflect.DeepEqual(settings, p.settings) {
+		return nil, errors.New("the fusescope_opamp settings changed; restart the collector to apply them")
 	}
 	return confmap.NewRetrieved(p.agent.Config(base))
 }
@@ -121,7 +129,7 @@ func (p *provider) start(ctx context.Context, base map[string]any, s *Settings) 
 	agent.SetCurrent(a)
 	if s.TLS.Insecure {
 		p.logger.Warn("OpAMP to the backend is in plaintext; remote configuration travels unencrypted and unauthenticated",
-			zap.String("endpoint", s.Endpoint))
+			zap.String("endpoint", redactURL(s.Endpoint)))
 	}
 	c, err := startClient(ctx, p.logger, s, a, failed)
 	if err != nil {
@@ -172,6 +180,15 @@ func split(b []byte) (map[string]any, *Settings, error) {
 		return nil, nil, err
 	}
 	return base, &s, nil
+}
+
+// redactURL keeps a URL's scheme, host and path: no user, password or query.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(unparsable endpoint)"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }
 
 // envRef matches $$ and ${env:NAME} or ${NAME}, as the collector writes them.
