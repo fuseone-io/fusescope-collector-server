@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -384,23 +385,33 @@ func TestExpressionPanicIsAnError(t *testing.T) {
 	assert.False(t, errors.Is(err, errPanicked))
 }
 
-// A record's own attribute named like the scratch field of a body read is
-// neither read in place of a missing body field nor lost.
+// Attributes a record has, or an operator writes, are never taken for the
+// scratch attributes of body reads.
 func TestScratchNameCollision(t *testing.T) {
-	const scratch = "__signozlogspipeline_bodyfield_0__"
+	const old = "__signozlogspipeline_bodyfield_0__" // the name before it was random
 	tests := []struct {
-		name, body string
-		want       map[string]any
+		name     string
+		operator map[string]any
+		body     string
+		want     map[string]any
 	}{
-		{"body field present", `{"msg":"hello"}`, map[string]any{scratch: "mine", "out": "hello"}},
-		{"body field missing", `{"other":1}`, map[string]any{scratch: "mine"}},
+		{"body field present", map[string]any{"type": "copy", "from": "body.msg", "to": "attributes.out", "on_error": "send"},
+			`{"msg":"hello"}`, map[string]any{old: "mine", "out": "hello"}},
+		{"body field missing", map[string]any{"type": "copy", "from": "body.msg", "to": "attributes.out", "on_error": "send"},
+			`{"other":1}`, map[string]any{old: "mine"}},
+		{"operator writes the name", map[string]any{"type": "json_parser", "parse_from": "body.payload", "parse_to": "attributes"},
+			`{"payload":"{\"` + old + `\":\"parsed\"}"}`, map[string]any{old: "parsed"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := newTestProcessor(t, map[string]any{"type": "copy", "from": "body.msg", "to": "attributes.out", "on_error": "send"})
-			out, err := p.processLogs(context.Background(), oneRecord(tt.body, map[string]any{scratch: "mine"}))
+			p := newTestProcessor(t, tt.operator)
+			out, err := p.processLogs(context.Background(), oneRecord(tt.body, map[string]any{old: "mine"}))
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, firstRecord(out).Attributes().AsRaw())
+			for k := range firstRecord(out).Attributes().AsRaw() {
+				assert.False(t, strings.HasPrefix(k, scratchPrefix), "scratch attribute %q left on the record", k)
+			}
 		})
 	}
+	assert.Regexp(t, `^__signozlogspipeline_bodyfield_[0-9a-f]{32}_$`, scratchPrefix)
 }

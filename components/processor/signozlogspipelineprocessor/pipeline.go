@@ -5,6 +5,8 @@ package signozlogspipelineprocessor // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -210,6 +212,15 @@ var bodyReadFields = map[string][][]string{
 	"trace_parser":    {{"trace_id", "parse_from"}, {"span_id", "parse_from"}, {"trace_flags", "parse_from"}},
 }
 
+// scratchPrefix names the scratch attributes of body reads. Its random part,
+// drawn once per process, keeps a record's own attributes and an operator's
+// output from ever colliding with them.
+var scratchPrefix = func() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "__signozlogspipeline_bodyfield_" + hex.EncodeToString(b[:]) + "_"
+}()
+
 // bodyRead is a body.<field> the operator reads, redirected to a scratch
 // attribute that holds the field's value while the operator runs.
 type bodyRead struct {
@@ -247,7 +258,7 @@ func redirectBodyReads(s spec) ([]bodyRead, error) {
 		if !ok || len(body.Keys) == 0 {
 			continue
 		}
-		scratch := fmt.Sprintf("__signozlogspipeline_bodyfield_%d__", len(reads))
+		scratch := fmt.Sprintf("%s%d__", scratchPrefix, len(reads))
 		parent[last] = fmt.Sprintf("attributes[%q]", scratch)
 		reads = append(reads, bodyRead{keys: body.Keys, scratch: scratch})
 	}
@@ -411,18 +422,6 @@ func (n *stanzaNode) process(ctx context.Context, r *run, e *entry.Entry, out []
 			return append(out, hop{e: e, next: n.next})
 		}
 	}
-	// A record's own attribute named like a scratch one is set aside, so a
-	// missing body field never reads it, and put back afterwards.
-	var saved map[string]any
-	for _, read := range n.reads {
-		if v, ok := e.Attributes[read.scratch]; ok {
-			if saved == nil {
-				saved = map[string]any{}
-			}
-			saved[read.scratch] = v
-			delete(e.Attributes, read.scratch)
-		}
-	}
 	for _, read := range n.reads {
 		if v, ok := read.resolve(e); ok {
 			if e.Attributes == nil {
@@ -435,12 +434,6 @@ func (n *stanzaNode) process(ctx context.Context, r *run, e *entry.Entry, out []
 	err := n.safeProcess(ctx, e)
 	for _, read := range n.reads {
 		delete(e.Attributes, read.scratch)
-	}
-	for k, v := range saved {
-		if e.Attributes == nil {
-			e.Attributes = map[string]any{}
-		}
-		e.Attributes[k] = v
 	}
 	if errors.Is(err, errPanicked) {
 		return n.failed(e, err, out)
