@@ -54,7 +54,7 @@ configuration goes through OpAMP with an allow-list (§5), never an arbitrary UR
 | `fusescope-schema` | command | Creates and migrates that ClickHouse schema for new installations |
 | `signozlogspipeline` | processor | Log pipelines configured in the FuseScope UI |
 | `signozspanmapper`, `signozllmpricing`, `signoz_tail_sampling` | processors | Other UI-managed processing the backend pushes today |
-| APM span metrics | connector | Service RED metrics under the names the Services page queries |
+| `fusescope_spanmetrics` | connector | Service RED metrics under the names the Services page queries ([apm-metrics](docs/spec/apm-metrics.md)) |
 | `fusescope_opamp` | extension | Applies backend-managed config fragments within an allow-list, and receives the ingest policy (§5) |
 | `ingestauth` | extension | Validates ingestion keys locally against the ingest policy, stamps `fusescope.ingest.key_id`, per-key rate limits ([ADR 0006](docs/adr/0006-single-ingress.md)) |
 | `rumreceiver` | receiver | RUM ingest (`/rum/v1/*`): public keys, per-application CORS, PII scrubbing, moved from the backend gateway |

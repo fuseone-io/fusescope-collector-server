@@ -40,6 +40,8 @@ exporters:
 
 connectors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/connector/spanmetricsconnector v0.164.1
+  - gomod: github.com/fuseone-io/fusescope-collector-server/components/connector/fusescopespanmetricsconnector v0.0.0
+    path: ./components/connector/fusescopespanmetricsconnector
 
 extensions:
   - gomod: go.opentelemetry.io/collector/extension/zpagesextension v0.164.0

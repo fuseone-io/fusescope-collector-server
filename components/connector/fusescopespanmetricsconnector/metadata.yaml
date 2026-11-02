@@ -1,0 +1,13 @@
+display_name: FuseScope Span Metrics Connector
+type: fusescope_spanmetrics
+github_project: fuseone-io/fusescope-collector-server
+
+status:
+  disable_codecov_badge: true
+  class: connector
+  stability:
+    alpha: [traces_to_metrics]
+  distributions: []
+
+tests:
+  config: {}

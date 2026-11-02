@@ -147,10 +147,28 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   sum 1.15 ms].
 - **Flush.** The reference flushes every 10 s [reference configuration]; each flush emits the
   deltas of the spans it saw.
+- **Point order.** The reference's order of a flush's points varies from run to run [obs: `last`
+  of `agg` in `samples_v4_agg_5m` was 3, 1 and 3 in three runs]. The connector emits points in
+  order of their series' first span; nothing reads the order but `anyLast` in the rollups.
 
 ## 6. Deliberate differences
 
-- `signoz.collector.id` holds this collector's instance ID.
+- `signoz.collector.id` holds this collector's `service.instance.id`, or a random UUID when it
+  has none. It is set as if it were a resource attribute, so its `resource_` copy appears as in
+  the reference.
+- **Series limits.** At most `max_series` (100000) series, holding at most `max_series_bytes`
+  (64 MiB) of keys, attributes (arrays and maps by their elements) and histogram counters, are
+  kept between flushes, across the six metrics; a
+  database or external-call series counts twice, as it emits a count and a sum. Spans of
+  further series are dropped from the metrics with a warning. The reference's
+  `dimensions_cache_size` was not observed when exceeded (§7).
+- **Refused flushes.** A flush the metrics pipeline refuses is dropped with an error, retryable
+  or not. A retryable error does not tell that nothing was written: with the exporter's queue
+  off, an export can store some chunks and then fail, and a resend would be a new export
+  request with new deduplication tokens (DESIGN §4), writing those chunks twice. The exporter's
+  sending queue, on by default, absorbs ClickHouse outages and retries with the request's
+  identity. Shutdown stops scheduling flushes, lets one in progress finish within its
+  deadline, then flushes the rest, and reports either failure.
 
 ## 7. Still to observe
 
@@ -159,3 +177,25 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
 - One series in two flushes: two points for the same minute, or one.
 - The reference's `dimensions_cache_size` (100000) when exceeded.
 - A resource whose `service.name` is empty rather than absent.
+- When the reference writes span-metric scope metadata stamped with a flush time rather than a
+  span's minute, with no point or sample, as for a flush without points [obs: parity run, one
+  such row per metric and scope key]. The connector emits nothing on an empty flush; the parity
+  suite ignores these rows.
+
+## 8. Connector
+
+`fusescope_spanmetrics` is a traces-to-metrics connector: a traces pipeline exports to it, a
+metrics pipeline receives from it and exports to `fusescope_clickhouse`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `dimensions` | the list in §3.3, with its defaults | `name` and optional `default` of each dimension |
+| `latency_histogram_buckets` | the bounds in §2 | durations, positive and increasing |
+| `metrics_flush_interval` | `10s` | how often the deltas are emitted |
+| `max_series` | `100000` | §6 |
+| `max_series_bytes` | `67108864` (64 MiB) | §6 |
+
+The defaults reproduce the reference configuration, so the parity suite runs the connector with
+none of these set. Dimensions named like a connector key (`service.name`, `operation`,
+`span.kind`, `status.code`, `http.status_code`, `db.system`, `db.name`, `address`), or starting
+with `resource_`, the prefix of the connector's resource copies, are refused.

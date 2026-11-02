@@ -379,3 +379,19 @@ func TestChunksAreDeterministic(t *testing.T) {
 		t.Errorf("chunks %v and %v, want the same several chunks", first, second)
 	}
 }
+
+// Metric labels keep invalid UTF-8 raw, unlike the JSON text of traces and
+// logs (metrics §3; observed: the span metrics of probe-utf8).
+func TestLabelsKeepInvalidUTF8(t *testing.T) {
+	md := pmetric.NewMetrics()
+	m := md.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	m.SetName("g")
+	m.SetEmptyGauge().DataPoints().AppendEmpty().Attributes().PutStr("operation", "bad \xff\xfe utf8")
+	enc := newMetricsEncoder()
+	if err := enc.encode(md, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := enc.series.labels.Row(0); !strings.Contains(got, `"operation":"bad `+"\xff\xfe"+` utf8"`) {
+		t.Errorf("labels = %q, want the invalid bytes kept", got)
+	}
+}

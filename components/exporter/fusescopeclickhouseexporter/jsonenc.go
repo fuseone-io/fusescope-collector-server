@@ -14,6 +14,16 @@ const hexDigits = "0123456789abcdef"
 // String columns such as events and links store this text verbatim, so it must
 // match byte for byte (docs/spec/clickhouse-traces.md §3).
 func appendJSONString(dst []byte, s string) []byte {
+	return appendJSON(dst, s, true)
+}
+
+// appendJSONLabel appends s as appendJSONString does, but keeps invalid UTF-8
+// raw, as metric labels hold it (docs/spec/clickhouse-metrics.md §3).
+func appendJSONLabel(dst []byte, s string) []byte {
+	return appendJSON(dst, s, false)
+}
+
+func appendJSON(dst []byte, s string, replaceInvalid bool) []byte {
 	dst = append(dst, '"')
 	start := 0
 	for i := 0; i < len(s); {
@@ -45,7 +55,7 @@ func appendJSONString(dst []byte, s string) []byte {
 			continue
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && size == 1 {
+		if r == utf8.RuneError && size == 1 && replaceInvalid {
 			dst = append(dst, s[start:i]...)
 			dst = append(dst, `\ufffd`...)
 			i += size

@@ -15,6 +15,9 @@ extensions:
       config:
         enabled: false
 
+connectors:
+  fusescope_spanmetrics:
+
 exporters:
   fusescope_clickhouse:
     endpoint: clickhouse:9000
@@ -29,10 +32,10 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      exporters: [fusescope_clickhouse]
+      exporters: [fusescope_clickhouse, fusescope_spanmetrics]
     logs:
       receivers: [otlp]
       exporters: [fusescope_clickhouse]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, fusescope_spanmetrics]
       exporters: [fusescope_clickhouse]

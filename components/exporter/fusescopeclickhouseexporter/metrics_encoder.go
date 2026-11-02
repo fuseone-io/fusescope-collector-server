@@ -412,9 +412,9 @@ func (e *metricsEncoder) appendSeries(spec seriesSpec, fingerprint uint64, hour 
 		if i > 0 {
 			b = append(b, ',')
 		}
-		b = appendJSONString(b, kv.key)
+		b = appendJSONLabel(b, kv.key)
 		b = append(b, ':')
-		b = appendJSONString(b, kv.value)
+		b = appendJSONLabel(b, kv.value)
 	}
 	e.buf = append(b, '}')
 	c.labels.AppendBytes(e.buf)
