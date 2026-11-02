@@ -73,6 +73,9 @@ func (c *addConfig) Build(set component.TelemetrySettings) (operator.Operator, e
 	if c.Value == nil {
 		return nil, errors.New("add: missing required field 'value'")
 	}
+	if c.Field.FieldInterface == nil {
+		return nil, errors.New("add: missing required field 'field'")
+	}
 	op := &addOperator{TransformerOperator: t, field: c.Field, value: c.Value}
 	if s, ok := c.Value.(string); ok && strings.HasPrefix(s, "EXPR(") && strings.HasSuffix(s, ")") {
 		if op.program, err = compile(strings.TrimSuffix(strings.TrimPrefix(s, "EXPR("), ")")); err != nil {

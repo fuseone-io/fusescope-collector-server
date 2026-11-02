@@ -383,3 +383,24 @@ func TestExpressionPanicIsAnError(t *testing.T) {
 	assert.Error(t, err)
 	assert.False(t, errors.Is(err, errPanicked))
 }
+
+// A record's own attribute named like the scratch field of a body read is
+// neither read in place of a missing body field nor lost.
+func TestScratchNameCollision(t *testing.T) {
+	const scratch = "__signozlogspipeline_bodyfield_0__"
+	tests := []struct {
+		name, body string
+		want       map[string]any
+	}{
+		{"body field present", `{"msg":"hello"}`, map[string]any{scratch: "mine", "out": "hello"}},
+		{"body field missing", `{"other":1}`, map[string]any{scratch: "mine"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newTestProcessor(t, map[string]any{"type": "copy", "from": "body.msg", "to": "attributes.out", "on_error": "send"})
+			out, err := p.processLogs(context.Background(), oneRecord(tt.body, map[string]any{scratch: "mine"}))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, firstRecord(out).Attributes().AsRaw())
+		})
+	}
+}

@@ -74,6 +74,7 @@ func TestConfigValidate(t *testing.T) {
 		{name: "bad on_error", operators: []map[string]any{add(map[string]any{"on_error": "bogus"})}, wantErr: "on_error"},
 		{name: "bad field prefix", operators: []map[string]any{add(map[string]any{"field": "nowhere.a"})}, wantErr: "unrecognized prefix"},
 		{name: "add without value", operators: []map[string]any{{"type": "add", "field": "attributes.a"}}, wantErr: "value"},
+		{name: "add without field", operators: []map[string]any{{"type": "add", "value": "x", "on_error": "drop"}}, wantErr: "'field'"},
 		{name: "add bad expression", operators: []map[string]any{add(map[string]any{"value": "EXPR(1 +)"})}, wantErr: "compile value expression"},
 		{name: "regex without named group", operators: []map[string]any{{"type": "regex_parser", "regex": "^a"}}, wantErr: "named capture"},
 		{name: "epoch layout", operators: []map[string]any{{"type": "time_parser", "parse_from": "attributes.t", "layout_type": "epoch", "layout": "x"}}, wantErr: "layout"},

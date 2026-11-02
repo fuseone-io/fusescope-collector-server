@@ -67,6 +67,8 @@ This processor is **stricter** than the reference in these cases, which the refe
 
 - a field the operator type does not have ([O] `R_UnknownOperatorField`, `R_UnknownTraceField`);
 - `add` without `value` ([O] `R_AddNoValue`);
+- `add` without `field` (not observed): the write would fail on every record, so `on_error: drop`
+  would discard every matching log while the push is reported `APPLIED`;
 - a grok pattern naming an unknown pattern ([O] `R_GrokBadPattern`).
 
 The backend never generates these (§1.1), and ADR 0008's preflight requires unknown fields to fail,

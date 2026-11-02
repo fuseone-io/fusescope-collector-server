@@ -411,6 +411,18 @@ func (n *stanzaNode) process(ctx context.Context, r *run, e *entry.Entry, out []
 			return append(out, hop{e: e, next: n.next})
 		}
 	}
+	// A record's own attribute named like a scratch one is set aside, so a
+	// missing body field never reads it, and put back afterwards.
+	var saved map[string]any
+	for _, read := range n.reads {
+		if v, ok := e.Attributes[read.scratch]; ok {
+			if saved == nil {
+				saved = map[string]any{}
+			}
+			saved[read.scratch] = v
+			delete(e.Attributes, read.scratch)
+		}
+	}
 	for _, read := range n.reads {
 		if v, ok := read.resolve(e); ok {
 			if e.Attributes == nil {
@@ -423,6 +435,12 @@ func (n *stanzaNode) process(ctx context.Context, r *run, e *entry.Entry, out []
 	err := n.safeProcess(ctx, e)
 	for _, read := range n.reads {
 		delete(e.Attributes, read.scratch)
+	}
+	for k, v := range saved {
+		if e.Attributes == nil {
+			e.Attributes = map[string]any{}
+		}
+		e.Attributes[k] = v
 	}
 	if errors.Is(err, errPanicked) {
 		return n.failed(e, err, out)
