@@ -120,6 +120,13 @@ datatype, string value) among the entries of the series' `resource_attrs`, `scop
 The table is an `AggregatingMergeTree` with min/max states, so rows from different batches
 merge.
 
+**Cap (deliberate difference).** The reference kept exactly 1000 metadata rows in a run whose
+corpus called for more, dropping every row of some metrics, gauges among them
+[obs: two runs after the span-metric probes of `apm-metrics.md`, 1000 rows each, against 965
+rows before them]. Its rule for what it keeps was not identified. The exporter writes every
+row; the extra rows only add filter suggestions. The golden test and the parity suite require,
+when the reference is at 1000 rows, only that its rows are among the exporter's.
+
 ## 6. Expansion limits (deliberate difference)
 
 Every derived series carries its own copy of the resource, scope and point attributes (§3), so
