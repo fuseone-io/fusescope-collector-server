@@ -230,6 +230,47 @@ def probe_spans(t0):
     ]
 
 
+TRACE_D = "6d1f0a2b3c4d5e6f708192a3b4c5d6e7"
+APM_RESOURCE = {"service.name": "apm-probe", "host.name": "res-host", "deployment.environment": "res-env",
+                "k8s.namespace.name": "res-ns", "custom.res": "not-a-dimension"}
+
+
+def apm_spans(t0):
+    """Span-metric probes: aggregation, bucket edges, dimension sources, db and external rules."""
+    ids = (f"{i:016x}" for i in range(0xd00, 0xe00))
+    root = next(ids)
+
+    def sub(name, kind, start, end, a, **kw):
+        return span(TRACE_D, next(ids), root, name, kind, start, end, a, t0, **kw)
+
+    return [
+        span(TRACE_D, root, None, "apm-root", 2, 0, 70_000, {"http.response.status_code": 200}, t0),
+        # One series, three spans in the same minute, at and below bucket bounds (ms).
+        dict(sub("agg", 1, 1, 1, {}), endTimeUnixNano=str(t0 + MS + 50_000)),
+        dict(sub("agg", 1, 1, 1, {}), endTimeUnixNano=str(t0 + MS + 100_000)),
+        sub("agg", 1, 1, 2, {}),
+        # The same series a minute earlier.
+        sub("agg", 1, -60_000, -59_999, {}),
+        # Dimensions set on the span override or add to the resource's.
+        sub("dims", 1, 3, 4, {"host.name": "span-host", "deployment.environment": "span-env",
+                              "k8s.node.name": "span-node", "custom.span": "not-a-dimension"}),
+        sub("status-ok", 2, 5, 6, {}, status={"code": 1}),
+        sub("status-error", 3, 5, 6, {}, status={"code": 2}),
+        # Database calls: which keys make a db series, and on which span kinds.
+        sub("db-old-system-new-namespace", 3, 7, 8, {"db.system": "postgresql", "db.namespace": "new_ns"}),
+        sub("db-new-system-old-name", 3, 7, 8, {"db.system.name": "postgresql", "db.name": "old_name"}),
+        sub("db-old-system-only", 3, 7, 8, {"db.system": "redis"}),
+        sub("db-internal-kind", 1, 7, 8, {"db.system": "sqlite", "db.name": "local"}),
+        # External calls: span kinds and address sources.
+        sub("external-internal-kind", 1, 9, 10, {"net.peer.name": "internal-peer.example.com"}),
+        sub("external-server-kind", 2, 9, 10, {"net.peer.name": "server-peer.example.com"}),
+        sub("external-server-port", 3, 9, 10, {"server.address": "port.example.com", "server.port": 8080}),
+        sub("external-peer-port", 3, 9, 10, {"net.peer.name": "peer.example.com", "net.peer.port": 9090}),
+        # Durations past the last bound.
+        sub("long", 1, 11, 61_012, {}),
+    ]
+
+
 def traces(t0):
     checkout_spans = [
         span(TRACE_A, S_ROOT, None, "GET /cart", 2, 0, 120, {
@@ -296,6 +337,8 @@ def traces(t0):
         {"resource": {"attributes": attrs(r)}, "scopeSpans": [{"scope": SCOPE, "spans": [
             span(f"{i + 1:032x}", f"{i + 1:016x}", None, "probe-resource", 1, 300, 301, {}, t0)]}]}
         for i, r in enumerate(PROBE_RESOURCES) if i != 2
+    ] + [
+        {"resource": {"attributes": attrs(APM_RESOURCE)}, "scopeSpans": [{"scope": SCOPE, "spans": apm_spans(t0)}]},
     ]}
 
 
