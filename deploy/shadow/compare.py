@@ -10,6 +10,7 @@ attribute keys must match. Exits 1 on a difference.
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,10 +24,11 @@ SETTLE_MINUTES = int(os.environ.get("SETTLE_MINUTES", "5"))
 SELF_METRICS = "metric_name NOT LIKE 'otelcol\\_%' AND metric_name NOT LIKE 'exporter\\_%' " \
     "AND metric_name NOT LIKE 'scrape\\_%' AND metric_name NOT LIKE 'promhttp\\_%' AND metric_name != 'up'"
 
-WINDOW = (
-    f"toStartOfMinute(now() - INTERVAL {WINDOW_MINUTES + SETTLE_MINUTES} MINUTE)",
-    f"toStartOfMinute(now() - INTERVAL {SETTLE_MINUTES} MINUTE)",
-)
+# Fixed once per run, so both databases and every check see the same minutes.
+_end = int(time.time()) // 60 * 60 - SETTLE_MINUTES * 60
+WINDOW = (f"toDateTime({_end - WINDOW_MINUTES * 60}, 'UTC')", f"toDateTime({_end}, 'UTC')")
+# Each collector stamps span metrics with its own identity (apm-metrics spec §6).
+COLLECTOR_KEYS = ("signoz.collector.id", "resource_signoz.collector.id")
 
 CHECKS = {
     "spans per service and minute": f"""
@@ -42,7 +44,7 @@ CHECKS = {
         SELECT DISTINCT arrayJoin(mapKeys(resources_string)) AS k FROM signoz_traces.signoz_index_v3
         WHERE timestamp >= {WINDOW[0]} AND timestamp < {WINDOW[1]} ORDER BY k""",
     "logs per service and minute": f"""
-        SELECT resources_string['service.name'] AS s, toString(toStartOfMinute(fromUnixTimestamp64Nano(timestamp))) AS m, count()
+        SELECT resources_string['service.name'] AS s, toString(toStartOfMinute(fromUnixTimestamp64Nano(toInt64(timestamp)))) AS m, count()
         FROM signoz_logs.logs_v2
         WHERE timestamp >= toUnixTimestamp64Nano(toDateTime64({WINDOW[0]}, 9))
           AND timestamp < toUnixTimestamp64Nano(toDateTime64({WINDOW[1]}, 9))
@@ -60,11 +62,21 @@ CHECKS = {
         WHERE sm.metric_name = 'signoz_calls_total'
           AND sm.unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 AND sm.unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000
         GROUP BY s ORDER BY s""",
+    # Series identities, not fingerprints, which differ by design (metrics spec §4).
     "metric series": f"""
-        SELECT metric_name, uniqExact(fingerprint) FROM signoz_metrics.time_series_v4
-        WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000 AND {SELF_METRICS}
-        GROUP BY metric_name ORDER BY metric_name""",
+        SELECT DISTINCT metric_name, labels, attrs, scope_attrs, resource_attrs FROM signoz_metrics.time_series_v4
+        WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000 AND {SELF_METRICS}""",
 }
+
+
+def anonymize(row):
+    """Replaces the collector identity in a series row, wherever it appears."""
+    name, labels, *maps = row
+    labels = json.loads(labels, strict=False)
+    labels.update({k: "<collector>" for k in COLLECTOR_KEYS if k in labels})
+    maps = [{k: "<collector>" if k in COLLECTOR_KEYS else v for k, v in m.items()} for m in maps]
+    return (name, json.dumps([labels] + maps, sort_keys=True))
+
 
 
 def query(base, sql):
@@ -80,7 +92,10 @@ def query(base, sql):
 def main():
     failed = 0
     for name, sql in CHECKS.items():
-        demo, shadow = set(query(DEMO, sql)), set(query(SHADOW, sql))
+        demo, shadow = query(DEMO, sql), query(SHADOW, sql)
+        if name == "metric series":
+            demo, shadow = map(anonymize, demo), map(anonymize, shadow)
+        demo, shadow = set(demo), set(shadow)
         if demo == shadow:
             print(f"ok    {name} ({len(demo)} rows)")
             continue

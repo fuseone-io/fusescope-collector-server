@@ -60,7 +60,7 @@ Recreating `fusescope` restarts the backend (a few seconds of UI and RUM unavail
 Check: `docker logs fusescope-demo-otel-tee-1` and `fusescope-demo-fusescope-collector-shadow-1` show no export
 errors, and the demo's UI keeps showing new data.
 
-Resources: about 2.2 GiB and 1.3 CPU more (`clickhouse-shadow` 1.5 GiB, collector 384 MiB, tee 256 MiB).
+Resources: about 2.3 GiB and 1.3 CPU more (`clickhouse-shadow` 1.5 GiB, collector 384 MiB, tee 384 MiB).
 
 ## Compare
 
@@ -89,6 +89,8 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 ## Risks
 
 - The tee is a new hop on the demo's path. If it stops, the demo gets no data until rollback.
-- A request fails if the shadow queue is full: 100 000 requests, hours of demo traffic. If the shadow collector stays
-  down that long, roll back.
+- The shadow side never refuses a request: its queue is bounded (32 MiB per signal) and shadow requests are dropped
+  after 10 minutes of failed retries, so a shadow outage loses shadow data, seen as differences in `compare.py`, and
+  never fails a request to the demo. Only the tee's memory limiter (300 MiB) can refuse, and only under a load the
+  demo never sends.
 - The shadow collector shares the host's CPU and memory with the demo; the limits above bound it.

@@ -34,7 +34,7 @@ services:
     networks: [default, shadow]
     depends_on: [otel-collector]
     restart: unless-stopped
-    mem_limit: 256m
+    mem_limit: 384m
     cpus: 0.2
 
   clickhouse-shadow:

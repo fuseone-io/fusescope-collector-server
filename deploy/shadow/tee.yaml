@@ -1,7 +1,12 @@
 # Fan-out in front of the demo collector: every request goes to the demo
-# collector as before and, through a large in-memory queue, to the shadow
-# collector. A full shadow queue would fail the request, so the queue holds
-# hours of demo traffic; the runbook says how to drop the shadow path.
+# collector as before and, through a queue, to the shadow collector.
+#
+# The demo comes first. A request fails for its sender if any destination
+# refuses it, so the shadow path must never refuse: its queue is bounded in
+# bytes and shadow requests are dropped after 10 minutes of failed retries,
+# which keeps the queue from ever filling. A shadow outage then shows up as
+# differences in compare.py, never on the demo. The memory limiter keeps the
+# tee within its container limit.
 receivers:
   otlp:
     protocols:
@@ -9,6 +14,12 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 300
+    spike_limit_mib: 60
 
 exporters:
   otlp/demo:
@@ -20,7 +31,8 @@ exporters:
     tls:
       insecure: true
     sending_queue:
-      queue_size: 100000
+      sizer: bytes
+      queue_size: 33554432 # 32 MiB per signal; the demo sends a few MiB an hour
     retry_on_failure:
       max_elapsed_time: 10m
 
@@ -31,10 +43,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [memory_limiter]
       exporters: [otlp/demo, otlp/shadow]
     logs:
       receivers: [otlp]
+      processors: [memory_limiter]
       exporters: [otlp/demo, otlp/shadow]
     metrics:
       receivers: [otlp]
+      processors: [memory_limiter]
       exporters: [otlp/demo, otlp/shadow]
