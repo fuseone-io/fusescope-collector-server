@@ -34,6 +34,10 @@ const (
 	MaxManagedProcessors = 256
 	// PreflightTimeout bounds the start of each preflighted processor.
 	PreflightTimeout = 10 * time.Second
+	// confirmRetryStart and confirmRetryMax pace retries of a confirmation
+	// that could not be recorded.
+	confirmRetryStart = 100 * time.Millisecond
+	confirmRetryMax   = 30 * time.Second
 )
 
 // Status is reported to the backend for one push.
@@ -75,6 +79,8 @@ type Agent struct {
 	deferred []byte
 	// queued is the latest push received while another was pending.
 	queued *queuedPush
+	// retrying is set while a confirmation that could not be recorded is retried.
+	retrying bool
 }
 
 type queuedPush struct{ hash, body []byte }
@@ -256,12 +262,47 @@ func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
 // that revision is promoted on disk first, then reported APPLIED; a push
 // queued meanwhile is handled next.
 func (a *Agent) Confirm(revision string) {
+	if err := a.confirm(revision); err != nil {
+		a.logger.Error("could not record the applied OpAMP configuration; retrying", zap.Error(err))
+		a.retryConfirm(revision)
+	}
+}
+
+// retryConfirm records a confirmation that failed (a full disk, say) until it
+// succeeds; the push stays pending, and unreported, until then.
+func (a *Agent) retryConfirm(revision string) {
+	a.mu.Lock()
+	if a.retrying {
+		a.mu.Unlock()
+		return
+	}
+	a.retrying = true
+	a.mu.Unlock()
+	go func() {
+		defer func() { a.mu.Lock(); a.retrying = false; a.mu.Unlock() }()
+		delay := confirmRetryStart
+		for {
+			time.Sleep(delay)
+			a.mu.Lock()
+			stale := a.pending == nil || a.pending.Revision != revision
+			a.mu.Unlock()
+			if stale {
+				return
+			}
+			if err := a.confirm(revision); err == nil {
+				return
+			}
+			delay = min(2*delay, confirmRetryMax)
+		}
+	}()
+}
+
+func (a *Agent) confirm(revision string) error {
 	a.lifecycle.Lock()
 	promoted, err := a.store.Confirm(revision)
 	if err != nil {
 		a.lifecycle.Unlock()
-		a.logger.Error("could not record the applied OpAMP configuration", zap.Error(err))
-		return
+		return err
 	}
 	a.mu.Lock()
 	var statuses []Status
@@ -303,6 +344,7 @@ func (a *Agent) Confirm(revision string) {
 			}
 		}()
 	}
+	return nil
 }
 
 func (a *Agent) mergePush(base merge.Config, body []byte) (merge.Config, error) {

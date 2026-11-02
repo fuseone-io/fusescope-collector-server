@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -160,6 +161,9 @@ func split(b []byte) (map[string]any, *Settings, error) {
 		return nil, nil, agent.ErrNoSettings
 	}
 	delete(base, settingsKey)
+	// The collector resolves substitutions in what it receives; this section
+	// it never receives, so environment references are resolved here.
+	section = expandEnv(section).(map[string]any)
 	var s Settings
 	if err := confmap.NewFromStringMap(section).Unmarshal(&s); err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", settingsKey, err)
@@ -168,4 +172,32 @@ func split(b []byte) (map[string]any, *Settings, error) {
 		return nil, nil, err
 	}
 	return base, &s, nil
+}
+
+// envRef matches $$ and ${env:NAME} or ${NAME}, as the collector writes them.
+var envRef = regexp.MustCompile(`\$\$|\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandEnv resolves environment references in the string values of v.
+func expandEnv(v any) any {
+	switch x := v.(type) {
+	case string:
+		return envRef.ReplaceAllStringFunc(x, func(m string) string {
+			if m == "$$" {
+				return "$"
+			}
+			return os.Getenv(envRef.FindStringSubmatch(m)[1])
+		})
+	case map[string]any:
+		for k, e := range x {
+			x[k] = expandEnv(e)
+		}
+		return x
+	case []any:
+		for i, e := range x {
+			x[i] = expandEnv(e)
+		}
+		return x
+	default:
+		return v
+	}
 }

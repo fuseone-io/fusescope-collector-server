@@ -118,6 +118,9 @@ service:
     traces: {receivers: [otlp], processors: [memory_limiter, signozspanmapper, batch, signozllmpricing], exporters: [fusescope_clickhouse]}
 ```
 
+The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
+in it itself (`$$` for a literal `$`); other substitution schemes are not available there.
+
 Limits, each rejecting a push with `FAILED`: 4 MiB of pushed YAML, 256 allow-listed processors,
 10 s for each processor's preflight start. A processor type this build lacks fails the
 preflight, so pushes with it are rejected until the build has it.

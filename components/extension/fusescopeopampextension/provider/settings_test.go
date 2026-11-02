@@ -45,3 +45,26 @@ func TestTLSFloor(t *testing.T) {
 		t.Errorf("MinVersion = %x, want TLS 1.3", cfg.MinVersion)
 	}
 }
+
+// The provider's own section resolves environment variables, since the
+// collector never sees it.
+func TestSettingsResolveEnv(t *testing.T) {
+	t.Setenv("OPAMP_ENDPOINT", "wss://backend:4320/v1/opamp")
+	t.Setenv("OPAMP_STORAGE", "/var/lib/opamp")
+	base, s, err := split([]byte(`
+fusescope_opamp:
+  endpoint: ${env:OPAMP_ENDPOINT}
+  storage: ${OPAMP_STORAGE}
+  tls: {server_name_override: "literal $$dollar"}
+receivers: {otlp: {}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Endpoint != "wss://backend:4320/v1/opamp" || s.Storage != "/var/lib/opamp" || s.TLS.ServerName != "literal $dollar" {
+		t.Errorf("settings %+v, want the variables resolved and $$ unescaped", s)
+	}
+	if _, ok := base[settingsKey]; ok {
+		t.Error("the settings section reached the collector")
+	}
+}

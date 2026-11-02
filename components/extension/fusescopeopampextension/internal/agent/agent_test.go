@@ -241,3 +241,34 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A confirmation that cannot be recorded stays pending, is retried, and is
+// reported APPLIED only once it is on disk.
+func TestConfirmRetriedUntilPersisted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	a, r, _ := started(t, base)
+	a.Confirm(revisionOf(a))
+	if st := a.Push(context.Background(), []byte("h1"), []byte(push)); st != nil {
+		t.Fatalf("push: %+v", st)
+	}
+	rev := revisionOf(a)
+	dir := a.storeDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	a.Confirm(rev)
+	time.Sleep(100 * time.Millisecond)
+	if st := r.find("h1"); st != nil {
+		t.Fatalf("reported %+v before the confirmation was recorded", st)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { st := r.find("h1"); return st != nil && st.Applied })
+	if _, err := os.Stat(filepath.Join(dir, "applied.json")); err != nil {
+		t.Error("APPLIED without the applied push on disk")
+	}
+}
