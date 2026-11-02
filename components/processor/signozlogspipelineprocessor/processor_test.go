@@ -6,6 +6,7 @@ package signozlogspipelineprocessor
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -204,6 +205,63 @@ func TestJSONNullIsAnError(t *testing.T) {
 	}
 }
 
+// A JSON object followed by anything is not an object for normalize
+// (regression from review of #29).
+func TestNormalizeTrailingContent(t *testing.T) {
+	p := newTestProcessor(t, map[string]any{"type": "normalize"})
+	for _, body := range []string{`{"msg":"hello"}}`, `{"msg":"hello"} x`, `{"a":1}{"b":2}`} {
+		out, err := p.processLogs(context.Background(), oneRecord(body, map[string]any{}))
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"message": body}, firstRecord(out).Body().AsRaw(), body)
+	}
+	out, err := p.processLogs(context.Background(), oneRecord(`{"msg":"hello"}`, map[string]any{}))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"message": "hello"}, firstRecord(out).Body().AsRaw())
+}
+
+func TestWritesResource(t *testing.T) {
+	for _, tt := range []struct {
+		op   map[string]any
+		want bool
+	}{
+		{map[string]any{"type": "add", "field": "attributes.a", "value": "1"}, false},
+		{map[string]any{"type": "copy", "from": "resource.a", "to": "attributes.a"}, false},
+		{map[string]any{"type": "add", "field": "resource.a", "value": "1"}, true},
+		{map[string]any{"type": "move", "from": "resource.a", "to": "attributes.a"}, true},
+		{map[string]any{"type": "copy", "from": "attributes.a", "to": "resource.a"}, true},
+		{map[string]any{"type": "remove", "field": "resource.a"}, true},
+		{map[string]any{"type": "regex_parser", "regex": "(?P<a>.)", "parse_to": "resource"}, true},
+	} {
+		p := newTestProcessor(t, tt.op)
+		assert.Equal(t, tt.want, p.pipeline.writesResource, "%v", tt.op)
+	}
+}
+
+// Records of a resource share one copy of it unless the pipeline writes the
+// resource, so a large resource is not copied per record (regression from
+// review of #29).
+func TestSharedResourceMemory(t *testing.T) {
+	ld := plog.NewLogs()
+	rl := ld.ResourceLogs().AppendEmpty()
+	for i := range 2000 {
+		rl.Resource().Attributes().PutStr(string(rune('a'+i%26))+time.Duration(i).String(), "value")
+	}
+	records := rl.ScopeLogs().AppendEmpty().LogRecords()
+	for range 2000 {
+		records.AppendEmpty().Body().SetStr("x")
+	}
+	p := newTestProcessor(t, map[string]any{"type": "add", "field": "attributes.a", "value": "EXPR(resource.a0s)"})
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	out, err := p.processLogs(context.Background(), ld)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	assert.Equal(t, 2000, out.LogRecordCount())
+	assert.Equal(t, 1, out.ResourceLogs().Len())
+	// A copy per record would allocate 4 million map entries, several hundred MB.
+	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(64<<20))
+}
+
 func TestOnError(t *testing.T) {
 	// attributes.n + 1 fails at run time for a string n.
 	for _, tt := range []struct {
@@ -309,7 +367,8 @@ func TestOperatorPanicIsAnError(t *testing.T) {
 		t.Run(tt.onError, func(t *testing.T) {
 			n := &stanzaNode{id: "p", op: panickingOperator{}, onError: tt.onError, next: exit, logger: componenttest.NewNopTelemetrySettings().Logger}
 			p := &pipeline{nodes: []node{n}}
-			out := p.process(context.Background(), []*entry.Entry{entry.New()})
+			var out []*entry.Entry
+			p.process(newRun(context.Background()), entry.New(), func(e *entry.Entry) { out = append(out, e) })
 			assert.Equal(t, tt.kept, len(out) == 1)
 		})
 	}

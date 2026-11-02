@@ -7,7 +7,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/entry"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor/processorhelper"
@@ -27,13 +26,35 @@ func newProcessor(cfg *Config, set component.TelemetrySettings) (*logsProcessor,
 }
 
 // processLogs runs every record through the operators and rebuilds the
-// logs from the records that come out (spec §5). Operator failures are
-// handled per record by on_error, so the call itself never fails.
+// logs from the records that come out (spec §5), one record at a time so a
+// large shared resource is not copied for the whole batch at once.
+// Operator failures are handled per record by on_error, so the call itself
+// never fails.
 func (p *logsProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog.Logs, error) {
-	entries := toEntries(ld, p.now(), make([]*entry.Entry, 0, ld.LogRecordCount()))
-	out := p.pipeline.process(ctx, entries)
-	if len(out) == 0 {
+	now := p.now()
+	out := newLogsBuilder()
+	r := newRun(ctx)
+	for i := 0; i < ld.ResourceLogs().Len(); i++ {
+		rl := ld.ResourceLogs().At(i)
+		var shared map[string]any
+		if !p.pipeline.writesResource {
+			shared = rl.Resource().Attributes().AsRaw()
+		}
+		for j := 0; j < rl.ScopeLogs().Len(); j++ {
+			sl := rl.ScopeLogs().At(j)
+			for k := 0; k < sl.LogRecords().Len(); k++ {
+				e := toEntry(sl.LogRecords().At(k), now)
+				e.ScopeName = sl.Scope().Name()
+				e.Resource = shared
+				if e.Resource == nil {
+					e.Resource = rl.Resource().Attributes().AsRaw()
+				}
+				p.pipeline.process(r, e, out.add)
+			}
+		}
+	}
+	if out.count == 0 {
 		return ld, processorhelper.ErrSkipProcessingData
 	}
-	return fromEntries(out), nil
+	return out.ld, nil
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -251,7 +252,7 @@ func jsonObject(s string) (map[string]any, bool) {
 	d := json.NewDecoder(bytes.NewReader([]byte(s)))
 	d.UseNumber()
 	var object map[string]any
-	if err := d.Decode(&object); err != nil || d.More() {
+	if err := d.Decode(&object); err != nil || d.Decode(new(json.RawMessage)) != io.EOF {
 		return nil, false
 	}
 	return numbers(object).(map[string]any), true

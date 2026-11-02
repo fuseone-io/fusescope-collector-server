@@ -25,6 +25,27 @@ const exit = -1
 type pipeline struct {
 	first int
 	nodes []node
+	// writesResource is set when an operator may change the resource;
+	// otherwise a resource's records share one resource map.
+	writesResource bool
+}
+
+// resourceWriteKeys are the operator fields that name where it writes; a
+// move also deletes its from field.
+var resourceWriteKeys = []string{"parse_to", "to", "field", "from"}
+
+func writesResource(specs []spec) bool {
+	for _, s := range specs {
+		for _, key := range resourceWriteKeys {
+			if key == "from" && s.typ != "move" {
+				continue
+			}
+			if v, _ := s.config[key].(string); strings.HasPrefix(v, "resource") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type node interface {
@@ -75,7 +96,7 @@ func newPipeline(operators []map[string]any, set component.TelemetrySettings) (*
 	}
 	output := &sink{OutputOperator: out}
 
-	p := &pipeline{nodes: make([]node, len(specs))}
+	p := &pipeline{nodes: make([]node, len(specs)), writesResource: writesResource(specs)}
 	for i, s := range specs {
 		next := exit
 		switch {
@@ -339,32 +360,33 @@ func successors(n node) []int {
 // run is the state of one ConsumeLogs call; nodes share nothing else, so a
 // processor serves concurrent calls.
 type run struct {
+	ctx     context.Context
 	emitted []*entry.Entry
+	pending []hop
 }
 
 type runKey struct{}
 
-// process runs every entry through the graph and returns those that leave
-// it, with the parsed body cache removed.
-func (p *pipeline) process(ctx context.Context, entries []*entry.Entry) []*entry.Entry {
+func newRun(ctx context.Context) *run {
 	r := &run{}
-	ctx = context.WithValue(ctx, runKey{}, r)
-	out := entries[:0:0]
-	var pending []hop
-	for _, e := range entries {
-		pending = append(pending[:0], hop{e: e, next: p.first})
-		for len(pending) > 0 {
-			h := pending[len(pending)-1]
-			pending = pending[:len(pending)-1]
-			if h.next == exit {
-				delete(h.e.Attributes, parsedBodyKey)
-				out = append(out, h.e)
-				continue
-			}
-			pending = p.nodes[h.next].process(ctx, r, h.e, pending)
+	r.ctx = context.WithValue(ctx, runKey{}, r)
+	return r
+}
+
+// process runs e through the graph and calls leave for each entry that
+// leaves it, with the parsed body cache removed.
+func (p *pipeline) process(r *run, e *entry.Entry, leave func(*entry.Entry)) {
+	r.pending = append(r.pending[:0], hop{e: e, next: p.first})
+	for len(r.pending) > 0 {
+		h := r.pending[len(r.pending)-1]
+		r.pending = r.pending[:len(r.pending)-1]
+		if h.next == exit {
+			delete(h.e.Attributes, parsedBodyKey)
+			leave(h.e)
+			continue
 		}
+		r.pending = p.nodes[h.next].process(r.ctx, r, h.e, r.pending)
 	}
-	return out
 }
 
 // stanzaNode runs a stanza operator whose output is the sink, evaluating

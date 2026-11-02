@@ -5,6 +5,7 @@ package signozlogspipelineprocessor // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/adapter"
@@ -12,25 +13,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
-
-// toEntries converts every record into an entry carrying its own copy of
-// the resource and its scope name (spec §5.1).
-func toEntries(ld plog.Logs, now time.Time, dst []*entry.Entry) []*entry.Entry {
-	for i := 0; i < ld.ResourceLogs().Len(); i++ {
-		rl := ld.ResourceLogs().At(i)
-		for j := 0; j < rl.ScopeLogs().Len(); j++ {
-			sl := rl.ScopeLogs().At(j)
-			scope := sl.Scope().Name()
-			for k := 0; k < sl.LogRecords().Len(); k++ {
-				e := toEntry(sl.LogRecords().At(k), now)
-				e.Resource = rl.Resource().Attributes().AsRaw()
-				e.ScopeName = scope
-				dst = append(dst, e)
-			}
-		}
-	}
-	return dst
-}
 
 func toEntry(r plog.LogRecord, now time.Time) *entry.Entry {
 	e := &entry.Entry{
@@ -61,32 +43,55 @@ func toEntry(r plog.LogRecord, now time.Time) *entry.Entry {
 	return e
 }
 
-// fromEntries groups entries by resource and then by scope name, in the
-// order each group first appears (spec §5.2).
-func fromEntries(entries []*entry.Entry) plog.Logs {
-	ld := plog.NewLogs()
-	type group struct {
-		rl     plog.ResourceLogs
-		scopes map[string]plog.ScopeLogs
+// logsBuilder groups entries by resource and then by scope name, in the
+// order each group first appears (spec §5.2), as they come out of the
+// pipeline, so no more than one record's entries are held at a time.
+type logsBuilder struct {
+	ld     plog.Logs
+	count  int
+	groups map[uint64]*resourceGroup
+	// lastResource and lastKey skip rehashing a resource map shared by
+	// consecutive entries.
+	lastResource map[string]any
+	lastKey      uint64
+}
+
+type resourceGroup struct {
+	rl     plog.ResourceLogs
+	scopes map[string]plog.ScopeLogs
+}
+
+func newLogsBuilder() *logsBuilder {
+	return &logsBuilder{ld: plog.NewLogs(), groups: map[uint64]*resourceGroup{}}
+}
+
+func (b *logsBuilder) add(e *entry.Entry) {
+	var key uint64
+	if b.lastResource != nil && sameMap(b.lastResource, e.Resource) {
+		key = b.lastKey
+	} else {
+		key = adapter.HashResource(e.Resource)
+		b.lastResource, b.lastKey = e.Resource, key
 	}
-	groups := make(map[uint64]*group)
-	for _, e := range entries {
-		key := adapter.HashResource(e.Resource)
-		g, ok := groups[key]
-		if !ok {
-			g = &group{rl: ld.ResourceLogs().AppendEmpty(), scopes: map[string]plog.ScopeLogs{}}
-			putMap(e.Resource, g.rl.Resource().Attributes())
-			groups[key] = g
-		}
-		sl, ok := g.scopes[e.ScopeName]
-		if !ok {
-			sl = g.rl.ScopeLogs().AppendEmpty()
-			sl.Scope().SetName(e.ScopeName)
-			g.scopes[e.ScopeName] = sl
-		}
-		fromEntry(e, sl.LogRecords().AppendEmpty())
+	g, ok := b.groups[key]
+	if !ok {
+		g = &resourceGroup{rl: b.ld.ResourceLogs().AppendEmpty(), scopes: map[string]plog.ScopeLogs{}}
+		putMap(e.Resource, g.rl.Resource().Attributes())
+		b.groups[key] = g
 	}
-	return ld
+	sl, ok := g.scopes[e.ScopeName]
+	if !ok {
+		sl = g.rl.ScopeLogs().AppendEmpty()
+		sl.Scope().SetName(e.ScopeName)
+		g.scopes[e.ScopeName] = sl
+	}
+	fromEntry(e, sl.LogRecords().AppendEmpty())
+	b.count++
+}
+
+// sameMap reports whether a and b are the same map, not equal ones.
+func sameMap(a, b map[string]any) bool {
+	return b != nil && reflect.ValueOf(a).UnsafePointer() == reflect.ValueOf(b).UnsafePointer()
 }
 
 func fromEntry(e *entry.Entry, r plog.LogRecord) {
