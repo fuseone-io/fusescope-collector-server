@@ -52,23 +52,62 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
+// External-call addresses as the reference derives them (apm-metrics §4); the
+// shadow deployment found the RPC, peer.service and network.peer.address cases.
 func TestExternalAddress(t *testing.T) {
 	tests := []struct {
 		name  string
 		attrs map[string]any
 		want  string
+		ok    bool
 	}{
-		{"http.host first", map[string]any{"http.host": "h", "server.address": "s", "url.full": "https://u/x"}, "h"},
-		{"net.peer.name over server.address", map[string]any{"server.address": "s", "net.peer.name": "p"}, "p"},
-		{"server.address over urls", map[string]any{"server.address": "s", "url.full": "https://u/x"}, "s"},
-		{"net.peer.name", map[string]any{"net.peer.name": "p", "http.url": "http://u/x"}, "p"},
-		{"integer port leaves it empty", map[string]any{"server.address": "s", "server.port": 8080}, "s:"},
-		{"string port", map[string]any{"server.address": "s", "server.port": "8080"}, "s:8080"},
-		{"peer port", map[string]any{"net.peer.name": "p", "net.peer.port": 9090}, "p:"},
-		{"only the paired port", map[string]any{"net.peer.name": "p", "server.port": 8443}, "p"},
-		{"http.url over url.full", map[string]any{"http.url": "http://old/a", "url.full": "https://new/b"}, "old"},
-		{"url.full host and port", map[string]any{"url.full": "https://u:8443/x"}, "u:8443"},
-		{"none", map[string]any{"rpc.service": "Stock"}, ""},
+		{"http.host first", map[string]any{"http.host": "h", "server.address": "s", "url.full": "https://u/x"}, "h", true},
+		{"net.peer.name over server.address", map[string]any{"server.address": "s", "net.peer.name": "p"}, "p", true},
+		{"server.address over net.peer.ip", map[string]any{"net.peer.ip": "1.1.1.1", "server.address": "s"}, "s", true},
+		{"net.peer.ip over net.sock.peer.addr", map[string]any{"net.sock.peer.addr": "3.3.3.3", "net.peer.ip": "2.2.2.2"}, "2.2.2.2", true},
+		{"net.sock.peer.addr over network.peer.address", map[string]any{"network.peer.address": "4.4.4.4", "net.sock.peer.addr": "3.3.3.3"}, "3.3.3.3", true},
+		{"network.peer.address over urls", map[string]any{"http.url": "http://u/x", "network.peer.address": "1.2.3.4"}, "1.2.3.4", true},
+		{"network.peer.address over peer.service", map[string]any{"network.peer.address": "1.2.3.4", "peer.service": "telemetrygen-server"}, "1.2.3.4", true},
+		{"urls over peer.service", map[string]any{"peer.service": "ps", "url.full": "https://u/x"}, "u", true},
+		{"peer.service alone", map[string]any{"peer.service": "mysql", "sql.query": "SELECT 1"}, "mysql", true},
+		{"net.sock.peer.name is not a key", map[string]any{"net.sock.peer.name": "n"}, "", false},
+		{"integer port reads as empty", map[string]any{"server.address": "s", "server.port": 8080}, "s:", true},
+		{"string port", map[string]any{"server.address": "s", "server.port": "8080"}, "s:8080", true},
+		{"peer port", map[string]any{"net.peer.name": "p", "net.peer.port": 9090}, "p:", true},
+		{"only the paired port", map[string]any{"net.peer.name": "p", "server.port": 8443}, "p", true},
+		{"net.peer.ip takes net.peer.port", map[string]any{"net.peer.ip": "2.2.2.2", "net.peer.port": "7"}, "2.2.2.2:7", true},
+		{"net.sock.peer.port", map[string]any{"net.sock.peer.addr": "3.3.3.3", "net.sock.peer.port": "7"}, "3.3.3.3:7", true},
+		{"network.peer.port", map[string]any{"network.peer.address": "1.2.3.4", "network.peer.port": "7"}, "1.2.3.4:7", true},
+		{"no port on http.host", map[string]any{"http.host": "h", "server.port": "7", "net.peer.port": "7"}, "h", true},
+		{"no port on peer.service", map[string]any{"peer.service": "ps", "server.port": "7", "network.peer.port": "7"}, "ps", true},
+		{"empty host wins", map[string]any{"server.address": "", "peer.service": "ps"}, "", true},
+		{"empty host keeps its port", map[string]any{"network.peer.address": "", "network.peer.port": "1"}, ":1", true},
+		{"non-string host reads as empty", map[string]any{"net.peer.name": 7, "net.peer.port": "3"}, ":3", true},
+		{"non-string peer.service", map[string]any{"peer.service": 8}, "", true},
+		{"http.url over url.full", map[string]any{"url.full": "https://new/b", "http.url": "http://old/a"}, "old", true},
+		{"url host and port", map[string]any{"url.full": "https://u:8443/x"}, "u:8443", true},
+		{"url userinfo", map[string]any{"url.full": "http://user:pw@u:99/x"}, "u:99", true},
+		{"url without scheme", map[string]any{"http.url": "relative/path"}, "relative", true},
+		{"url case-sensitive scheme", map[string]any{"http.url": "HTTP://Upper.example.com/x"}, "HTTP:", true},
+		{"url other scheme", map[string]any{"http.url": "ftp://f.example.com/x"}, "ftp:", true},
+		{"url opaque", map[string]any{"http.url": "mailto:someone@example.com"}, "example.com", true},
+		{"url absolute path", map[string]any{"http.url": "/a/b", "peer.service": "ps"}, "", true},
+		{"empty url", map[string]any{"http.url": "", "url.full": "https://u/x"}, "", true},
+		{"non-string url", map[string]any{"http.url": 5, "peer.service": "ps"}, "", true},
+		{"unparseable url", map[string]any{"http.url": "not a url", "peer.service": "ps"}, "", false},
+		{"bad host url", map[string]any{"http.url": "http://[::1", "peer.service": "ps"}, "", false},
+		{"rpc service and method", map[string]any{"rpc.system": "grpc", "rpc.service": "driver.DriverService",
+			"rpc.method": "FindNearest", "server.address": "127.0.0.1", "server.port": 8082}, "driver.DriverService/FindNearest", true},
+		{"rpc over http.host", map[string]any{"rpc.system": "grpc", "rpc.service": "s", "rpc.method": "m", "http.host": "h"}, "s/m", true},
+		{"rpc service only", map[string]any{"rpc.system": "grpc", "rpc.service": "s"}, "s", true},
+		{"rpc method only", map[string]any{"rpc.system": "grpc", "rpc.method": "m"}, "/m", true},
+		{"rpc empty parts", map[string]any{"rpc.system": "grpc", "rpc.service": "", "rpc.method": "", "server.address": "s"}, "/", true},
+		{"rpc non-string parts", map[string]any{"rpc.system": 4, "rpc.service": 5, "rpc.method": "m"}, "/m", true},
+		{"rpc non-string method", map[string]any{"rpc.system": "", "rpc.service": "s", "rpc.method": 6}, "s/", true},
+		{"rpc system alone", map[string]any{"rpc.system": "grpc", "server.address": "s"}, "s", true},
+		{"rpc system alone, no keys", map[string]any{"rpc.system": "grpc"}, "", false},
+		{"rpc without system", map[string]any{"rpc.service": "s", "rpc.method": "m"}, "", false},
+		{"none", map[string]any{"custom": "x"}, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,11 +115,59 @@ func TestExternalAddress(t *testing.T) {
 			if err := m.FromRaw(tt.attrs); err != nil {
 				t.Fatal(err)
 			}
-			if got := externalAddress(m); got != tt.want {
-				t.Errorf("externalAddress = %q, want %q", got, tt.want)
+			got, ok := externalAddress(m)
+			if got != tt.want || ok != tt.ok {
+				t.Errorf("externalAddress = %q, %v; want %q, %v", got, ok, tt.want, tt.ok)
 			}
 		})
 	}
+}
+
+// The address is built in a buffer the next span reuses; each series keeps
+// its own copy.
+func TestAddressesOutliveTheirSpan(t *testing.T) {
+	c, sink, _ := newTestConnector(t, defaultConfig())
+	td := ptrace.NewTraces()
+	rs := td.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("service.name", "svc")
+	spans := rs.ScopeSpans().AppendEmpty().Spans()
+	want := []string{"a.example.com:1", "b.Svc/M", "ccc.example.com:22"}
+	for _, a := range []map[string]any{
+		{"server.address": "a.example.com", "server.port": "1"},
+		{"rpc.system": "grpc", "rpc.service": "b.Svc", "rpc.method": "M"},
+		{"net.peer.name": "ccc.example.com", "net.peer.port": "22"},
+	} {
+		s := spans.AppendEmpty()
+		s.SetKind(ptrace.SpanKindClient)
+		if err := s.Attributes().FromRaw(a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	c.flush(context.Background())
+	var got []string
+	for _, md := range sink.AllMetrics() {
+		ms := md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
+		for _, m := range ms.All() {
+			if m.Name() != "signoz_external_call_latency_count" {
+				continue
+			}
+			for _, p := range m.Sum().DataPoints().All() {
+				v, _ := p.Attributes().Get("address")
+				got = append(got, v.Str())
+			}
+		}
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("addresses = %q, want %q", got, want)
+	}
+}
+
+func externalAddress(m pcommon.Map) (string, bool) {
+	b, ok := appendExternalAddress(nil, m)
+	return string(b), ok
 }
 
 // newTestConnector starts a connector whose flushes go to a sink.
@@ -218,34 +305,58 @@ func TestNoServiceNoMetrics(t *testing.T) {
 	}
 }
 
-// 100 resources of 100 spans over 20 operations, as an HTTP service.
+// 100 resources of 100 client spans over 20 operations, for each source of
+// the external-call address.
 func BenchmarkConsumeTraces(b *testing.B) {
-	td := ptrace.NewTraces()
-	start := pcommon.Timestamp(time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC).UnixNano())
-	for r := range 100 {
-		rs := td.ResourceSpans().AppendEmpty()
-		ra := rs.Resource().Attributes()
-		ra.PutStr("service.name", fmt.Sprintf("svc-%d", r%10))
-		ra.PutStr("host.name", fmt.Sprintf("node-%d", r))
-		ra.PutStr("k8s.namespace.name", "shop")
-		spans := rs.ScopeSpans().AppendEmpty().Spans()
-		for i := range 100 {
-			s := spans.AppendEmpty()
-			s.SetName(fmt.Sprintf("GET /items/%d", i%20))
-			s.SetKind(ptrace.SpanKindClient)
-			s.SetStartTimestamp(start)
-			s.SetEndTimestamp(start + pcommon.Timestamp(i)*pcommon.Timestamp(time.Millisecond))
-			s.Attributes().PutInt("http.response.status_code", 200)
-			s.Attributes().PutStr("server.address", "api.example.com")
-		}
+	shapes := []struct {
+		name  string
+		attrs func(pcommon.Map)
+	}{
+		{"server.address", func(m pcommon.Map) { m.PutStr("server.address", "api.example.com") }},
+		{"host and port", func(m pcommon.Map) {
+			m.PutStr("network.peer.address", "10.0.0.1")
+			m.PutStr("network.peer.port", "8080")
+		}},
+		{"rpc", func(m pcommon.Map) {
+			m.PutStr("rpc.system", "grpc")
+			m.PutStr("rpc.service", "driver.DriverService")
+			m.PutStr("rpc.method", "FindNearest")
+			m.PutStr("server.address", "127.0.0.1")
+			m.PutInt("server.port", 8082)
+		}},
+		{"url", func(m pcommon.Map) { m.PutStr("url.full", "https://api.example.com/items?id=1") }},
+		{"peer.service", func(m pcommon.Map) { m.PutStr("peer.service", "mysql") }},
 	}
-	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), consumertest.NewNop())
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		_ = c.ConsumeTraces(context.Background(), td)
+	for _, shape := range shapes {
+		b.Run(shape.name, func(b *testing.B) {
+			td := ptrace.NewTraces()
+			start := pcommon.Timestamp(time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC).UnixNano())
+			for r := range 100 {
+				rs := td.ResourceSpans().AppendEmpty()
+				ra := rs.Resource().Attributes()
+				ra.PutStr("service.name", fmt.Sprintf("svc-%d", r%10))
+				ra.PutStr("host.name", fmt.Sprintf("node-%d", r))
+				ra.PutStr("k8s.namespace.name", "shop")
+				spans := rs.ScopeSpans().AppendEmpty().Spans()
+				for i := range 100 {
+					s := spans.AppendEmpty()
+					s.SetName(fmt.Sprintf("GET /items/%d", i%20))
+					s.SetKind(ptrace.SpanKindClient)
+					s.SetStartTimestamp(start)
+					s.SetEndTimestamp(start + pcommon.Timestamp(i)*pcommon.Timestamp(time.Millisecond))
+					s.Attributes().PutInt("http.response.status_code", 200)
+					shape.attrs(s.Attributes())
+				}
+			}
+			c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), consumertest.NewNop())
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				_ = c.ConsumeTraces(context.Background(), td)
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
+		})
 	}
-	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
 }
 
 // Values taken from attributes keep their type; the metadata records it

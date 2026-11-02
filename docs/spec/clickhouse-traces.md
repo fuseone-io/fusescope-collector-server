@@ -124,9 +124,9 @@ http_method, http_host, db_name, db_operation, has_error, is_remote, inserted_at
 | `is_remote` | `yes` / `no` from bit `0x200` when bit `0x100` is set, else `unknown` |
 | `response_status_code` | from `http.response.status_code` / `http.status_code`, as decimal string |
 | `http_method` | from `http.request.method` / `http.method` |
-| `http_url` | from `url.full` / `http.url` |
-| `http_host` | from `server.address` / `http.host` / `net.peer.name`; with none of them, on client spans only, the hostname of `http.url`, else of `url.full` (port stripped); `net.host.name` ignored [obs `address-urls`: `http.url`'s host while `http_url` is `url.full`; `url-full-only-server`: empty]. The preference for `http.url` was seen with it first in attribute order only |
-| `external_http_method`, `external_http_url` | Client spans only, with or without an HTTP method: `http_method` (empty without one), and the hostname of `http_url` (port stripped) when there is one [obs `url-full-only-client`, `http-url-only-client`, `address-urls`] |
+| `http_url` | from `url.full` / `http.url`, read as a string: another type gives `""` [obs `url int`] |
+| `http_host` | from `server.address` / `http.host` / `net.peer.name`, read as strings: another type gives `""` [obs `int net.peer.name`, `int http.host`]; with none of them, on client spans only, the hostname (port stripped) of the first non-empty of `http.url` and `url.full` in attribute order, or that whole value when it does not parse as a URL; `net.host.name`, `peer.service`, `net.peer.ip`, `net.sock.peer.addr` and `network.peer.address` ignored [obs `address-urls` and `addr-pair url.full http.url`: the first URL's host while `http_url` is the last; `empty http.url`: `url.full`'s host; `url parse error`: `http://[::1`; `url-full-only-server`: empty; `addr-only <key>`]. Which URL gives the host when the first one has no hostname was not observed |
+| `external_http_method`, `external_http_url` | Client spans only, with or without an HTTP method: `http_method` (empty without one), and the hostname of `http_url` (port stripped) when there is one, or `http_url` itself when it does not parse [obs `url-full-only-client`, `http-url-only-client`, `address-urls`, `url parse error`] |
 | `db_name` | from `db.namespace` / `db.name` |
 | `db_operation` | from `db.operation.name` / `db.operation` |
 

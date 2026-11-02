@@ -29,8 +29,8 @@ type rowTimes struct {
 type spanDerived struct {
 	method, url, host, statusCode, dbName, dbOperation string
 	externalMethod, externalURL                        string
-	// oldURL is http.url, which the host fallback prefers (§3).
-	oldURL string
+	// firstURL is the first non-empty URL key, which the host fallback reads (§3).
+	firstURL string
 }
 
 func deriveSpan(span ptrace.Span) spanDerived {
@@ -40,12 +40,13 @@ func deriveSpan(span ptrace.Span) spanDerived {
 		case "http.request.method", "http.method":
 			d.method = valueString(v)
 		case "url.full", "http.url":
-			d.url = valueString(v)
-			if k == "http.url" {
-				d.oldURL = d.url
+			// Host and URL keys read as Value.Str: another type is empty.
+			d.url = v.Str()
+			if d.firstURL == "" {
+				d.firstURL = d.url
 			}
 		case "server.address", "http.host", "net.peer.name":
-			d.host = valueString(v)
+			d.host = v.Str()
 		case "http.response.status_code", "http.status_code":
 			d.statusCode = valueString(v)
 		case "db.namespace", "db.name":
@@ -56,7 +57,7 @@ func deriveSpan(span ptrace.Span) spanDerived {
 	}
 	// Only client spans are external calls: they get the external columns,
 	// with or without a method, and a host from the URL when no host key has
-	// one, http.url first.
+	// one.
 	if span.Kind() != ptrace.SpanKindClient {
 		return d
 	}
@@ -65,19 +66,17 @@ func deriveSpan(span ptrace.Span) spanDerived {
 		d.externalURL = hostname(d.url)
 	}
 	if d.host == "" {
-		if d.oldURL != "" {
-			d.host = hostname(d.oldURL)
-		} else {
-			d.host = hostname(d.url)
-		}
+		d.host = hostname(d.firstURL)
 	}
 	return d
 }
 
+// hostname is the URL's host without its port, or the whole value when it
+// does not parse.
 func hostname(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return ""
+		return raw
 	}
 	return u.Hostname()
 }

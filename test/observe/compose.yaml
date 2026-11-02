@@ -15,7 +15,7 @@ services:
     volumes:
       - ./clickhouse/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
     ports:
-      - "8123:8123"
+      - "${OBSERVE_CLICKHOUSE_PORT:-8123}:8123"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping"]
       interval: 5s
@@ -40,8 +40,8 @@ services:
     volumes:
       - ./reference-collector.yaml:/etc/reference-collector.yaml:ro
     ports:
-      - "4318:4318"
-      - "13133:13133"
+      - "${OBSERVE_OTLP_PORT:-4318}:4318"
+      - "${OBSERVE_HEALTH_PORT:-13133}:13133"
     depends_on:
       reference-migrator:
         condition: service_completed_successfully

@@ -3,12 +3,15 @@
 # ClickHouse holds afterwards: DDL for every table and the rows of every table
 # that received data.
 #   observe.sh <out_dir>
+# OBSERVE_CLICKHOUSE_PORT, OBSERVE_OTLP_PORT and OBSERVE_HEALTH_PORT move the host
+# ports (8123, 4318, 13133), with COMPOSE_PROJECT_NAME, beside another stack.
 set -euo pipefail
+ch_port=${OBSERVE_CLICKHOUSE_PORT:-8123} otlp_port=${OBSERVE_OTLP_PORT:-4318} health_port=${OBSERVE_HEALTH_PORT:-13133}
 out=$(realpath -m "${1:-out}")
 cd "$(dirname "$0")"
 ch() {
   local body code
-  body=$(curl -s -w '\n%{http_code}' --data-binary "$1" "http://localhost:8123/")
+  body=$(curl -s -w '\n%{http_code}' --data-binary "$1" "http://localhost:$ch_port/")
   code=${body##*$'\n'}
   body=${body%$'\n'*}
   body=${body%$'\n'}
@@ -17,15 +20,15 @@ ch() {
 }
 
 docker compose up -d reference-collector
-for _ in $(seq 120); do curl -sf localhost:13133 >/dev/null && break; sleep 2; done
-curl -sf localhost:13133 >/dev/null
+for _ in $(seq 120); do curl -sf "localhost:$health_port" >/dev/null && break; sleep 2; done
+curl -sf "localhost:$health_port" >/dev/null
 
 t0=$(( $(date +%s) * 1000000000 ))
 rm -rf "$out" && mkdir -p "$out/ddl" "$out/rows"
 python3 -I corpus.py "$t0" "$out/corpus"
 for signal in traces logs metrics; do
   code=$(curl -s -o "$out/$signal.response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-    --data-binary @"$out/corpus/$signal.json" "localhost:4318/v1/$signal")
+    --data-binary @"$out/corpus/$signal.json" "localhost:$otlp_port/v1/$signal")
   if [ "$code" != 200 ]; then echo "POST /v1/$signal: $code $(cat "$out/$signal.response")" >&2; exit 1; fi
   rm "$out/$signal.response"
 done
@@ -36,12 +39,12 @@ sleep 3
 utf8_status=""
 for signal in traces logs; do
   utf8_status+=" $signal=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/x-protobuf' \
-    --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:4318/v1/$signal")"
+    --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:$otlp_port/v1/$signal")"
 done
 # Spans of an already flushed series and minute, after the reference's 10s span-metrics flush.
 sleep 12
 code=$(curl -s -o "$out/late.response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-  --data-binary @"$out/corpus/traces-late.json" "localhost:4318/v1/traces")
+  --data-binary @"$out/corpus/traces-late.json" "localhost:$otlp_port/v1/traces")
 if [ "$code" != 200 ]; then echo "POST /v1/traces (late): $code $(cat "$out/late.response")" >&2; exit 1; fi
 rm "$out/late.response"
 sleep 30
