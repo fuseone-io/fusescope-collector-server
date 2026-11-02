@@ -1,0 +1,1416 @@
+{
+ "processor": {
+  "groups": [
+   {
+    "attributes": [
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "crewai.agent.role"
+       },
+       {
+        "key": "agent.name"
+       },
+       {
+        "key": "agent_name"
+       }
+      ],
+      "target": "gen_ai.agent.name"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "agent_id"
+       },
+       {
+        "key": "crewai.agent.id"
+       },
+       {
+        "key": "agent.id"
+       }
+      ],
+      "target": "gen_ai.agent.id"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "agent.description"
+       }
+      ],
+      "target": "gen_ai.agent.description"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "action": "move",
+        "key": "final_result"
+       }
+      ],
+      "target": "gen_ai.output.messages"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "openinference.span.kind"
+       },
+       {
+        "key": "llm.request.type"
+       },
+       {
+        "key": "traceloop.span.kind"
+       }
+      ],
+      "target": "gen_ai.operation.name"
+     },
+     {
+      "context": "resource",
+      "sources": [
+       {
+        "key": "resource.deployment.environment"
+       }
+      ],
+      "target": "deployment.environment.name"
+     }
+    ],
+    "exists_any": {
+     "attributes": [
+      "agent"
+     ]
+    },
+    "id": "gen_ai.agent"
+   },
+   {
+    "attributes": [
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "reranker.model_name"
+       },
+       {
+        "key": "llm.model_name"
+       },
+       {
+        "key": "llm.request.model"
+       },
+       {
+        "key": "ai.model.id"
+       },
+       {
+        "key": "langfuse.observation.model.name"
+       },
+       {
+        "key": "embedding.model_name"
+       },
+       {
+        "key": "model"
+       },
+       {
+        "key": "gen_ai.response.model"
+       }
+      ],
+      "target": "gen_ai.request.model"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "llm.response.model"
+       },
+       {
+        "key": "ai.response.model"
+       }
+      ],
+      "target": "gen_ai.response.model"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "gen_ai.system"
+       },
+       {
+        "key": "llm.vendor"
+       },
+       {
+        "key": "llm.provider"
+       },
+       {
+        "key": "llm.system"
+       },
+       {
+        "key": "ai.model.provider"
+       }
+      ],
+      "target": "gen_ai.provider.name"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "openinference.span.kind"
+       },
+       {
+        "key": "llm.request.type"
+       },
+       {
+        "key": "traceloop.span.kind"
+       }
+      ],
+      "target": "gen_ai.operation.name"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "input_tokens"
+       },
+       {
+        "key": "gen_ai.usage.prompt_tokens"
+       },
+       {
+        "key": "llm.usage.prompt_tokens"
+       },
+       {
+        "key": "llm.token_count.prompt"
+       },
+       {
+        "key": "ai.usage.inputTokens"
+       },
+       {
+        "key": "ai.usage.promptTokens"
+       }
+      ],
+      "target": "gen_ai.usage.input_tokens"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "output_tokens"
+       },
+       {
+        "key": "gen_ai.usage.completion_tokens"
+       },
+       {
+        "key": "llm.usage.completion_tokens"
+       },
+       {
+        "key": "llm.token_count.completion"
+       },
+       {
+        "key": "ai.usage.outputTokens"
+       },
+       {
+        "key": "ai.usage.completionTokens"
+       }
+      ],
+      "target": "gen_ai.usage.output_tokens"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "cache_read_tokens"
+       },
+       {
+        "key": "gen_ai.usage.input_tokens.cached"
+       },
+       {
+        "key": "gen_ai.usage.prompt_token_details.cached_read_tokens"
+       },
+       {
+        "key": "gen_ai.usage.cache_read_input_tokens"
+       },
+       {
+        "key": "llm.token_count.prompt_details.cache_read"
+       },
+       {
+        "key": "ai.usage.cachedInputTokens"
+       }
+      ],
+      "target": "gen_ai.usage.cache_read.input_tokens"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "cache_creation_tokens"
+       },
+       {
+        "key": "gen_ai.usage.cache_write.input_tokens"
+       },
+       {
+        "key": "gen_ai.usage.cache_creation_input_tokens"
+       },
+       {
+        "key": "llm.token_count.prompt_details.cache_write"
+       }
+      ],
+      "target": "gen_ai.usage.cache_creation.input_tokens"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "gen_ai.usage.reasoning_tokens"
+       },
+       {
+        "key": "gen_ai.usage.completion_token_details.reasoning_tokens"
+       },
+       {
+        "key": "llm.token_count.completion_details.reasoning"
+       },
+       {
+        "key": "ai.usage.reasoningTokens"
+       }
+      ],
+      "target": "gen_ai.usage.reasoning.output_tokens"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "action": "move",
+        "key": "gen_ai.prompt"
+       },
+       {
+        "action": "move",
+        "key": "ai.prompt.messages"
+       },
+       {
+        "action": "move",
+        "key": "input.value"
+       }
+      ],
+      "target": "gen_ai.input.messages"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "action": "move",
+        "key": "gen_ai.completion"
+       },
+       {
+        "action": "move",
+        "key": "ai.response.toolCalls"
+       },
+       {
+        "action": "move",
+        "key": "ai.response.text"
+       },
+       {
+        "action": "move",
+        "key": "output.value"
+       }
+      ],
+      "target": "gen_ai.output.messages"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "gen_ai.client.session_id"
+       },
+       {
+        "key": "session.id"
+       },
+       {
+        "key": "langfuse.session.id"
+       }
+      ],
+      "target": "gen_ai.conversation.id"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "llm.finish_reason"
+       },
+       {
+        "key": "llm.response.stop_reason"
+       },
+       {
+        "key": "llm.response.finish_reason"
+       },
+       {
+        "key": "gen_ai.response.finish_reason"
+       },
+       {
+        "key": "ai.response.finishReason"
+       }
+      ],
+      "target": "gen_ai.response.finish_reasons"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "gen_ai.response.time_to_first_chunk"
+       },
+       {
+        "key": "gen_ai.server.time_to_first_token"
+       }
+      ],
+      "target": "gen_ai.server.ttft"
+     },
+     {
+      "context": "resource",
+      "sources": [
+       {
+        "key": "resource.deployment.environment"
+       }
+      ],
+      "target": "deployment.environment.name"
+     }
+    ],
+    "exists_any": {
+     "attributes": [
+      "model",
+      "llm.input_messages"
+     ]
+    },
+    "id": "gen_ai.llm"
+   },
+   {
+    "attributes": [
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "gen_ai.client.tool_name"
+       },
+       {
+        "key": "tool_name"
+       },
+       {
+        "key": "tool.name"
+       },
+       {
+        "key": "ai.toolCall.name"
+       }
+      ],
+      "target": "gen_ai.tool.name"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "gen_ai.client.tool_use_id"
+       },
+       {
+        "key": "tool.id"
+       },
+       {
+        "key": "ai.toolCall.id"
+       }
+      ],
+      "target": "gen_ai.tool.call.id"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "tool.description"
+       }
+      ],
+      "target": "gen_ai.tool.description"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "ai.toolCall.args"
+       },
+       {
+        "key": "traceloop.entity.input"
+       },
+       {
+        "key": "gcp.vertex.agent.tool_call_args"
+       },
+       {
+        "key": "input.value"
+       }
+      ],
+      "target": "gen_ai.tool.call.arguments"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "ai.toolCall.result"
+       },
+       {
+        "key": "traceloop.entity.output"
+       },
+       {
+        "key": "gcp.vertex.agent.tool_response"
+       },
+       {
+        "key": "output.value"
+       }
+      ],
+      "target": "gen_ai.tool.call.result"
+     },
+     {
+      "context": "attribute",
+      "sources": [
+       {
+        "key": "openinference.span.kind"
+       },
+       {
+        "key": "llm.request.type"
+       },
+       {
+        "key": "traceloop.span.kind"
+       }
+      ],
+      "target": "gen_ai.operation.name"
+     },
+     {
+      "context": "resource",
+      "sources": [
+       {
+        "key": "resource.deployment.environment"
+       }
+      ],
+      "target": "deployment.environment.name"
+     }
+    ],
+    "exists_any": {
+     "attributes": [
+      "tool.name",
+      "ai.toolCall.",
+      "tool_call_args",
+      "tool_response",
+      "tool_use_id"
+     ]
+    },
+    "id": "gen_ai.tool"
+   }
+  ]
+ },
+ "source": "fuseone-io/fusescope@c42fdd3db tests/integration/testdata/simulatorcontract/spanmapper.golden.json (case System_All_LLMSpans processor; span sets llm, agent, tool)",
+ "spans": {
+  "agent": [
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "agent.name",
+            "value": {
+             "stringValue": "r"
+            }
+           },
+           {
+            "key": "agent_id",
+            "value": {
+             "stringValue": "a1"
+            }
+           },
+           {
+            "key": "crewai.agent.id",
+            "value": {
+             "stringValue": "c1"
+            }
+           },
+           {
+            "key": "crewai.agent.role",
+            "value": {
+             "stringValue": "researcher"
+            }
+           },
+           {
+            "key": "final_result",
+            "value": {
+             "stringValue": "done"
+            }
+           },
+           {
+            "key": "traceloop.span.kind",
+            "value": {
+             "stringValue": "agent"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {
+       "attributes": [
+        {
+         "key": "deployment.environment",
+         "value": {
+          "stringValue": "dev"
+         }
+        }
+       ]
+      },
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "agent.description",
+            "value": {
+             "stringValue": "plans"
+            }
+           },
+           {
+            "key": "agent.id",
+            "value": {
+             "stringValue": "p1"
+            }
+           },
+           {
+            "key": "agent.name",
+            "value": {
+             "stringValue": "planner"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "agent_name",
+            "value": {
+             "stringValue": "x"
+            }
+           },
+           {
+            "key": "openinference.span.kind",
+            "value": {
+             "stringValue": "AGENT"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "user.agent",
+            "value": {
+             "stringValue": "Mozilla/5.0"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {
+       "attributes": [
+        {
+         "key": "agent.host",
+         "value": {
+          "stringValue": "h"
+         }
+        }
+       ]
+      },
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "service",
+            "value": {
+             "stringValue": "no match"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "llm": [
+   {
+    "resourceSpans": [
+     {
+      "resource": {
+       "attributes": [
+        {
+         "key": "deployment.environment",
+         "value": {
+          "stringValue": "prod"
+         }
+        },
+        {
+         "key": "service.name",
+         "value": {
+          "stringValue": "chat"
+         }
+        }
+       ]
+      },
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "input.value",
+            "value": {
+             "stringValue": "hi"
+            }
+           },
+           {
+            "key": "llm.finish_reason",
+            "value": {
+             "stringValue": "stop"
+            }
+           },
+           {
+            "key": "llm.model_name",
+            "value": {
+             "stringValue": "gpt-4o"
+            }
+           },
+           {
+            "key": "llm.token_count.completion",
+            "value": {
+             "doubleValue": 30
+            }
+           },
+           {
+            "key": "llm.token_count.prompt",
+            "value": {
+             "doubleValue": 12
+            }
+           },
+           {
+            "key": "openinference.span.kind",
+            "value": {
+             "stringValue": "LLM"
+            }
+           },
+           {
+            "key": "output.value",
+            "value": {
+             "stringValue": "hello"
+            }
+           },
+           {
+            "key": "session.id",
+            "value": {
+             "stringValue": "s1"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {
+       "attributes": [
+        {
+         "key": "deployment.environment",
+         "value": {
+          "stringValue": "old"
+         }
+        },
+        {
+         "key": "deployment.environment.name",
+         "value": {
+          "stringValue": "staging"
+         }
+        }
+       ]
+      },
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "gen_ai.completion",
+            "value": {
+             "stringValue": "hello"
+            }
+           },
+           {
+            "key": "gen_ai.prompt",
+            "value": {
+             "stringValue": "[{\"role\":\"user\",\"content\":\"hi\"}]"
+            }
+           },
+           {
+            "key": "gen_ai.request.model",
+            "value": {
+             "stringValue": "claude-sonnet"
+            }
+           },
+           {
+            "key": "gen_ai.server.time_to_first_token",
+            "value": {
+             "doubleValue": 0.42
+            }
+           },
+           {
+            "key": "gen_ai.system",
+            "value": {
+             "stringValue": "anthropic"
+            }
+           },
+           {
+            "key": "gen_ai.usage.completion_tokens",
+            "value": {
+             "doubleValue": 7
+            }
+           },
+           {
+            "key": "gen_ai.usage.prompt_tokens",
+            "value": {
+             "doubleValue": 5
+            }
+           },
+           {
+            "key": "llm.request.type",
+            "value": {
+             "stringValue": "chat"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "ai.model.id",
+            "value": {
+             "stringValue": "gpt-4o-mini"
+            }
+           },
+           {
+            "key": "ai.model.provider",
+            "value": {
+             "stringValue": "openai.chat"
+            }
+           },
+           {
+            "key": "ai.prompt.messages",
+            "value": {
+             "stringValue": "[]"
+            }
+           },
+           {
+            "key": "ai.response.finishReason",
+            "value": {
+             "stringValue": "stop"
+            }
+           },
+           {
+            "key": "ai.response.text",
+            "value": {
+             "stringValue": "ok"
+            }
+           },
+           {
+            "key": "ai.response.toolCalls",
+            "value": {
+             "stringValue": "[]"
+            }
+           },
+           {
+            "key": "ai.usage.cachedInputTokens",
+            "value": {
+             "doubleValue": 2
+            }
+           },
+           {
+            "key": "ai.usage.completionTokens",
+            "value": {
+             "doubleValue": 9
+            }
+           },
+           {
+            "key": "ai.usage.promptTokens",
+            "value": {
+             "doubleValue": 7
+            }
+           },
+           {
+            "key": "ai.usage.reasoningTokens",
+            "value": {
+             "doubleValue": 4
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "cache_creation_tokens",
+            "value": {
+             "doubleValue": 1
+            }
+           },
+           {
+            "key": "cache_read_tokens",
+            "value": {
+             "doubleValue": 3
+            }
+           },
+           {
+            "key": "gen_ai.usage.reasoning_tokens",
+            "value": {
+             "doubleValue": 6
+            }
+           },
+           {
+            "key": "input_tokens",
+            "value": {
+             "doubleValue": 1.5
+            }
+           },
+           {
+            "key": "langfuse.session.id",
+            "value": {
+             "stringValue": "lf"
+            }
+           },
+           {
+            "key": "model",
+            "value": {
+             "stringValue": "llama"
+            }
+           },
+           {
+            "key": "output_tokens",
+            "value": {
+             "stringValue": "10"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {
+       "attributes": [
+        {
+         "key": "service.name",
+         "value": {
+          "stringValue": "api"
+         }
+        }
+       ]
+      },
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "http.method",
+            "value": {
+             "stringValue": "GET"
+            }
+           },
+           {
+            "key": "http.route",
+            "value": {
+             "stringValue": "/orders"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "embedding.model_name",
+            "value": {
+             "stringValue": "text-embedding-3"
+            }
+           },
+           {
+            "key": "llm.vendor",
+            "value": {
+             "stringValue": "cohere"
+            }
+           },
+           {
+            "key": "reranker.model_name",
+            "value": {
+             "stringValue": "rerank-v1"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "gen_ai.provider.name",
+            "value": {
+             "stringValue": "already"
+            }
+           },
+           {
+            "key": "gen_ai.request.model",
+            "value": {
+             "stringValue": "x"
+            }
+           },
+           {
+            "key": "gen_ai.response.model",
+            "value": {
+             "stringValue": "x-2024"
+            }
+           },
+           {
+            "key": "llm.provider",
+            "value": {
+             "stringValue": "p"
+            }
+           },
+           {
+            "key": "llm.response.model",
+            "value": {
+             "stringValue": "y"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "flag",
+            "value": {
+             "boolValue": true
+            }
+           },
+           {
+            "key": "gen_ai.response.time_to_first_chunk",
+            "value": {
+             "doubleValue": 0.18
+            }
+           },
+           {
+            "key": "llm.input_messages",
+            "value": {
+             "arrayValue": {
+              "values": [
+               {
+                "stringValue": "a"
+               },
+               {
+                "stringValue": "b"
+               }
+              ]
+             }
+            }
+           },
+           {
+            "key": "llm.model_name",
+            "value": {
+             "stringValue": "gpt"
+            }
+           },
+           {
+            "key": "nested",
+            "value": {
+             "kvlistValue": {
+              "values": [
+               {
+                "key": "a",
+                "value": {
+                 "doubleValue": 1
+                }
+               },
+               {
+                "key": "b",
+                "value": {
+                 "kvlistValue": {
+                  "values": [
+                   {
+                    "key": "c",
+                    "value": {
+                     "stringValue": "d"
+                    }
+                   }
+                  ]
+                 }
+                }
+               }
+              ]
+             }
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "tool": [
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "input.value",
+            "value": {
+             "stringValue": "q"
+            }
+           },
+           {
+            "key": "output.value",
+            "value": {
+             "stringValue": "r"
+            }
+           },
+           {
+            "key": "tool.description",
+            "value": {
+             "stringValue": "web"
+            }
+           },
+           {
+            "key": "tool.id",
+            "value": {
+             "stringValue": "t0"
+            }
+           },
+           {
+            "key": "tool.name",
+            "value": {
+             "stringValue": "search"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "ai.toolCall.args",
+            "value": {
+             "stringValue": "{}"
+            }
+           },
+           {
+            "key": "ai.toolCall.id",
+            "value": {
+             "stringValue": "t1"
+            }
+           },
+           {
+            "key": "ai.toolCall.name",
+            "value": {
+             "stringValue": "calc"
+            }
+           },
+           {
+            "key": "ai.toolCall.result",
+            "value": {
+             "stringValue": "4"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {},
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "gcp.vertex.agent.tool_call_args",
+            "value": {
+             "stringValue": "a"
+            }
+           },
+           {
+            "key": "gcp.vertex.agent.tool_response",
+            "value": {
+             "stringValue": "b"
+            }
+           },
+           {
+            "key": "tool_use_id",
+            "value": {
+             "stringValue": "u"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "resourceSpans": [
+     {
+      "resource": {
+       "attributes": [
+        {
+         "key": "deployment.environment",
+         "value": {
+          "stringValue": "qa"
+         }
+        }
+       ]
+      },
+      "scopeSpans": [
+       {
+        "scope": {},
+        "spans": [
+         {
+          "attributes": [
+           {
+            "key": "gen_ai.client.tool_name",
+            "value": {
+             "stringValue": "x"
+            }
+           },
+           {
+            "key": "gen_ai.client.tool_use_id",
+            "value": {
+             "stringValue": "g"
+            }
+           },
+           {
+            "key": "tool_name",
+            "value": {
+             "stringValue": "y"
+            }
+           },
+           {
+            "key": "traceloop.entity.input",
+            "value": {
+             "stringValue": "in"
+            }
+           },
+           {
+            "key": "traceloop.entity.output",
+            "value": {
+             "stringValue": "out"
+            }
+           }
+          ],
+          "status": {}
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

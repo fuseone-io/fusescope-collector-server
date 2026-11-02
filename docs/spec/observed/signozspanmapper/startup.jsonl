@@ -1,0 +1,39 @@
+{"name": "action_copy", "result": "accepted", "error": ""}
+{"name": "action_delete", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\") source[0] (key=\"src.a\"): unknown action \"delete\", must be \"copy\" or \"move\""}
+{"name": "action_empty", "result": "accepted", "error": ""}
+{"name": "action_upper", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\") source[0] (key=\"src.a\"): unknown action \"MOVE\", must be \"copy\" or \"move\""}
+{"name": "context_empty", "result": "accepted", "error": ""}
+{"name": "context_omitted", "result": "accepted", "error": ""}
+{"name": "context_span", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\"): unknown context \"span\", must be \"attribute\" or \"resource\""}
+{"name": "context_upper", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\"): unknown context \"Resource\", must be \"attribute\" or \"resource\""}
+{"name": "empty_mapping", "result": "accepted", "error": ""}
+{"name": "exists_any_empty_lists", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\"): exists_any must have at least one attribute or resource substring"}
+{"name": "exists_any_empty_string", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\"): exists_any.attributes substring must not be empty"}
+{"name": "exists_any_empty", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\"): exists_any must have at least one attribute or resource substring"}
+{"name": "exists_any_missing", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\"): exists_any must have at least one attribute or resource substring"}
+{"name": "exists_any_one_empty_string", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\"): exists_any.attributes substring must not be empty"}
+{"name": "exists_any_resource_empty_string", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\"): exists_any.resource substring must not be empty"}
+{"name": "exists_any_resource_only", "result": "accepted", "error": ""}
+{"name": "group_id_duplicate", "result": "accepted", "error": ""}
+{"name": "group_id_empty", "result": "accepted", "error": ""}
+{"name": "group_id_missing", "result": "accepted", "error": ""}
+{"name": "groups_empty", "result": "accepted", "error": ""}
+{"name": "groups_not_list", "result": "refused", "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozspanmapper\": decoding failed due to the following error(s):\n\n'groups' source data must be an array or slice, got map"}
+{"name": "groups_null", "result": "accepted", "error": ""}
+{"name": "null", "result": "accepted", "error": ""}
+{"name": "rules_empty", "result": "accepted", "error": ""}
+{"name": "rules_missing", "result": "accepted", "error": ""}
+{"name": "source_key_empty", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\") source[0]: key must not be empty"}
+{"name": "source_key_missing", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\") source[0]: key must not be empty"}
+{"name": "source_key_resource_prefix_only", "result": "accepted", "error": ""}
+{"name": "sources_empty", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\"): sources must not be empty"}
+{"name": "sources_missing", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0] (target=\"target\"): sources must not be empty"}
+{"name": "target_duplicate", "result": "accepted", "error": ""}
+{"name": "target_empty", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0]: target must not be empty"}
+{"name": "target_missing", "result": "refused", "error": "failed to start collector service: failed to start : invalid configuration: processors::signozspanmapper: group[0] (id=\"g\") attribute[0]: target must not be empty"}
+{"name": "unknown_exists_any_field", "result": "refused", "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozspanmapper\": decoding failed due to the following error(s):\n\n'groups[0].exists_any' has invalid keys: extra"}
+{"name": "unknown_group_field", "result": "refused", "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozspanmapper\": decoding failed due to the following error(s):\n\n'groups[0]' has invalid keys: extra"}
+{"name": "unknown_rule_field", "result": "refused", "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozspanmapper\": decoding failed due to the following error(s):\n\n'groups[0].attributes[0]' has invalid keys: extra"}
+{"name": "unknown_source_field", "result": "refused", "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozspanmapper\": decoding failed due to the following error(s):\n\n'groups[0].attributes[0].sources[0]' has invalid keys: extra"}
+{"name": "unknown_top_field", "result": "refused", "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozspanmapper\": decoding failed due to the following error(s):\n\n'signozspanmapperprocessor.Config' has invalid keys: extra"}
+{"name": "valid", "result": "accepted", "error": ""}
