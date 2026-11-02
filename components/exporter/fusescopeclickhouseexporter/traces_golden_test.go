@@ -112,7 +112,7 @@ func encodeObservedCorpus(t *testing.T) []*tracesEncoder {
 	for _, batch := range []ptrace.Traces{td, probes} {
 		enc := newTracesEncoder()
 		enc.now = func() time.Time { return time.Unix(0, 0) }
-		enc.encode(batch)
+		_ = enc.encode(batch, nil)
 		batches = append(batches, enc)
 	}
 	return batches

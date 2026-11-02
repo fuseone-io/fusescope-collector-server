@@ -141,7 +141,7 @@ func encodeObservedLogs(t *testing.T) []*logsEncoder {
 		now := time.Unix(0, int64(batch.clock))
 		enc := newLogsEncoder()
 		enc.now = func() time.Time { return now }
-		enc.encode(batch.ld)
+		_ = enc.encode(batch.ld, nil)
 		batches = append(batches, enc)
 	}
 	return batches
@@ -167,7 +167,7 @@ func TestLogTimestamps(t *testing.T) {
 			lr.SetObservedTimestamp(pcommon.Timestamp(tt.observed))
 			enc := newLogsEncoder()
 			enc.now = func() time.Time { return now }
-			enc.encode(ld)
+			_ = enc.encode(ld, nil)
 			if got := enc.rows.timestamp.Row(0); got != tt.wantTS {
 				t.Errorf("timestamp = %d, want %d", got, tt.wantTS)
 			}

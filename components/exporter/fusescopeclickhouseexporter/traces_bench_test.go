@@ -69,7 +69,8 @@ func BenchmarkEncodeTraces(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		enc.encode(td)
+		// A real emit, as push passes, so the chunk plan runs.
+		_ = enc.encode(td, func() error { return nil })
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
 }
@@ -96,7 +97,7 @@ func BenchmarkEncodeLogs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		enc.encode(ld)
+		_ = enc.encode(ld, nil)
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/record")
 }
@@ -105,14 +106,36 @@ func BenchmarkEncodeLogs(b *testing.B) {
 // checks that reusing the encoder for a smaller batch leaves no rows behind.
 func TestEncodeMaxBatch(t *testing.T) {
 	enc := newTracesEncoder()
-	enc.encode(syntheticTraces(100_000))
+	_ = enc.encode(syntheticTraces(100_000), nil)
 	if got := enc.index.input()[0].Data.Rows(); got != 100_000 {
 		t.Fatalf("index rows = %d, want 100000", got)
 	}
-	enc.encode(syntheticTraces(10))
+	_ = enc.encode(syntheticTraces(10), nil)
 	for _, col := range enc.index.input() {
 		if got := col.Data.Rows(); got != 10 {
 			t.Fatalf("column %s has %d rows after reuse, want 10", col.Name, got)
 		}
 	}
+}
+
+// Many one-span resources over the chunk size: chunking must not derive each
+// resource once per chunk.
+func BenchmarkEncodeTracesChunked(b *testing.B) {
+	td := ptrace.NewTraces()
+	for i := range 20_000 {
+		rs := td.ResourceSpans().AppendEmpty()
+		rs.Resource().Attributes().PutStr("service.name", fmt.Sprintf("svc-%d", i%50))
+		rs.Resource().Attributes().PutStr("host.name", fmt.Sprintf("node-%d", i))
+		s := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+		s.SetTraceID(pcommon.TraceID{byte(i), byte(i >> 8), 1})
+		s.SetSpanID(pcommon.SpanID{byte(i), byte(i >> 8), 2})
+	}
+	enc := newTracesEncoder()
+	enc.maxChunkBytes = 1 << 20
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = enc.encode(td, func() error { return nil })
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*20_000), "ns/span")
 }

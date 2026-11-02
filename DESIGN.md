@@ -106,7 +106,9 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
 ([ADR 0004](docs/adr/0004-security-baseline.md)):
 
 - **Transport:** TLS 1.3 minimum on every listener and exporter that leaves the host; mTLS
-  between agents and gateways and from gateways to engine ingesters.
+  between agents and gateways and from gateways to engine ingesters. The one exception is the
+  ClickHouse exporter: `tls.insecure: true` allows plaintext, with a warning, for clusters
+  whose ClickHouse has no TLS ([ADR 0007](docs/adr/0007-clickhouse-plaintext-for-migration.md)).
 - **Ingest authentication:** `ingestauth` validates the ingestion key every client presents, for
   all signals, against SHA-256 verifiers in the ingest policy. Keys are managed in the backend;
   the policy arrives over OpAMP and is cached on disk ([ADR 0006](docs/adr/0006-single-ingress.md)).

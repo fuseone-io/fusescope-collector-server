@@ -121,7 +121,7 @@ func TestRetryKeepsLogIDs(t *testing.T) {
 	encode := func(id requestID) []string {
 		enc := newLogsEncoder()
 		enc.setAttempt(id.started, id.random())
-		enc.encode(ld)
+		_ = enc.encode(ld, nil)
 		var out []string
 		for i := range enc.rows.id.Rows() {
 			out = append(out, fmt.Sprint(enc.rows.id.Row(i), enc.rows.timestamp.Row(i)))
