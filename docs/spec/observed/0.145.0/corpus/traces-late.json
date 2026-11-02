@@ -1,0 +1,74 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "apm-probe"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "res-host"
+            }
+          },
+          {
+            "key": "deployment.environment",
+            "value": {
+              "stringValue": "res-env"
+            }
+          },
+          {
+            "key": "k8s.namespace.name",
+            "value": {
+              "stringValue": "res-ns"
+            }
+          },
+          {
+            "key": "custom.res",
+            "value": {
+              "stringValue": "not-a-dimension"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "observe/corpus",
+            "version": "1.0.0"
+          },
+          "spans": [
+            {
+              "attributes": [],
+              "endTimeUnixNano": "1793592033003000000",
+              "events": [],
+              "kind": 1,
+              "links": [],
+              "name": "agg",
+              "spanId": "0000000000000e00",
+              "startTimeUnixNano": "1793592033001000000",
+              "status": {},
+              "traceId": "6d1f0a2b3c4d5e6f708192a3b4c5d6e7"
+            },
+            {
+              "attributes": [],
+              "endTimeUnixNano": "1793592033003000000",
+              "events": [],
+              "kind": 1,
+              "links": [],
+              "name": "agg",
+              "spanId": "0000000000000e01",
+              "startTimeUnixNano": "1793592033001000000",
+              "status": {},
+              "traceId": "6d1f0a2b3c4d5e6f708192a3b4c5d6e7"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -29,6 +29,8 @@ type rowTimes struct {
 type spanDerived struct {
 	method, url, host, statusCode, dbName, dbOperation string
 	externalMethod, externalURL                        string
+	// oldURL is http.url, which the host fallback prefers (§3).
+	oldURL string
 }
 
 func deriveSpan(span ptrace.Span) spanDerived {
@@ -39,6 +41,9 @@ func deriveSpan(span ptrace.Span) spanDerived {
 			d.method = valueString(v)
 		case "url.full", "http.url":
 			d.url = valueString(v)
+			if k == "http.url" {
+				d.oldURL = d.url
+			}
 		case "server.address", "http.host", "net.peer.name":
 			d.host = valueString(v)
 		case "http.response.status_code", "http.status_code":
@@ -49,18 +54,22 @@ func deriveSpan(span ptrace.Span) spanDerived {
 			d.dbOperation = valueString(v)
 		}
 	}
-	external := span.Kind() == ptrace.SpanKindClient && d.method != ""
-	if d.url != "" && (d.host == "" || external) {
-		urlHost := hostname(d.url)
-		if d.host == "" {
-			d.host = urlHost
-		}
-		if external {
-			d.externalURL = urlHost
-		}
+	// Only client spans are external calls: they get the external columns,
+	// with or without a method, and a host from the URL when no host key has
+	// one, http.url first.
+	if span.Kind() != ptrace.SpanKindClient {
+		return d
 	}
-	if external {
-		d.externalMethod = d.method
+	d.externalMethod = d.method
+	if d.url != "" {
+		d.externalURL = hostname(d.url)
+	}
+	if d.host == "" {
+		if d.oldURL != "" {
+			d.host = hostname(d.oldURL)
+		} else {
+			d.host = hostname(d.url)
+		}
 	}
 	return d
 }

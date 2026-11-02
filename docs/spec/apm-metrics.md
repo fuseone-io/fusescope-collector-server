@@ -120,8 +120,9 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
 
 ## 4. Which spans count
 
-- **Calls and latency.** Every span of a resource that has `service.name` [obs: every corpus
-  span except the resource without `service.name`].
+- **Calls and latency.** Every span of a resource that has `service.name`, even an empty one
+  [obs: every corpus span except the resource without `service.name`; `empty-service`: series
+  with `service.name` `""`].
 - **Database.** Any span kind, when the span has `db.system`. The newer `db.system.name` and
   `db.namespace` are not read [obs `db-internal-kind`, `db-old-system-new-namespace` (no
   `db.name`), `db-new-system-old-name` and `SELECT cart` (no series)].
@@ -129,14 +130,19 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   `external-server-kind` (no series), `SELECT stock` (client, no address keys: no series)].
   The address is the first present of:
   1. `http.host` [obs `precedence`, `precedence-reversed`];
-  2. `server.address`, `net.peer.name` [obs `external-host`, `UPDATE stock`, `legacy client`];
-  3. the host and port of `url.full`, else of `http.url` [obs `external-url-only`:
-     `only-url.example.com:8443`].
+  2. `net.peer.name`, then `server.address` [obs `address-server-vs-peer`,
+     `address-peer-vs-server`: `peer.example.com` in either order; `UPDATE stock`,
+     `external-host`];
+  3. the host and port of `http.url`, else of `url.full` [obs `address-urls`:
+     `http-url.example.com`; `external-url-only`: `only-url.example.com:8443`].
 
-  With `server.port` or `net.peer.port` present, the address becomes the host followed by `:`
-  and an empty port [obs `external-server-port`: `port.example.com:`, `external-peer-port`,
-  `SELECT cart`: `db.internal:`]. The backend drops addresses matching
-  `^(0[.]0[.]0[.]0)?(:[0-9]*)?$|:$`, so these never show [be `serviceRequests.ts:170`].
+  A host from 2 is followed by `:` and its paired port, `net.peer.port` or `server.port`, when
+  that is present, read as a string: an integer port gives an empty one [obs
+  `external-server-port`: `port.example.com:`, `address-string-port`:
+  `string-port.example.com:8080`, `external-peer-port`, `SELECT cart`: `db.internal:`]. The
+  other key's port does not count [obs `address-peer-with-server-port`: `mixed.example.com`].
+  The backend drops addresses matching `^(0[.]0[.]0[.]0)?(:[0-9]*)?$|:$`, so `host:` never shows
+  [be `serviceRequests.ts:170`].
 
 ## 5. Time
 
@@ -146,7 +152,9 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
 - **Aggregation.** Spans of one series in one minute add up into one point [obs `agg`: count 3,
   sum 1.15 ms].
 - **Flush.** The reference flushes every 10 s [reference configuration]; each flush emits the
-  deltas of the spans it saw.
+  deltas of the spans it saw, so spans of one series and minute that two flushes see give two
+  points [obs: the late batch, 12 s after the corpus: `agg` has samples 3 and 2 at t0's
+  minute]. The connector does the same; queries add the deltas.
 - **Point order.** The reference's order of a flush's points varies from run to run [obs: `last`
   of `agg` in `samples_v4_agg_5m` was 3, 1 and 3 in three runs]. The connector emits points in
   order of their series' first span; nothing reads the order but `anyLast` in the rollups.
@@ -170,17 +178,15 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   identity. Shutdown stops scheduling flushes, lets one in progress finish within its
   deadline, then flushes the rest, and reports either failure.
 
-## 7. Still to observe
+## 7. Not reproduced
 
-- Address precedence between `server.address` and `net.peer.name` when both differ, and
-  between `url.full` and `http.url`; ports given as strings.
-- One series in two flushes: two points for the same minute, or one.
-- The reference's `dimensions_cache_size` (100000) when exceeded.
-- A resource whose `service.name` is empty rather than absent.
-- When the reference writes span-metric scope metadata stamped with a flush time rather than a
-  span's minute, with no point or sample, as for a flush without points [obs: parity run, one
-  such row per metric and scope key]. The connector emits nothing on an empty flush; the parity
-  suite ignores these rows.
+- **Flush-time scope metadata.** Every flush of the reference also writes, for each span metric,
+  scope metadata rows stamped with the flush time, with no point or sample [obs: rows 19 s,
+  29 s and 39 s after t0, three per metric]. They only refresh `last_reported` of the scope
+  keys. The connector emits nothing on a flush without spans; the parity suite ignores these
+  rows.
+- **`dimensions_cache_size`** (100000) when exceeded: observing it needs more series than the
+  observation records. The connector's own limits are in §6.
 
 ## 8. Connector
 

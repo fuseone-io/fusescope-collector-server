@@ -125,8 +125,8 @@ http_method, http_host, db_name, db_operation, has_error, is_remote, inserted_at
 | `response_status_code` | from `http.response.status_code` / `http.status_code`, as decimal string |
 | `http_method` | from `http.request.method` / `http.method` |
 | `http_url` | from `url.full` / `http.url` |
-| `http_host` | from `server.address` / `http.host` / `net.peer.name`; with none of them, the hostname of `http_url` (port stripped); `net.host.name` ignored |
-| `external_http_method`, `external_http_url` | Client spans with an HTTP method only: `http_method`, and the hostname of `http_url` (port stripped) |
+| `http_host` | from `server.address` / `http.host` / `net.peer.name`; with none of them, on client spans only, the hostname of `http.url`, else of `url.full` (port stripped); `net.host.name` ignored [obs `address-urls`: `http.url`'s host while `http_url` is `url.full`; `url-full-only-server`: empty]. The preference for `http.url` was seen with it first in attribute order only |
+| `external_http_method`, `external_http_url` | Client spans only, with or without an HTTP method: `http_method` (empty without one), and the hostname of `http_url` (port stripped) when there is one [obs `url-full-only-client`, `http-url-only-client`, `address-urls`] |
 | `db_name` | from `db.namespace` / `db.name` |
 | `db_operation` | from `db.operation.name` / `db.operation` |
 
@@ -189,7 +189,7 @@ its new values land in its own hour]:
 | `tag_type` | Keys | `string_value` / `number_value` |
 |---|---|---|
 | `tag` | span attributes (flattened, §2.2) | string types → `string_value`; numbers → `number_value`; bool → both empty/null |
-| `resource` | resource attributes | `string_value` |
+| `resource` | resource attributes | `string_value`, kept when empty [obs: the resource of `empty-service`] |
 | `scope` | `scope.name`, `scope.version`, scope attributes | `string_value` |
 | `spanfield` | `name`, `kind`, `kind_string`, `status_code`, `status_code_string`, `http_url`, `http_method`, `http_host`, `external_http_url`, `external_http_method`, `db_name`, `db_operation`, `response_status_code`, `is_remote`, `has_error` | as in §3; empty values skipped; `has_error` bool, no value |
 

@@ -57,6 +57,13 @@ send_corpus() {
       if [ "$code" != 200 ]; then echo "POST :$port/v1/$signal (invalid UTF-8): $code $(cat "$out/response")" >&2; exit 1; fi
     done
   done
+  # Spans of an already flushed series and minute, after both span-metrics flushes (10s).
+  sleep 12
+  for port in "$@"; do
+    code=$(curl -s -o "$out/response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+      --data-binary @"$out/corpus/traces-late.json" "localhost:$port/v1/traces")
+    if [ "$code" != 200 ]; then echo "POST :$port/v1/traces (late): $code $(cat "$out/response")" >&2; exit 1; fi
+  done
   rm -f "$out/response"
 }
 send_corpus 14318 24318

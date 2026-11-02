@@ -60,7 +60,7 @@ are kept, in `attributes_number`, the tags and the key table [obs record `specia
 
 ## 4. `tag_attributes_v2`
 
-As traces §6 (per-batch dedup without the hour, 256-byte limit on string values, bool with no
+As traces §6, empty resource values kept too [obs record `empty resource value`] (per-batch dedup without the hour, 256-byte limit on string values, bool with no
 value), with these differences:
 
 - **`unix_milli` is the ingest hour**, not the record's: a five-hour-old record placed first in

@@ -59,12 +59,15 @@ func TestExternalAddress(t *testing.T) {
 		want  string
 	}{
 		{"http.host first", map[string]any{"http.host": "h", "server.address": "s", "url.full": "https://u/x"}, "h"},
-		{"server.address", map[string]any{"server.address": "s", "url.full": "https://u/x"}, "s"},
+		{"net.peer.name over server.address", map[string]any{"server.address": "s", "net.peer.name": "p"}, "p"},
+		{"server.address over urls", map[string]any{"server.address": "s", "url.full": "https://u/x"}, "s"},
 		{"net.peer.name", map[string]any{"net.peer.name": "p", "http.url": "http://u/x"}, "p"},
-		{"port leaves an empty port", map[string]any{"server.address": "s", "server.port": 8080}, "s:"},
-		{"peer port too", map[string]any{"net.peer.name": "p", "net.peer.port": 9090}, "p:"},
+		{"integer port leaves it empty", map[string]any{"server.address": "s", "server.port": 8080}, "s:"},
+		{"string port", map[string]any{"server.address": "s", "server.port": "8080"}, "s:8080"},
+		{"peer port", map[string]any{"net.peer.name": "p", "net.peer.port": 9090}, "p:"},
+		{"only the paired port", map[string]any{"net.peer.name": "p", "server.port": 8443}, "p"},
+		{"http.url over url.full", map[string]any{"http.url": "http://old/a", "url.full": "https://new/b"}, "old"},
 		{"url.full host and port", map[string]any{"url.full": "https://u:8443/x"}, "u:8443"},
-		{"http.url last", map[string]any{"http.url": "http://old/x"}, "old"},
 		{"none", map[string]any{"rpc.service": "Stock"}, ""},
 	}
 	for _, tt := range tests {

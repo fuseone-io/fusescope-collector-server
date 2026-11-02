@@ -269,7 +269,7 @@ func (e *tracesEncoder) appendSpan(res *resourceInfo, scope pcommon.Instrumentat
 
 	e.resources.add(res, bucket)
 	for _, kv := range res.attrs {
-		e.tags.addString(hour, kv.key, tagResource, kv.value)
+		e.tags.addResource(hour, kv.key, kv.value)
 	}
 	e.tags.addString(hour, "scope.name", tagScope, scope.Name())
 	e.tags.addString(hour, "scope.version", tagScope, scope.Version())

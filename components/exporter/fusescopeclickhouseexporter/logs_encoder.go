@@ -71,7 +71,7 @@ func (e *logsEncoder) encode(ld plog.Logs, emit func() error) error {
 		res, e.buf = newResourceInfo(rl.Resource(), e.buf)
 		for _, kv := range res.attrs {
 			e.resKeys.add(kv.key, dataString)
-			e.tags.addString(hour, kv.key, tagResource, kv.value)
+			e.tags.addResource(hour, kv.key, kv.value)
 		}
 		for _, sl := range rl.ScopeLogs().All() {
 			scope := sl.Scope()

@@ -81,8 +81,8 @@ def load(path, table, labels):
                 if table == "signoz_logs.logs_v2" and row.get("body") == OBSERVED_INGEST_TIMED:
                     row.pop("observed_timestamp", None)
                 if table.startswith("signoz_metrics."):
-                    # The reference also writes span-metric scope metadata stamped with its flush
-                    # time, as for a flush without points; when is not known (apm-metrics §7).
+                    # Every flush of the reference also writes span-metric scope metadata stamped
+                    # with the flush time, without points (apm-metrics §7).
                     if (table == "signoz_metrics.metadata" and str(row.get("metric_name", "")).startswith("signoz_")
                             and row.get("attr_type") == "scope" and row.get("first_reported_unix_milli", 0) % 60000):
                         continue

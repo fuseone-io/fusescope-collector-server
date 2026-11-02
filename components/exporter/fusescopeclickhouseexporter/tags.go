@@ -81,6 +81,11 @@ func (s *tagSet) addString(hour int64, key string, t tagType, str string) {
 	s.add(tagRow{hour: hour, key: key, tagType: t, dataType: dataString, str: str})
 }
 
+// addResource adds a resource attribute, kept even when empty (traces §6).
+func (s *tagSet) addResource(hour int64, key, str string) {
+	s.add(tagRow{hour: hour, key: key, tagType: tagResource, dataType: dataString, str: str})
+}
+
 func (s *tagSet) addNumber(hour int64, key string, t tagType, n float64) {
 	s.add(tagRow{hour: hour, key: key, tagType: t, dataType: dataFloat64, num: n})
 }

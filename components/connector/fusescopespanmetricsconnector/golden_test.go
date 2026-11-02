@@ -164,7 +164,16 @@ func readObservedTraces(t *testing.T) []ptrace.Traces {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return []ptrace.Traces{td, probes}
+	all := []ptrace.Traces{td, probes}
+	// A third batch, sent after the span-metrics flush (test/observe).
+	if b, err := os.ReadFile(filepath.Join(observed, "corpus", "traces-late.json")); err == nil {
+		late, err := (&ptrace.JSONUnmarshaler{}).UnmarshalTraces(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, late)
+	}
+	return all
 }
 
 // The connector reproduces every span-metric sample the reference stored for

@@ -108,8 +108,17 @@ func encodeObservedCorpus(t *testing.T) []*tracesEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
+	all := []ptrace.Traces{td, probes}
+	// A third batch, sent after the span-metrics flush (test/observe).
+	if b, err := os.ReadFile(filepath.Join(observed, "corpus", "traces-late.json")); err == nil {
+		late, err := (&ptrace.JSONUnmarshaler{}).UnmarshalTraces(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, late)
+	}
 	var batches []*tracesEncoder
-	for _, batch := range []ptrace.Traces{td, probes} {
+	for _, batch := range all {
 		enc := newTracesEncoder()
 		enc.now = func() time.Time { return time.Unix(0, 0) }
 		_ = enc.encode(batch, nil)
@@ -358,5 +367,43 @@ func checkColumnsExist(t *testing.T, db, table string, input proto.Input) {
 		if !have[col.Name] {
 			t.Errorf("%s.%s has no column %q", db, table, col.Name)
 		}
+	}
+}
+
+// http_host and the external columns from URL keys (traces §3; observed:
+// address-urls, *-only-client, url-full-only-server, external-url-only).
+func TestDeriveSpanURLs(t *testing.T) {
+	tests := []struct {
+		name                                  string
+		kind                                  ptrace.SpanKind
+		attrs                                 [][2]string // in attribute order
+		wantHost, wantExternalURL, wantMethod string
+	}{
+		{"client, both URLs: host from http.url", ptrace.SpanKindClient,
+			[][2]string{{"http.url", "http://old.example.com/a"}, {"url.full", "https://new.example.com/b"}}, "old.example.com", "new.example.com", ""},
+		{"client, url.full only, no method", ptrace.SpanKindClient,
+			[][2]string{{"url.full", "https://full.example.com/c"}}, "full.example.com", "full.example.com", ""},
+		{"client, http.url only, no method", ptrace.SpanKindClient,
+			[][2]string{{"http.url", "http://old.example.com/d"}}, "old.example.com", "old.example.com", ""},
+		{"client with a method", ptrace.SpanKindClient,
+			[][2]string{{"http.request.method", "GET"}, {"url.full", "https://u.example.com:8443/x"}}, "u.example.com", "u.example.com", "GET"},
+		{"server, URL only: no host", ptrace.SpanKindServer,
+			[][2]string{{"url.full", "https://server.example.com/e"}}, "", "", ""},
+		{"host keys win", ptrace.SpanKindClient,
+			[][2]string{{"server.address", "s.example.com"}, {"url.full", "https://u.example.com/x"}}, "s.example.com", "u.example.com", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := ptrace.NewSpan()
+			span.SetKind(tt.kind)
+			for _, kv := range tt.attrs {
+				span.Attributes().PutStr(kv[0], kv[1])
+			}
+			d := deriveSpan(span)
+			if d.host != tt.wantHost || d.externalURL != tt.wantExternalURL || d.externalMethod != tt.wantMethod {
+				t.Errorf("host %q, external_http_url %q, external_http_method %q; want %q, %q, %q",
+					d.host, d.externalURL, d.externalMethod, tt.wantHost, tt.wantExternalURL, tt.wantMethod)
+			}
+		})
 	}
 }
