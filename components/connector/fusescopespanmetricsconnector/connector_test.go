@@ -13,7 +13,6 @@ import (
 
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/connector/connectortest"
-	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -356,15 +355,15 @@ func (f *flakySink) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) erro
 	return f.MetricsSink.ConsumeMetrics(ctx, md)
 }
 
-// A flush refused with a retryable error is sent again with the next one; a
-// permanent refusal is dropped.
+// A refused flush is dropped, retryable or not: a resend could write again
+// what a partly failed export already stored (apm-metrics §6).
 func TestRefusedFlushes(t *testing.T) {
 	tests := []struct {
 		name       string
 		refuse     error
 		wantPoints int
 	}{
-		{"retryable", errors.New("queue is full"), 2},
+		{"retryable", errors.New("queue is full"), 1},
 		{"permanent", consumererror.NewPermanent(errors.New("bad data")), 1},
 	}
 	for _, tt := range tests {
@@ -400,68 +399,12 @@ func TestShutdownReportsFinalFailure(t *testing.T) {
 	}
 }
 
-// Refusals that repeat do not grow the pending batch past max_series_bytes.
-func TestPendingIsBoundedInBytes(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.MaxSeriesBytes = 256 << 10
-	sink := &flakySink{}
-	for range 10 {
-		sink.refuse = append(sink.refuse, errors.New("queue is full"))
-	}
-	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), sink)
-	for range 10 {
-		td := traceWith(5, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
-		td.ResourceSpans().At(0).Resource().Attributes().PutStr("host.name", strings.Repeat("h", 8<<10))
-		if err := c.ConsumeTraces(context.Background(), td); err != nil {
-			t.Fatal(err)
-		}
-		_ = c.flush(context.Background())
-		if c.pendingBytes > cfg.MaxSeriesBytes {
-			t.Fatalf("pending holds %d bytes, want at most %d", c.pendingBytes, cfg.MaxSeriesBytes)
-		}
-	}
-}
-
-// renamingSink mutates what it receives, then refuses it once.
-type renamingSink struct {
-	flakySink
-}
-
-func (r *renamingSink) Capabilities() consumer.Capabilities {
-	return consumer.Capabilities{MutatesData: true}
-}
-
-func (r *renamingSink) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
-	for _, rm := range md.ResourceMetrics().All() {
-		for _, sm := range rm.ScopeMetrics().All() {
-			for _, m := range sm.Metrics().All() {
-				m.SetName("x." + m.Name())
-			}
-		}
-	}
-	return r.flakySink.ConsumeMetrics(ctx, md)
-}
-
-// A retry after a mutating consumer refused the batch sends the batch as it was.
-func TestRetryResendsUnmutatedMetrics(t *testing.T) {
-	sink := &renamingSink{flakySink{refuse: []error{errors.New("queue is full")}}}
-	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
-	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
-		t.Fatal(err)
-	}
-	_ = c.flush(context.Background())
-	_ = c.flush(context.Background())
-	if n := len(points(sink.AllMetrics()[0], "x.signoz_calls_total")); n != 1 {
-		t.Errorf("%d points named x.signoz_calls_total, want 1 (renamed once)", n)
-	}
-}
-
 // A database series emits two points (count and sum) and counts as two
-// against max_series, so its batch can be retried within the limit.
+// against max_series, which thereby bounds the points of a flush.
 func TestTwoPointSeriesCountTwice(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.MaxSeries = 4
-	sink := &flakySink{refuse: []error{errors.New("queue is full")}}
+	sink := new(consumertest.MetricsSink)
 	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), sink)
 	td := traceWith(1, "svc", func(_ int, s ptrace.Span) { s.Attributes().PutStr("db.system", "redis") })
 	if err := c.ConsumeTraces(context.Background(), td); err != nil {
@@ -471,81 +414,8 @@ func TestTwoPointSeriesCountTwice(t *testing.T) {
 		t.Fatalf("one database span counts %d series, want 4 (calls, latency, db count and sum)", c.total)
 	}
 	_ = c.flush(context.Background())
-	if c.pending.DataPointCount() != 4 {
-		t.Errorf("pending holds %d points, want the refused 4", c.pending.DataPointCount())
-	}
-}
-
-// After a partial acceptance only the failed points are sent again.
-func TestRetryOnlyTheFailedPart(t *testing.T) {
-	failed := pmetric.NewMetrics()
-	m := failed.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
-	m.SetName("signoz_calls_total")
-	m.SetEmptySum().DataPoints().AppendEmpty().SetDoubleValue(1)
-	sink := &flakySink{refuse: []error{consumererror.NewMetrics(errors.New("partly refused"), failed)}}
-	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
-	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
-		t.Fatal(err)
-	}
-	_ = c.flush(context.Background())
-	_ = c.flush(context.Background())
-	if got := sink.DataPointCount(); got != 1 {
-		t.Errorf("retry sent %d points, want the 1 that failed", got)
-	}
-}
-
-// Idle flushes after a refusal add nothing to the pending batch.
-func TestIdleFlushesAddNoBlocks(t *testing.T) {
-	sink := &flakySink{}
-	for range 5 {
-		sink.refuse = append(sink.refuse, errors.New("queue is full"))
-	}
-	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
-	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
-		t.Fatal(err)
-	}
-	for range 5 {
-		_ = c.flush(context.Background())
-	}
-	if n := c.pending.ResourceMetrics().Len(); n != 1 {
-		t.Errorf("pending holds %d resource blocks after idle flushes, want 1", n)
-	}
-}
-
-// The pending charge is that of the points actually kept.
-func TestPartialRetryChargesTheFailedPart(t *testing.T) {
-	failed := pmetric.NewMetrics()
-	m := failed.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
-	m.SetName("signoz_calls_total")
-	m.SetEmptySum().DataPoints().AppendEmpty().Attributes().PutStr("k", "v")
-	sink := &flakySink{refuse: []error{consumererror.NewMetrics(errors.New("partly refused"), failed)}}
-	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
-	td := traceWith(50, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
-	td.ResourceSpans().At(0).Resource().Attributes().PutStr("host.name", strings.Repeat("h", 4<<10))
-	if err := c.ConsumeTraces(context.Background(), td); err != nil {
-		t.Fatal(err)
-	}
-	_ = c.flush(context.Background())
-	if c.pendingBytes > 1<<10 {
-		t.Errorf("pending charged %d bytes for one small point", c.pendingBytes)
-	}
-}
-
-// A mutating consumer's partial refusal cannot be replayed unmutated, so the
-// failed part is dropped rather than sent through the mutation twice.
-func TestMutatedPartialRefusalIsDropped(t *testing.T) {
-	failed := pmetric.NewMetrics()
-	m := failed.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
-	m.SetName("x.signoz_calls_total")
-	m.SetEmptySum().DataPoints().AppendEmpty().SetDoubleValue(1)
-	sink := &renamingSink{flakySink{refuse: []error{consumererror.NewMetrics(errors.New("partly refused"), failed)}}}
-	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
-	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
-		t.Fatal(err)
-	}
-	_ = c.flush(context.Background())
-	if c.pending.DataPointCount() != 0 {
-		t.Errorf("pending kept %d mutated points", c.pending.DataPointCount())
+	if got := sink.DataPointCount(); got != 4 {
+		t.Errorf("%d points emitted, want 4", got)
 	}
 }
 
@@ -565,9 +435,5 @@ func TestHistogramStorageCounts(t *testing.T) {
 	}
 	if n, buckets := len(c.latency.order), len(c.bounds)+1; n*buckets*8 > cfg.MaxSeriesBytes {
 		t.Errorf("%d latency series hold %d bytes of counters, over max_series_bytes", n, n*buckets*8)
-	}
-	md := c.build()
-	if got := metricsBytes(md); got < len(c.latency.order)*len(c.bounds)*8 {
-		t.Errorf("metricsBytes = %d, want at least the bounds and counters", got)
 	}
 }

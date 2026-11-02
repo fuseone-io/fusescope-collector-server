@@ -161,15 +161,12 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   database or external-call series counts twice, as it emits a count and a sum. Spans of
   further series are dropped from the metrics with a warning. The reference's
   `dimensions_cache_size` was not observed when exceeded (§7).
-- **Refused flushes.** A flush the metrics pipeline refuses with a retryable error is sent
-  again with the next flush, as long as it holds at most `max_series` points and
-  `max_series_bytes`; a permanent refusal is dropped with an error. A consumer that mutates
-  data gets a copy, so the retry sends the batch as built. After a partial acceptance
-  (`consumererror.Metrics`), only the failed part is sent again; if that consumer mutates data,
-  the failed points can no longer be matched to their originals and are dropped with an error
-  rather than replayed changed. The limits apply to the points actually kept, and an idle
-  flush adds nothing. The spans were already acknowledged, so nothing upstream
-  can resend them. Shutdown ends a periodic flush in progress and reports a failed last flush.
+- **Refused flushes.** A flush the metrics pipeline refuses is dropped with an error, retryable
+  or not. A retryable error does not tell that nothing was written: with the exporter's queue
+  off, an export can store some chunks and then fail, and a resend would be a new export
+  request with new deduplication tokens (DESIGN §4), writing those chunks twice. The exporter's
+  sending queue, on by default, absorbs ClickHouse outages and retries with the request's
+  identity. Shutdown ends a periodic flush in progress and reports a failed last flush.
 
 ## 7. Still to observe
 
