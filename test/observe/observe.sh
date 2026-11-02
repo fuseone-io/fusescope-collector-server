@@ -60,9 +60,11 @@ while IFS=$'\t' read -r db table engine; do
   case "$engine" in
     *MergeTree)
       rows=$(ch "SELECT count() FROM \`$db\`.\`$table\`")
+      # Every row is recorded: a truncated table reads as rows the reference never wrote.
+      if [ "$rows" -gt 100000 ]; then echo "$db.$table has $rows rows; shrink the corpus" >&2; exit 1; fi
       if [ "$rows" -gt 0 ]; then
-        ch "SELECT * FROM \`$db\`.\`$table\` ORDER BY ALL LIMIT 1000 FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl" 2>/dev/null \
-          || ch "SELECT * FROM \`$db\`.\`$table\` LIMIT 1000 FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl"
+        ch "SELECT * FROM \`$db\`.\`$table\` ORDER BY ALL FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl" 2>/dev/null \
+          || ch "SELECT * FROM \`$db\`.\`$table\` FORMAT JSONEachRow" > "$out/rows/$db.$table.jsonl"
       fi
       ;;
   esac
