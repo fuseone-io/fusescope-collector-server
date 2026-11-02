@@ -230,6 +230,25 @@ func TestReservedPrefixInNestedMaps(t *testing.T) {
 	}
 }
 
+// The exporter joins an empty prefix transparently: {"": {"": {k: v}}}
+// lands as k, while "signoz." + "" + "." + "gen_ai.x" does not reach the prefix.
+func TestReservedPrefixUnderEmptyKeys(t *testing.T) {
+	td := ptrace.NewTraces()
+	attrs := td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty().Attributes()
+	e := attrs.PutEmptyMap("")
+	e.PutDouble("signoz.gen_ai.usage.tokens.cost", 999)
+	e.PutEmptyMap("").PutEmptyMap("signoz").PutDouble("gen_ai.x", 1)
+	e.PutDouble("keep", 1)
+	attrs.PutEmptyMap("signoz").PutEmptyMap("").PutDouble("gen_ai.x", 1)
+	if _, err := newPricer(testConfig(gpt4o)).processTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"":{"":{"signoz":{}},"keep":1},"signoz":{"":{"gen_ai.x":1}}}`
+	if got, _ := json.Marshal(attrs.AsRaw()); string(got) != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 func TestExistingCostsAreReplaced(t *testing.T) {
 	td := run(t, testConfig(gpt4o), nil, []kv{{model, "gpt-4o"}, {costTotal, 99.0}, {in, 1000}, {costIn, "x"}})
 	want := "gen_ai.request.model=Str:gpt-4o gen_ai.usage.input_tokens=Int:1000 " + costs(c(1000, 5), 0, 0, 0)

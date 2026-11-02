@@ -106,20 +106,27 @@ func removeReserved(attrs pcommon.Map) {
 	})
 }
 
-// reservedNested removes, from a map value at path, the entries whose
-// flattened keys (the ClickHouse exporter joins kvlist keys with '.') fall
-// under the prefix, and reports whether all of the value does. The reference
-// keeps them; spec §5 deviates so no cost can be planted this way.
+// reservedNested removes, from a map value whose flattened key is path, the
+// entries whose flattened keys fall under the prefix, and reports whether all
+// of the value does. Keys are flattened as the ClickHouse exporter does:
+// joined with '.', an empty prefix adding nothing. The reference keeps these;
+// spec §5 deviates so no cost can be planted this way.
 func reservedNested(path string, v pcommon.Value) bool {
-	n := len(path)
-	if v.Type() != pcommon.ValueTypeMap || n >= len(reservedPrefix) || reservedPrefix[n] != '.' || !strings.HasPrefix(reservedPrefix, path) {
+	if v.Type() != pcommon.ValueTypeMap {
 		return false
 	}
-	if n == len(reservedPrefix)-1 {
-		return true
+	n := len(path)
+	switch {
+	case n == len(reservedPrefix)-1 && strings.HasPrefix(reservedPrefix, path):
+		return true // every key below it starts with the prefix
+	case n > 0 && (n >= len(reservedPrefix) || reservedPrefix[n] != '.' || !strings.HasPrefix(reservedPrefix, path)):
+		return false // no key below it can start with the prefix
 	}
 	v.Map().RemoveIf(func(k string, nested pcommon.Value) bool {
-		full := path + "." + k
+		full := k
+		if path != "" {
+			full = path + "." + k
+		}
 		return strings.HasPrefix(full, reservedPrefix) || reservedNested(full, nested)
 	})
 	return false

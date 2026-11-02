@@ -178,8 +178,9 @@ So a sender cannot plant a cost the backend would read as the processor's.
 **Deliberate deviation: nested maps.** The reference keeps map-valued attributes whose
 flattened keys fall under the prefix: `signoz.gen_ai = {usage.tokens.cost: 999}` and
 `signoz = {gen_ai.usage.input_tokens.cost: 999}` pass unchanged [obs main:
-`removal-nested-maps`]. The ClickHouse exporter flattens maps into dotted keys
-(clickhouse-traces), so these land as `signoz.gen_ai.usage.tokens.cost` and defeat the rule
+`removal-nested-maps`]. The ClickHouse exporter flattens maps into dotted keys, joining with
+`.` and treating an empty prefix as nothing (`{"": {signoz.gen_ai.x: 1}}` lands as
+`signoz.gen_ai.x`; `fusescopeclickhouseexporter/attrs.go`, `walkLeaves`), so these land as `signoz.gen_ai.usage.tokens.cost` and defeat the rule
 above. The FuseScope collector also removes, from span and resource map attributes, every entry
 whose flattened key starts with `signoz.gen_ai.`, and the whole attribute when its own key is
 `signoz.gen_ai`; other entries stay (`signoz = {other: 1}`, `other = {signoz.gen_ai.w: 1}`). The
