@@ -1,6 +1,6 @@
 # 0008 · Remote configuration over OpAMP
 
-- Status: proposed (accepted once the reload spike of §Open settles point 6)
+- Status: accepted (the reload spike below settles point 6)
 - Date: 2026-11-02
 - Amends: [ADR 0004](0004-security-baseline.md) (transport to the backend), `DESIGN.md` §3.2, §5.
 - Issue: [#6](https://github.com/fuseone-io/fusescope-collector-server/issues/6)
@@ -60,34 +60,49 @@ contrib OpAMP supervisor restarts the collector with whatever the server sends.
    agent across restarts.
 5. **Library.** `github.com/open-telemetry/opamp-go` (Apache-2.0, OpenTelemetry) is the OpAMP
    client, the same library the backend's server uses.
-6. **Reload lifecycle (open, see below).** A push is reported `APPLIED`, cached and reported as
-   the effective configuration only once the collector runs it; until then it is pending.
+6. **Reload lifecycle** (below). A push is preflighted, then reported `APPLIED`, cached and
+   reported as the effective configuration only once the collector confirms it runs; until
+   then it is pending.
 
-## Open: reload lifecycle
+## Reload lifecycle (point 6)
 
 The upstream collector does not reload atomically. On a configuration change that is not
 receivers-only, `otelcol` shuts the running service down and then builds the new graph; if
 that fails, `Run` returns the error and the process exits (`go.opentelemetry.io/collector/otelcol`
 v0.164.0, `Collector.reloadConfiguration`). A confmap provider is not told when, or whether, the
-reload finished. As it stands, the provider could neither keep the old configuration running
-after a bad push nor report `APPLIED` only after a real application.
+reload finished.
 
-A spike, before the provider, has to settle:
+A spike against `otelcol` v0.164.0 (a test provider serving numbered revisions, an extension
+and a processor that can fail at start) settled the lifecycle:
 
-- **Preflight:** validate the merged configuration before triggering the reload, with the
-  same factories and validation the collector uses (unmarshal, `Validate`, and building the
-  allow-listed processors), so a push that would fail is rejected while the old graph runs.
-- **Confirmation:** how the provider learns that the new graph started, for example an
-  extension in the same binary that sees the pipelines come up and signals the provider.
-- **Rollback:** what happens when the new graph fails to start despite the preflight; at
-  least, the next start must not reuse that push, since only applied pushes are cached.
-
-This ADR stays `proposed` until the spike records its answers here.
+- **Preflight.** Before triggering the reload, the provider builds every allow-listed
+  processor of the merged configuration on its own, with the processor's factory: unmarshal
+  into the default config (unknown fields fail), `Validate`, create with a no-op next consumer,
+  `Start` with a no-op host, `Shutdown`. Only those processors can differ from the running
+  base, so this covers what a push can change. The spike's preflight caught both a processor
+  failing at start and an unknown config field, with the old graph still running. A push that
+  fails preflight is reported `FAILED` and never triggers a reload.
+- **Confirmation.** The base configuration enables the `fusescope_opamp` extension, and the
+  provider injects the pending push's revision into that extension's config. On every
+  reload, the new extension instance gets `Ready()` (`extensioncapabilities.PipelineWatcher`)
+  only once all pipelines are built and receivers started; it then tells the provider, in
+  process, that this revision runs. In the spike the new revision's `Ready` came after the
+  reload, and never came when a processor failed to start. Only then is the push reported
+  `APPLIED`, cached, and reported as the effective configuration.
+- **Rollback.** A reload that fails despite the preflight ends the process, as upstream does.
+  Before triggering a reload the provider records the pending revision on disk. At the next
+  start it finds that marker without a confirmation, reports that push `FAILED` ("the
+  collector exited while applying it"), and starts from the base merged with the last applied
+  push, which the failed one never replaced. A start from a cached push that does not reach
+  `Ready` leaves its own marker, so the start after it uses the base alone, and a bad cache
+  cannot cause a crash loop.
 
 ## Consequences
 
 - One binary. A push the allow-list accepts stays pending, passes the preflight, and becomes
-  `APPLIED` only once the new graph is confirmed running (§6); a rejected push never runs.
+  `APPLIED` only once the new graph is confirmed running (point 6); a rejected push never runs.
+- A push that passes preflight and still fails to start stops the collector once; the restart
+  reports it `FAILED` and runs the previous configuration.
 - A compromised or buggy backend can at most change log pipelines, span mapping and LLM
   pricing; it cannot redirect telemetry or change what is received.
 - Until the backend adds TLS, the OpAMP link inside the cluster is plaintext and

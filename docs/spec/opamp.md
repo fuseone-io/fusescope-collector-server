@@ -83,8 +83,9 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 - The base configuration wires and declares `signozspanmapper` and `signozllmpricing`, since
   the backend never places them (§5).
 - `FAILED` lists the configuration paths that differed, never values.
-- `APPLIED` is reported, and the push cached, only once the collector runs it (ADR 0008 §6,
-  still open).
+- A push is preflighted; `APPLIED` is reported, and the push cached, only once the new graph
+  is confirmed running; a push that stops the collector is reported `FAILED` at the next start
+  (ADR 0008, reload lifecycle).
 
 ## 7. Backend behaviour the collector does not depend on
 
