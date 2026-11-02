@@ -115,6 +115,12 @@ func (o *addOperator) transform(e *entry.Entry) error {
 	return e.Set(o.field, deepCopy(result))
 }
 
+// Limits on a grok pattern before it is expanded (spec §3.2).
+const (
+	maxGrokPatternBytes = 4096
+	maxGrokPatternRefs  = 64
+)
+
 // grokConfig parses a string with a grok pattern over upstream's default
 // pattern set, keeping named captures only (spec §3.2).
 type grokConfig struct {
@@ -129,6 +135,15 @@ func (c *grokConfig) Build(set component.TelemetrySettings) (operator.Operator, 
 	}
 	if c.Pattern == "" {
 		return nil, errors.New("grok_parser: missing required field 'pattern'")
+	}
+	// Each %{NAME} expands to its definition, up to kilobytes, and expansion
+	// rescans the growing string, so a pushed pattern is bounded before it
+	// is expanded (spec §3.2).
+	if len(c.Pattern) > maxGrokPatternBytes {
+		return nil, fmt.Errorf("grok_parser: pattern is longer than %d bytes", maxGrokPatternBytes)
+	}
+	if n := strings.Count(c.Pattern, "%{"); n > maxGrokPatternRefs {
+		return nil, fmt.Errorf("grok_parser: pattern has %d %%{...} references, more than %d", n, maxGrokPatternRefs)
 	}
 	g, err := grok.NewWithConfig(&grok.Config{NamedCapturesOnly: true})
 	if err != nil {

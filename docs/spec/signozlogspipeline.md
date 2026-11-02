@@ -74,6 +74,8 @@ This processor is **stricter** than the reference in these cases, which the refe
   the operator on every record, so `on_error` decides each record's fate while the push is
   reported `APPLIED` ([B] `pipelinesim/operators.go:119-125`, which compiles the pattern per
   record);
+- a grok pattern longer than 4096 bytes or with more than 64 `%{...}` references (§3.2; the
+  observed and backend-generated patterns are far below both);
 - an expression naming `env` (§4.1, a deliberate deviation for security; [O] `X_Expr_Helpers`
   uses it and is refused).
 
@@ -146,7 +148,10 @@ import's few changes, `NOTICE` credits it), and uses it the same way:
 - a dotted semantic name (`%{WORD:http.method}`) keeps its dots ([O] `Grok_DottedFieldNames`).
 
 The pattern is compiled when the operator is built, so an unknown pattern name or an invalid
-regular expression is refused (§1.2). Go's `regexp` (RE2) matches in time linear in the input
+regular expression is refused (§1.2). Before that it is bounded to 4096 bytes and 64 `%{...}`
+references: each reference expands to its definition (up to kilobytes), and the library rescans
+the growing string for each one, so an unbounded pushed pattern (500,000 `%{IPV6}` fit in a push)
+could take hundreds of megabytes and quadratic time during validation. Go's `regexp` (RE2) matches in time linear in the input
 without backtracking, so no pattern can take exponential time; it has no match timeout, and none
 is needed.
 

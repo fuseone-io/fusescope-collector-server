@@ -4,7 +4,9 @@
 package signozlogspipelineprocessor
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,6 +109,38 @@ func TestConfigValidate(t *testing.T) {
 				return
 			}
 			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// A pushed grok pattern is bounded before it is expanded: repeating a large
+// macro would otherwise expand into hundreds of megabytes in quadratic time
+// during validation (regression from review of #31).
+func TestGrokPatternLimits(t *testing.T) {
+	grok := func(pattern string) []map[string]any {
+		return []map[string]any{{"type": "grok_parser", "parse_from": "body", "pattern": pattern}}
+	}
+	tests := []struct {
+		name    string
+		pattern string
+		wantErr string
+	}{
+		{"repeated macro", strings.Repeat("%{IPV6}", 500_000), "longer than"},
+		{"too many references", strings.Repeat("%{IPV6}", maxGrokPatternRefs+1), "references"},
+		{"too long", strings.Repeat("a", maxGrokPatternBytes+1), "longer than"},
+		{"at the reference limit", strings.Repeat("%{COMBINEDAPACHELOG} ", maxGrokPatternRefs), ""},
+		{"at the length limit", strings.Repeat("a", maxGrokPatternBytes), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			err := (&Config{Operators: grok(tt.pattern)}).Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tt.wantErr)
+			}
+			assert.Less(t, time.Since(start), 5*time.Second, "validation is bounded")
 		})
 	}
 }
