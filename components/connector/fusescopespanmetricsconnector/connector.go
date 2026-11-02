@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
@@ -36,11 +38,12 @@ const (
 
 // kv is one attribute of a point: value is its string form, which identifies
 // the series; src, when set, is the attribute it came from, whose type the
-// point keeps (apm-metrics §3).
+// point keeps (apm-metrics §3). A scratch value lives in a buffer reused by
+// the next span, so a new series copies it.
 type kv struct {
-	key, value string
-	src        pcommon.Value
-	typed      bool
+	key, value     string
+	src            pcommon.Value
+	typed, scratch bool
 }
 
 func attr(key string, v pcommon.Value) kv {
@@ -94,9 +97,10 @@ type spanMetricsConnector struct {
 	shutdownErr error
 
 	// scratch, used under mu
-	attrs []kv
-	extra []kv
-	key   []byte
+	attrs   []kv
+	extra   []kv
+	key     []byte
+	address []byte
 }
 
 func newConnector(cfg *Config, set connector.Settings, next consumer.Metrics) *spanMetricsConnector {
@@ -256,8 +260,10 @@ func (c *spanMetricsConnector) addSpan(service string, res pcommon.Map, span ptr
 
 	// External calls (apm-metrics §3.2, §4).
 	if span.Kind() == ptrace.SpanKindClient {
-		if address := externalAddress(attrs); address != "" {
-			ext := append(append(c.extra[:0], base[:n]...), kv{key: "address", value: address})
+		var ok bool
+		if c.address, ok = appendExternalAddress(c.address[:0], attrs); ok {
+			address := kv{key: "address", value: unsafe.String(unsafe.SliceData(c.address), len(c.address)), scratch: true}
+			ext := append(append(c.extra[:0], base[:n]...), address)
 			if hasHTTPStatus {
 				ext = append(ext, httpStatus)
 			}
@@ -277,6 +283,9 @@ func (c *spanMetricsConnector) releaseScratch() {
 	clear(c.extra[:cap(c.extra)])
 	if cap(c.key) > maxScratchKey {
 		c.key = nil
+	}
+	if cap(c.address) > maxScratchKey {
+		c.address = nil
 	}
 }
 
@@ -352,9 +361,12 @@ func (c *spanMetricsConnector) add(f *family, attrs []kv, minute uint64) *series
 	s := &series{attrs: pcommon.NewMap(), minute: minute}
 	s.attrs.EnsureCapacity(len(attrs))
 	for _, a := range attrs {
-		if a.typed {
+		switch {
+		case a.typed:
 			a.src.CopyTo(s.attrs.PutEmpty(a.key))
-		} else {
+		case a.scratch:
+			s.attrs.PutStr(a.key, strings.Clone(a.value))
+		default:
 			s.attrs.PutStr(a.key, a.value)
 		}
 	}
