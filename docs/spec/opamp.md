@@ -86,8 +86,9 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 - A pushed allow-listed block may not hold a confmap reference (`${...}`, not escaped as
   `$${`) that the base does not hold at the same path: the collector would resolve it, so a
   push could read a local credential file or environment variable into an exported value
-  (ADR 0004). The backend escapes `$` as `$$` in log pipeline values (§3); a span mapping or
-  pricing value with an unescaped `${` is rejected.
+  (ADR 0004). A reference the base already holds there, echoed back by the backend, is kept.
+  The backend escapes `$` as `$$` in log pipeline values (§3) and writes no reference
+  elsewhere.
 - A push is preflighted; `APPLIED` is reported, and the push cached, only once the new graph
   is confirmed running; a push that stops the collector is reported `FAILED` at the next start
   (ADR 0008, reload lifecycle), and that failure is kept on disk until the backend answers, so

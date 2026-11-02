@@ -34,7 +34,7 @@ type Config = map[string]any
 type Rejection struct{ Paths []string }
 
 func (r *Rejection) Error() string {
-	return "the pushed configuration changes what the allow-list keeps local: " + strings.Join(r.Paths, ", ")
+	return "the pushed configuration changes what the allow-list keeps local, or holds a ${...} reference: " + strings.Join(r.Paths, ", ")
 }
 
 // Merge returns base with the allow-listed parts of push, or a *Rejection.
@@ -150,7 +150,7 @@ func (d *differ) substitutions(path string, base, push any) {
 			if i < len(bl) {
 				b = bl[i]
 			}
-			d.substitutions(fmt.Sprintf("%s.%d", path, i), b, v)
+			d.substitutions(fmt.Sprintf("%s[%d]", path, i), b, v)
 		}
 	}
 }

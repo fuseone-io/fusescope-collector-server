@@ -25,7 +25,7 @@ func TestPushedSubstitutionsRejected(t *testing.T) {
 			[]string{"processors.signozllmpricing.output_attrs.total"}},
 		{"embedded in a value", base,
 			strings.Replace(base, "signozspanmapper: {groups: []}", "signozspanmapper: {groups: [{id: 'x-"+secret+"'}]}", 1),
-			[]string{"processors.signozspanmapper.groups.0.id"}},
+			[]string{"processors.signozspanmapper.groups[0].id"}},
 		{"in a key", base,
 			strings.Replace(base, "signozspanmapper: {groups: []}", "signozspanmapper: {'"+secret+"': 1}", 1),
 			[]string{"processors.signozspanmapper"}},
