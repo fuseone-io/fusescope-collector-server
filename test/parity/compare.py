@@ -34,6 +34,25 @@ INGEST_TIMED = "no time at all"
 OBSERVED_INGEST_TIMED = "bad \udcff\udcfe utf8 \udce2\udc82"
 
 
+# Each collector stamps span metrics with its own identity (apm-metrics spec §6).
+COLLECTOR_KEYS = ("signoz.collector.id", "resource_signoz.collector.id")
+
+
+def anonymize(row):
+    """Replaces the collector identity in a metrics row, wherever it appears."""
+    if isinstance(row.get("labels"), str):
+        labels = json.loads(row["labels"], strict=False)
+        if any(k in labels for k in COLLECTOR_KEYS):
+            labels.update({k: "<collector>" for k in COLLECTOR_KEYS if k in labels})
+            row["labels"] = json.dumps(labels, sort_keys=True, separators=(",", ":"))
+    for m in ("attrs", "scope_attrs", "resource_attrs"):
+        if isinstance(row.get(m), dict):
+            row[m] = {k: "<collector>" if k in COLLECTOR_KEYS else v for k, v in row[m].items()}
+    if row.get("attr_name") in COLLECTOR_KEYS:
+        row["attr_string_value"] = "<collector>"
+    return row
+
+
 def series_labels(out, side):
     """Maps each fingerprint to its series identity: metric fingerprints differ by design
     (metrics spec §4). Labels alone are not enough: two series can share them and differ in
@@ -42,7 +61,7 @@ def series_labels(out, side):
     with open(os.path.join(out, side, "signoz_metrics.time_series_v4.jsonl"), encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             if line.strip():
-                row = json.loads(line, strict=False)
+                row = anonymize(json.loads(line, strict=False))
                 labels[row["fingerprint"]] = json.dumps(
                     [row["labels"]] + [row[k] for k in ("attrs", "scope_attrs", "resource_attrs")], sort_keys=True)
     return labels
@@ -62,9 +81,16 @@ def load(path, table, labels):
                 if table == "signoz_logs.logs_v2" and row.get("body") == OBSERVED_INGEST_TIMED:
                     row.pop("observed_timestamp", None)
                 if table.startswith("signoz_metrics."):
-                    # The reference also writes span metrics (phase 4); the candidate does not yet.
-                    if str(row.get("metric_name", "")).startswith("signoz_"):
+                    # The reference also writes span-metric scope metadata stamped with its flush
+                    # time, as for a flush without points; when is not known (apm-metrics §7).
+                    if (table == "signoz_metrics.metadata" and str(row.get("metric_name", "")).startswith("signoz_")
+                            and row.get("attr_type") == "scope" and row.get("first_reported_unix_milli", 0) % 60000):
                         continue
+                    anonymize(row)
+                    # The reference orders a flush's span-metric points differently from run to run
+                    # (observed last = 3, 1, 3 for probe agg), so anyLast(value) is arbitrary.
+                    if table.startswith("signoz_metrics.samples_v4_agg_") and str(row.get("metric_name", "")).startswith("signoz_"):
+                        row.pop("last", None)
                     if "fingerprint" in row:
                         row["fingerprint"] = labels.get(row["fingerprint"], "unknown series")
                     # The reference's unit for .count metadata is arbitrary (metrics spec §5).
