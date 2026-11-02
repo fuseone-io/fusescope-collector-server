@@ -1,0 +1,42 @@
+<!-- Single-node cluster "cluster" with an embedded keeper, as the schema
+     migrator expects; named clickhouse-shadow so it never answers as the
+     demo's "clickhouse". -->
+<clickhouse>
+    <remote_servers>
+        <cluster>
+            <shard>
+                <replica>
+                    <host>clickhouse-shadow</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </cluster>
+    </remote_servers>
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>clickhouse-shadow</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+    <zookeeper>
+        <node>
+            <host>clickhouse-shadow</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+    <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+    </distributed_ddl>
+    <macros>
+        <shard>01</shard>
+        <replica>01</replica>
+    </macros>
+    <max_server_memory_usage>1200000000</max_server_memory_usage>
+</clickhouse>

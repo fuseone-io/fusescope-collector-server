@@ -1,0 +1,62 @@
+# The FuseScope collector in shadow on the demo host. What it does mirrors
+# what the demo's ClickHouse shows the demo collector writing (README,
+# "Derived from the demo's data"); it writes only to clickhouse-shadow.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 60s
+    root_path: /hostfs
+    scrapers:
+      cpu: {}
+      load: {}
+      disk: {}
+      filesystem: {}
+      memory: {}
+
+processors:
+  resourcedetection/system:
+    detectors: [system]
+    system:
+      hostname_sources: [os]
+
+connectors:
+  fusescope_spanmetrics:
+
+exporters:
+  fusescope_clickhouse:
+    endpoint: clickhouse-shadow:9000
+    tls:
+      insecure: true
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+      status:
+        enabled: true
+        path: /health/status
+      config:
+        enabled: false
+
+service:
+  extensions: [healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [fusescope_clickhouse, fusescope_spanmetrics]
+    logs:
+      receivers: [otlp]
+      exporters: [fusescope_clickhouse]
+    metrics:
+      receivers: [otlp, fusescope_spanmetrics]
+      exporters: [fusescope_clickhouse]
+    metrics/host:
+      receivers: [hostmetrics]
+      processors: [resourcedetection/system]
+      exporters: [fusescope_clickhouse]

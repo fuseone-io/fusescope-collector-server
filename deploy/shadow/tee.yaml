@@ -1,0 +1,74 @@
+# Fan-out in front of the demo collector: every request goes to the demo
+# collector as before and, through a shadow-only pipeline, to the shadow
+# collector.
+#
+# The demo comes first. A request fails for its sender if any destination in
+# its pipeline refuses it, so the shadow side sits behind a forward connector
+# and a batch processor: the batch processor accepts the data and exports it
+# on its own, so a slow, full or failing shadow path drops shadow data and
+# never fails a request to the demo. A shadow outage shows up as differences
+# in compare.py. The memory limiter keeps the tee within its container limit.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 300
+    spike_limit_mib: 60
+  batch/shadow: {}
+
+connectors:
+  forward/traces:
+  forward/logs:
+  forward/metrics:
+
+exporters:
+  otlp/demo:
+    endpoint: otel-collector:4317
+    tls:
+      insecure: true
+  otlp/shadow:
+    endpoint: fusescope-collector-shadow:4317
+    tls:
+      insecure: true
+    sending_queue:
+      sizer: bytes
+      queue_size: 33554432 # 32 MiB per signal; the demo sends a few MiB an hour
+    retry_on_failure:
+      max_elapsed_time: 10m
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [otlp/demo, forward/traces]
+    traces/shadow:
+      receivers: [forward/traces]
+      processors: [batch/shadow]
+      exporters: [otlp/shadow]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [otlp/demo, forward/logs]
+    logs/shadow:
+      receivers: [forward/logs]
+      processors: [batch/shadow]
+      exporters: [otlp/shadow]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [otlp/demo, forward/metrics]
+    metrics/shadow:
+      receivers: [forward/metrics]
+      processors: [batch/shadow]
+      exporters: [otlp/shadow]
