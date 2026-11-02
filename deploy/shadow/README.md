@@ -44,7 +44,7 @@ On a workstation, from this repository at the commit to shadow:
 ```sh
 docker build -t fusescope-collector:shadow .
 docker save fusescope-collector:shadow | ssh root@<demo-host> docker load
-scp -r deploy/shadow root@<demo-host>:/opt/fusescope/shadow
+scp -r deploy/shadow root@<demo-host>:/opt/fusescope/   # lands in /opt/fusescope/shadow, also on re-runs
 ```
 
 On the demo host, in `/opt/fusescope`:
