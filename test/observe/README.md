@@ -10,6 +10,13 @@ source.
 test/observe/observe.sh docs/spec/observed/0.145.0   # needs Docker, curl, python3
 ```
 
+Beside a stack that holds ports 8123, 4318 or 13133, move them and the compose project:
+
+```sh
+COMPOSE_PROJECT_NAME=observe-local OBSERVE_CLICKHOUSE_PORT=38123 OBSERVE_OTLP_PORT=34318 \
+  OBSERVE_HEALTH_PORT=33133 test/observe/observe.sh docs/spec/observed/0.145.0
+```
+
 `corpus.py` fixes every ID, name and value; only timestamps move, as offsets from `t0`, so
 the same corpus fed to two collectors must produce the same rows. The parity suite will
 reuse it.
