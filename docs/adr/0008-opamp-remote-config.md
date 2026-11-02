@@ -43,7 +43,7 @@ contrib OpAMP supervisor restarts the collector with whatever the server sends.
 3. **Transport.** TLS by default, with a client certificate when one is configured. Plaintext
    only with an explicit `tls.insecure: true`, logged as a warning at start, for the
    in-cluster port the backend serves today, as ADR 0007 allows for ClickHouse. A backend
-   issue asks for TLS on its OpAMP server.
+   issue asks for TLS on its OpAMP server ([fuseone-io/fusescope#261](https://github.com/fuseone-io/fusescope/issues/261)).
 4. **Restart and outage.** The last accepted pushed configuration is cached on disk, and used
    at start until the backend answers, so a backend outage does not revert the managed
    processing. The instance UID is stored there too, so the backend sees one agent across

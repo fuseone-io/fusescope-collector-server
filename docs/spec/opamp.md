@@ -83,7 +83,7 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 
 ## 7. Backend behaviour the collector does not depend on
 
-Recorded so it is not mistaken for collector bugs (FuseScope backend issue to be filed):
+Recorded so it is not mistaken for collector bugs ([fuseone-io/fusescope#261](https://github.com/fuseone-io/fusescope/issues/261)):
 
 - the settings broadcast stops at the first agent whose configuration is unchanged
   (`model/agents.go:121-166`);
