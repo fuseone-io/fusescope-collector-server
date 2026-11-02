@@ -170,24 +170,41 @@ exporters: {nop: {}}
 service:
   pipelines: ${file:/etc/otel/pipelines.yaml}
 `
+	const nestedBase = `
+receivers: {otlp: {}}
+processors: {batch: {}}
+exporters: {nop: {}}
+service:
+  pipelines:
+    metrics: ${file:/etc/otel/metrics.yaml}
+    traces:
+      receivers: [otlp]
+      processors: ${file:/etc/otel/traces.yaml}
+      exporters: [nop]
+`
 	tests := []struct {
 		name      string
+		base      string
 		push      string
 		wantPaths []string
 	}{
-		{"echoed", refBase, nil},
-		{"processors changed", strings.Replace(refBase, "processors.yaml", "other.yaml", 1), []string{"processors"}},
-		{"processors expanded", strings.Replace(refBase, "${file:/etc/otel/processors.yaml}", "{batch: {}}", 1), []string{"processors"}},
-		{"pipelines expanded", strings.Replace(refBase, "${file:/etc/otel/pipelines.yaml}", "{logs: {receivers: [otlp], exporters: [nop]}}", 1), []string{"service.pipelines"}},
+		{"echoed", refBase, refBase, nil},
+		{"processors changed", refBase, strings.Replace(refBase, "processors.yaml", "other.yaml", 1), []string{"processors"}},
+		{"processors expanded", refBase, strings.Replace(refBase, "${file:/etc/otel/processors.yaml}", "{batch: {}}", 1), []string{"processors"}},
+		{"pipelines expanded", refBase, strings.Replace(refBase, "${file:/etc/otel/pipelines.yaml}", "{logs: {receivers: [otlp], exporters: [nop]}}", 1), []string{"service.pipelines"}},
+		{"nested echoed", nestedBase, nestedBase, nil},
+		{"pipeline reference changed", nestedBase, strings.Replace(nestedBase, "metrics.yaml", "other.yaml", 1), []string{"service.pipelines.metrics"}},
+		{"processors reference changed", nestedBase, strings.Replace(nestedBase, "traces.yaml", "other.yaml", 1), []string{"service.pipelines.traces.processors"}},
+		{"processors reference expanded", nestedBase, strings.Replace(nestedBase, "${file:/etc/otel/traces.yaml}", "[batch]", 1), []string{"service.pipelines.traces.processors"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, err := Merge(parse(t, refBase), parse(t, tt.push))
+			m, err := Merge(parse(t, tt.base), parse(t, tt.push))
 			if tt.wantPaths == nil {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !reflect.DeepEqual(m, parse(t, refBase)) {
+				if !reflect.DeepEqual(m, parse(t, tt.base)) {
 					t.Errorf("merged = %v; want the base unchanged", m)
 				}
 				return

@@ -143,10 +143,16 @@ func (d *differ) service(base, push Config) Config {
 		pipelines := Config{}
 		for name := range union(bp, pp) {
 			path := "service.pipelines." + name
-			b, inBase := bp[name].(Config)
-			p, inPush := pp[name].(Config)
+			bv, inBase := bp[name]
+			pv, inPush := pp[name]
 			if !inBase || !inPush {
 				d.add(path)
+				continue
+			}
+			b, p, ok := maps(bv, pv)
+			if !ok {
+				d.equal(path, bv, pv)
+				pipelines[name] = bv
 				continue
 			}
 			pipelines[name] = d.pipeline(path, name, b, p)
@@ -169,7 +175,9 @@ func (d *differ) pipeline(path, name string, base, push Config) Config {
 		bl, bok := asList(base[k])
 		pl, pok := asList(push[k])
 		if !bok || !pok {
-			d.add(path + ".processors")
+			// A reference the collector resolves later: kept only unchanged.
+			d.equal(path+".processors", base[k], push[k])
+			out[k] = base[k]
 			continue
 		}
 		if name != LogsPipeline {
