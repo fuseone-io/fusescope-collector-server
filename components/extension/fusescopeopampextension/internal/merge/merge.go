@@ -42,11 +42,12 @@ func Merge(base, push Config) (Config, error) {
 	d := &differ{}
 	merged := Config{}
 	for k := range union(base, push) {
-		switch k {
-		case "processors":
-			merged[k] = d.processors(asMap(base[k]), asMap(push[k]))
-		case "service":
-			merged[k] = d.service(asMap(base[k]), asMap(push[k]))
+		bm, pm, sections := maps(base[k], push[k])
+		switch {
+		case k == "processors" && sections:
+			merged[k] = d.processors(bm, pm)
+		case k == "service" && sections:
+			merged[k] = d.service(bm, pm)
 		default:
 			d.equal(k, base[k], push[k])
 			if v, ok := base[k]; ok {
@@ -133,7 +134,12 @@ func (d *differ) service(base, push Config) Config {
 			}
 			continue
 		}
-		bp, pp := asMap(base[k]), asMap(push[k])
+		bp, pp, ok := maps(base[k], push[k])
+		if !ok {
+			d.equal("service."+k, base[k], push[k])
+			out[k] = base[k]
+			continue
+		}
 		pipelines := Config{}
 		for name := range union(bp, pp) {
 			path := "service.pipelines." + name
@@ -212,6 +218,19 @@ func union(a, b Config) map[string]struct{} {
 		out[k] = struct{}{}
 	}
 	return out
+}
+
+// maps returns a and b as maps, absent ones as empty, or false when either is
+// something else, such as a ${file:...} reference the collector resolves
+// later: such a section is compared whole and kept as the base has it, never
+// read as empty.
+func maps(a, b any) (Config, Config, bool) {
+	am, aok := a.(Config)
+	bm, bok := b.(Config)
+	if (!aok && a != nil) || (!bok && b != nil) {
+		return nil, nil, false
+	}
+	return asMap(am), asMap(bm), true
 }
 
 func asMap(v any) Config {

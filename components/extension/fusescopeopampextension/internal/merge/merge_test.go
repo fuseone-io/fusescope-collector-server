@@ -7,6 +7,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/collector/confmap"
@@ -156,4 +157,45 @@ func replace(s, old, repl string) string {
 		panic("test fixture: " + old)
 	}
 	return stringsReplace(s, old, repl)
+}
+
+// A section the collector resolves later, such as a ${file:...} reference, is
+// kept as the base has it when the push echoes it, never read as empty, and a
+// push that changes it is rejected.
+func TestReferenceSectionsKept(t *testing.T) {
+	const refBase = `
+receivers: {otlp: {}}
+processors: ${file:/etc/otel/processors.yaml}
+exporters: {nop: {}}
+service:
+  pipelines: ${file:/etc/otel/pipelines.yaml}
+`
+	tests := []struct {
+		name      string
+		push      string
+		wantPaths []string
+	}{
+		{"echoed", refBase, nil},
+		{"processors changed", strings.Replace(refBase, "processors.yaml", "other.yaml", 1), []string{"processors"}},
+		{"processors expanded", strings.Replace(refBase, "${file:/etc/otel/processors.yaml}", "{batch: {}}", 1), []string{"processors"}},
+		{"pipelines expanded", strings.Replace(refBase, "${file:/etc/otel/pipelines.yaml}", "{logs: {receivers: [otlp], exporters: [nop]}}", 1), []string{"service.pipelines"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := Merge(parse(t, refBase), parse(t, tt.push))
+			if tt.wantPaths == nil {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(m, parse(t, refBase)) {
+					t.Errorf("merged = %v; want the base unchanged", m)
+				}
+				return
+			}
+			var rej *Rejection
+			if !errors.As(err, &rej) || !slices.Equal(rej.Paths, tt.wantPaths) {
+				t.Errorf("err = %v; want rejection of %v", err, tt.wantPaths)
+			}
+		})
+	}
 }
