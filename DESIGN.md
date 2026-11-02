@@ -122,8 +122,10 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
   the authenticated identity, never by an attribute in the payload.
 - **Remote configuration (OpAMP):** TLS to the FuseScope backend, plaintext only by explicit
   opt-in for today's in-cluster port ([ADR 0008](docs/adr/0008-opamp-remote-config.md)). A pushed
-  configuration is applied only where it differs from the local one in allow-listed processors
-  (`signozlogspipeline`, `signozspanmapper`, `signozllmpricing`) and their place in pipelines. The ingest policy custom message can only
+  configuration is applied only where it differs from the local one in allow-listed processor
+  blocks (`signozlogspipeline/pipeline_*`, `signozspanmapper`, `signozllmpricing`); only
+  `signozlogspipeline/pipeline_*` may change position, and only within the logs pipeline. The
+  ingest policy custom message can only
   restrict what is accepted. Receivers, exporters, extensions, endpoints and outbound
   credentials can never be changed remotely, so a compromised backend cannot redirect telemetry.
 - **Limits:** gRPC message size, concurrent streams, and request timeouts on receivers; the

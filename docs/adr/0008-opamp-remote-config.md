@@ -86,8 +86,8 @@ This ADR stays `proposed` until the spike records its answers here.
 
 ## Consequences
 
-- One binary; an accepted configuration is validated by the collector's own reload, and a
-  rejected one never runs.
+- One binary. A push the allow-list accepts stays pending, passes the preflight, and becomes
+  `APPLIED` only once the new graph is confirmed running (§6); a rejected push never runs.
 - A compromised or buggy backend can at most change log pipelines, span mapping and LLM
   pricing; it cannot redirect telemetry or change what is received.
 - Until the backend adds TLS, the OpAMP link inside the cluster is plaintext and
