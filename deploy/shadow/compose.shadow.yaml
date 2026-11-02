@@ -1,0 +1,118 @@
+# Override for the FuseScope demo (fuseone-io/fusescope deploy/demo): runs the
+# FuseScope collector in shadow. Copy this directory to <demo>/shadow and use
+#   docker compose -f compose.yaml -f shadow/compose.shadow.yaml ...
+# Paths are relative to the demo directory. See README.md.
+
+x-shadow-logging: &shadow-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  # Sources send to the tee instead of otel-collector.
+  hotrod:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-tee:4318
+  logs-checkout:
+    command: [logs, --otlp-endpoint=otel-tee:4317, --otlp-insecure, --duration=inf, --rate=0.5, --service=checkout, --otlp-attributes=deployment.environment="demo", --body=order placed, --severity-text=Info, --severity-number=9]
+  logs-payment-error:
+    command: [logs, --otlp-endpoint=otel-tee:4317, --otlp-insecure, --duration=inf, --rate=0.1, --service=payment, --otlp-attributes=deployment.environment="demo", --body=card declined - insufficient funds, --severity-text=Error, --severity-number=17]
+  traces-payment-errors:
+    command: [traces, --otlp-endpoint=otel-tee:4317, --otlp-insecure, --duration=inf, --rate=0.1, --service=payment, --otlp-attributes=deployment.environment="demo", --child-spans=2, --span-duration=250ms, --status-code=Error]
+  fusescope:
+    environment:
+      SIGNOZ_RUM_COLLECTOR__ENDPOINT: http://otel-tee:4318
+
+  otel-tee:
+    <<: *shadow-logging
+    image: otel/opentelemetry-collector:0.139.0
+    command: [--config=/etc/otelcol/tee.yaml]
+    volumes:
+      - ./shadow/tee.yaml:/etc/otelcol/tee.yaml:ro
+    networks: [default, shadow]
+    depends_on: [otel-collector]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.2
+
+  clickhouse-shadow:
+    <<: *shadow-logging
+    image: clickhouse/clickhouse-server:25.12.5
+    hostname: clickhouse-shadow
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    volumes:
+      - ./shadow/clickhouse/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+      - clickhouse-shadow-data:/var/lib/clickhouse/
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [shadow]
+    restart: unless-stopped
+    mem_limit: 1536m
+    cpus: 0.75
+
+  # The reference image's migrator, run as a black box (ADR 0002), creates
+  # the schema the shadow collector writes into.
+  migrator-shadow:
+    <<: *shadow-logging
+    image: ghcr.io/fuseone-io/fusescope-otel-collector:${COLLECTOR_VERSION:-0.145.0}
+    environment:
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: tcp://clickhouse-shadow:9000
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER: cluster
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION: "true"
+      SIGNOZ_OTEL_COLLECTOR_TIMEOUT: 10m
+    entrypoint: [/bin/sh, -c]
+    command:
+      - /fusescope-otel-collector migrate bootstrap && /fusescope-otel-collector migrate sync up && /fusescope-otel-collector migrate async up
+    networks: [shadow]
+    depends_on:
+      clickhouse-shadow:
+        condition: service_healthy
+    restart: on-failure:5
+    mem_limit: 256m
+    cpus: 0.25
+
+  fusescope-collector-shadow:
+    <<: *shadow-logging
+    image: ${SHADOW_COLLECTOR_IMAGE:-fusescope-collector:shadow}
+    command: [--config=/etc/fusescope-collector/config.yaml]
+    # Host UTS namespace and root, as the demo collector, for host metrics.
+    uts: host
+    volumes:
+      - ./shadow/collector.yaml:/etc/fusescope-collector/config.yaml:ro
+      - /:/hostfs:ro
+    networks: [shadow]
+    depends_on:
+      migrator-shadow:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.3
+
+  # On demand: docker compose ... run --rm shadow-compare
+  shadow-compare:
+    image: python:3.12-alpine
+    command: [python3, -I, /compare.py]
+    volumes:
+      - ./shadow/compare.py:/compare.py:ro
+    environment:
+      DEMO_CLICKHOUSE: http://clickhouse:8123
+      SHADOW_CLICKHOUSE: http://clickhouse-shadow:8123
+    networks: [default, shadow]
+    profiles: [compare]
+
+networks:
+  shadow:
+    name: fusescope-shadow
+
+volumes:
+  clickhouse-shadow-data:

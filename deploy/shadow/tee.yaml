@@ -1,0 +1,40 @@
+# Fan-out in front of the demo collector: every request goes to the demo
+# collector as before and, through a large in-memory queue, to the shadow
+# collector. A full shadow queue would fail the request, so the queue holds
+# hours of demo traffic; the runbook says how to drop the shadow path.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  otlp/demo:
+    endpoint: otel-collector:4317
+    tls:
+      insecure: true
+  otlp/shadow:
+    endpoint: fusescope-collector-shadow:4317
+    tls:
+      insecure: true
+    sending_queue:
+      queue_size: 100000
+    retry_on_failure:
+      max_elapsed_time: 10m
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/demo, otlp/shadow]
+    logs:
+      receivers: [otlp]
+      exporters: [otlp/demo, otlp/shadow]
+    metrics:
+      receivers: [otlp]
+      exporters: [otlp/demo, otlp/shadow]
