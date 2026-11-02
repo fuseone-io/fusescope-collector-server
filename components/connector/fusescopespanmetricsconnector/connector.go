@@ -79,8 +79,9 @@ type spanMetricsConnector struct {
 	dropped int
 	// flushMu serializes flushes; pending, under it, is a flush refused with a
 	// retryable error, sent again first.
-	flushMu sync.Mutex
-	pending pmetric.Metrics
+	flushMu      sync.Mutex
+	pending      pmetric.Metrics
+	pendingBytes int
 
 	// ctx ends periodic flushes on shutdown.
 	ctx    context.Context
@@ -320,7 +321,7 @@ func (c *spanMetricsConnector) flush(ctx context.Context) error {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
 	c.mu.Lock()
-	md, dropped := c.build(), c.dropped
+	md, dropped, size := c.build(), c.dropped, c.bytes
 	c.reset()
 	c.mu.Unlock()
 	if dropped > 0 {
@@ -331,19 +332,27 @@ func (c *spanMetricsConnector) flush(ctx context.Context) error {
 		// Deltas of one series in two batches add up downstream; keep the older first.
 		md.ResourceMetrics().MoveAndAppendTo(c.pending.ResourceMetrics())
 		md, c.pending = c.pending, pmetric.NewMetrics()
+		size += c.pendingBytes
+		c.pendingBytes = 0
 	}
 	if md.DataPointCount() == 0 {
 		return nil
 	}
-	err := c.next.ConsumeMetrics(ctx, md)
+	// A consumer that mutates gets a copy, so a retry resends the batch as built.
+	sent := md
+	if c.next.Capabilities().MutatesData {
+		sent = pmetric.NewMetrics()
+		md.CopyTo(sent)
+	}
+	err := c.next.ConsumeMetrics(ctx, sent)
 	switch {
 	case err == nil:
 		return nil
-	case consumererror.IsPermanent(err) || md.DataPointCount() > c.cfg.MaxSeries:
-		c.logger.Error("span metrics dropped", zap.Error(err), zap.Int("points", md.DataPointCount()))
+	case consumererror.IsPermanent(err) || md.DataPointCount() > c.cfg.MaxSeries || size > c.cfg.MaxSeriesBytes:
+		c.logger.Error("span metrics dropped", zap.Error(err), zap.Int("points", md.DataPointCount()), zap.Int("bytes", size))
 	default:
 		// Refused before acceptance: the spans are acknowledged, so only we can resend.
-		c.pending = md
+		c.pending, c.pendingBytes = md, size
 		c.logger.Warn("span metrics refused; sending them again with the next flush", zap.Error(err))
 	}
 	return err

@@ -161,8 +161,9 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   further series are dropped from the metrics with a warning. The reference's
   `dimensions_cache_size` was not observed when exceeded (§7).
 - **Refused flushes.** A flush the metrics pipeline refuses with a retryable error is sent
-  again with the next flush, as long as it holds at most `max_series` points; a permanent
-  refusal is dropped with an error. The spans were already acknowledged, so nothing upstream
+  again with the next flush, as long as it holds at most `max_series` points and
+  `max_series_bytes`; a permanent refusal is dropped with an error. A consumer that mutates
+  data gets a copy, so the retry sends the batch as built. The spans were already acknowledged, so nothing upstream
   can resend them. Shutdown ends a periodic flush in progress and reports a failed last flush.
 
 ## 7. Still to observe

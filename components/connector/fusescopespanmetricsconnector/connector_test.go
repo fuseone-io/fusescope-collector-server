@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/connector/connectortest"
+	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -396,5 +397,61 @@ func TestShutdownReportsFinalFailure(t *testing.T) {
 	}
 	if err := c.Shutdown(context.Background()); err == nil {
 		t.Error("Shutdown hid the failed final flush")
+	}
+}
+
+// Refusals that repeat do not grow the pending batch past max_series_bytes.
+func TestPendingIsBoundedInBytes(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxSeriesBytes = 256 << 10
+	sink := &flakySink{}
+	for range 10 {
+		sink.refuse = append(sink.refuse, errors.New("queue is full"))
+	}
+	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), sink)
+	for range 10 {
+		td := traceWith(5, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
+		td.ResourceSpans().At(0).Resource().Attributes().PutStr("host.name", strings.Repeat("h", 8<<10))
+		if err := c.ConsumeTraces(context.Background(), td); err != nil {
+			t.Fatal(err)
+		}
+		_ = c.flush(context.Background())
+		if c.pendingBytes > cfg.MaxSeriesBytes {
+			t.Fatalf("pending holds %d bytes, want at most %d", c.pendingBytes, cfg.MaxSeriesBytes)
+		}
+	}
+}
+
+// renamingSink mutates what it receives, then refuses it once.
+type renamingSink struct {
+	flakySink
+}
+
+func (r *renamingSink) Capabilities() consumer.Capabilities {
+	return consumer.Capabilities{MutatesData: true}
+}
+
+func (r *renamingSink) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
+	for _, rm := range md.ResourceMetrics().All() {
+		for _, sm := range rm.ScopeMetrics().All() {
+			for _, m := range sm.Metrics().All() {
+				m.SetName("x." + m.Name())
+			}
+		}
+	}
+	return r.flakySink.ConsumeMetrics(ctx, md)
+}
+
+// A retry after a mutating consumer refused the batch sends the batch as it was.
+func TestRetryResendsUnmutatedMetrics(t *testing.T) {
+	sink := &renamingSink{flakySink{refuse: []error{errors.New("queue is full")}}}
+	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.flush(context.Background())
+	_ = c.flush(context.Background())
+	if n := len(points(sink.AllMetrics()[0], "x.signoz_calls_total")); n != 1 {
+		t.Errorf("%d points named x.signoz_calls_total, want 1 (renamed once)", n)
 	}
 }
