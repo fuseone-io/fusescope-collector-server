@@ -272,3 +272,65 @@ func TestConfirmRetriedUntilPersisted(t *testing.T) {
 		t.Error("APPLIED without the applied push on disk")
 	}
 }
+
+// A startup confirmation that cannot be recorded is retried too.
+func TestStartupConfirmRetried(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	first, err := New(zap.NewNop(), dir, map[component.Type]processor.Factory{logsType: okFactory()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Start(mustParse(t, base)); err != nil {
+		t.Fatal(err)
+	}
+	first.SetReloader(func() {}, &recorder{})
+	first.Confirm(revisionOf(first))
+	_ = first.Push(context.Background(), []byte("h1"), []byte(push))
+	first.Confirm(revisionOf(first))
+
+	a, err := New(zap.NewNop(), dir, map[component.Type]processor.Factory{logsType: okFactory()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Start(mustParse(t, base)); err != nil { // starts from the cache
+		t.Fatal(err)
+	}
+	r := &recorder{}
+	a.SetReloader(func() {}, r)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	a.Confirm(revisionOf(a))
+	_ = os.Chmod(dir, 0o700)
+	waitFor(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	if _, err := os.Stat(filepath.Join(dir, "starting.json")); err == nil {
+		t.Error("the startup marker survived its confirmation, so the next start would drop a valid cache")
+	}
+}
+
+// However queued work interleaves, the latest push is what runs in the end.
+func TestLatestPushWins(t *testing.T) {
+	a, _, _ := started(t, base)
+	a.Confirm(revisionOf(a))
+	body := func(n int) []byte { return []byte(strings.Replace(push, "pipeline_a", fmt.Sprint("pipeline_", n), 2)) }
+	_ = a.Push(context.Background(), []byte("h1"), body(1)) // pending
+	_ = a.Push(context.Background(), []byte("h2"), body(2)) // queued
+	a.Confirm(revisionOf(a))                                // h1 applied; h2 processed asynchronously
+	_ = a.Push(context.Background(), []byte("h3"), body(3)) // newest
+	settle := time.Now().Add(5 * time.Second)
+	for time.Now().Before(settle) {
+		a.Confirm(revisionOf(a))
+		time.Sleep(20 * time.Millisecond)
+		a.mu.Lock()
+		idle := a.pending == nil && a.queued == nil
+		a.mu.Unlock()
+		if idle && strings.Contains(fmtConfig(a.Effective()), "pipeline_3") {
+			return
+		}
+	}
+	t.Errorf("an older push replaced the newest; effective:\n%s", fmtConfig(a.Effective()))
+}

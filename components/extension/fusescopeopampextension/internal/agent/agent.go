@@ -77,13 +77,18 @@ type Agent struct {
 	// matching what runs has its APPLIED deferred to deferred.
 	ready    bool
 	deferred []byte
-	// queued is the latest push received while another was pending.
+	// queued is the latest push received while another was pending; seq
+	// numbers pushes in arrival order, so an older one never replaces a newer.
 	queued *queuedPush
+	seq    uint64
 	// retrying is set while a confirmation that could not be recorded is retried.
 	retrying bool
 }
 
-type queuedPush struct{ hash, body []byte }
+type queuedPush struct {
+	hash, body []byte
+	seq        uint64
+}
 
 // New opens the agent's state.
 func New(logger *zap.Logger, dir string, factories map[component.Type]processor.Factory) (*Agent, error) {
@@ -188,15 +193,29 @@ func (a *Agent) Effective() merge.Config {
 // Push handles one pushed configuration and returns the status to report
 // now: a failure, an immediate APPLIED, or nil while it is pending or queued.
 func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
+	a.mu.Lock()
+	a.seq++
+	seq := a.seq
+	a.mu.Unlock()
+	return a.push(ctx, seq, hash, body)
+}
+
+// push handles the push that arrived as seq-th; one superseded by a later
+// arrival is dropped wherever it is caught.
+func (a *Agent) push(ctx context.Context, seq uint64, hash, body []byte) *Status {
 	fail := func(msg string) *Status { return &Status{Hash: hash, Message: msg} }
 	if len(body) > MaxPushBytes {
 		return fail(fmt.Sprintf("the pushed configuration exceeds %d bytes", MaxPushBytes))
 	}
 	a.mu.Lock()
+	if seq < a.seq {
+		a.mu.Unlock()
+		return nil // superseded
+	}
 	base, busy := a.base, a.pending != nil
 	if busy {
 		// One pending revision at a time: the latest push waits for its confirmation.
-		a.queued = &queuedPush{hash: hash, body: body}
+		a.queue(seq, hash, body)
 	}
 	a.mu.Unlock()
 	if busy {
@@ -234,9 +253,14 @@ func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
 
 	a.lifecycle.Lock()
 	a.mu.Lock()
+	if seq < a.seq {
+		a.mu.Unlock()
+		a.lifecycle.Unlock()
+		return nil // superseded during preflight
+	}
 	if a.pending != nil || !equalConfig(base, a.base) {
 		// Another push or a new base got in during preflight: try again after it.
-		a.queued = &queuedPush{hash: hash, body: body}
+		a.queue(seq, hash, body)
 		a.mu.Unlock()
 		a.lifecycle.Unlock()
 		return nil
@@ -256,6 +280,14 @@ func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
 		reload()
 	}
 	return nil
+}
+
+// queue keeps seq's push for after the pending one, unless a later one is
+// queued already; a.mu must be held.
+func (a *Agent) queue(seq uint64, hash, body []byte) {
+	if a.queued == nil || a.queued.seq < seq {
+		a.queued = &queuedPush{hash: hash, body: body, seq: seq}
+	}
 }
 
 // Confirm is called by the extension when revision runs. A pending push of
@@ -284,7 +316,9 @@ func (a *Agent) retryConfirm(revision string) {
 		for {
 			time.Sleep(delay)
 			a.mu.Lock()
-			stale := a.pending == nil || a.pending.Revision != revision
+			pending := a.pending != nil && a.pending.Revision == revision
+			startup := revision == a.revision && !a.ready
+			stale := !pending && !startup
 			a.mu.Unlock()
 			if stale {
 				return
@@ -339,7 +373,7 @@ func (a *Agent) confirm(revision string) error {
 	}
 	if next != nil {
 		go func() {
-			if st := a.Push(context.Background(), next.hash, next.body); st != nil && reporter != nil {
+			if st := a.push(context.Background(), next.seq, next.hash, next.body); st != nil && reporter != nil {
 				reporter.Report(*st)
 			}
 		}()

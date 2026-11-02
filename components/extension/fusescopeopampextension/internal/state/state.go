@@ -161,8 +161,16 @@ func (s *Store) Confirm(revision string) (*Push, error) {
 		}
 	}
 	pending, err := s.read(pendingFile)
-	if err != nil || pending == nil || pending.Revision != revision {
+	if err != nil {
 		return nil, err
+	}
+	if pending == nil || pending.Revision != revision {
+		// A retry after the promotion was written: report it again.
+		applied, err := s.read(appliedFile)
+		if err != nil || applied == nil || applied.Revision != revision || pending != nil {
+			return nil, err
+		}
+		return applied, nil
 	}
 	if err := s.writeJSON(appliedFile, pending); err != nil {
 		return nil, err
@@ -172,6 +180,9 @@ func (s *Store) Confirm(revision string) (*Push, error) {
 	}
 	if err := s.remove(pendingFile); err != nil {
 		return nil, err
+	}
+	if s.crash != nil && s.crash("pending removed") {
+		return nil, errCrash
 	}
 	return pending, nil
 }

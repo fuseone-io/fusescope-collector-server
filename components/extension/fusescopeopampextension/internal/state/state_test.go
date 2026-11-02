@@ -159,3 +159,23 @@ func revision(p *Push) string {
 	}
 	return p.Revision
 }
+
+// A retry after the promotion was written, but reported as failed (the
+// directory sync after removing the marker, say), returns the applied push.
+func TestConfirmRetryAfterPromotion(t *testing.T) {
+	for _, step := range []string{"promoted", "pending removed"} {
+		t.Run(step, func(t *testing.T) {
+			dir := t.TempDir()
+			s := open(t, dir, step)
+			_ = s.Begin(push("r1"))
+			if _, err := s.Confirm("r1"); !errors.Is(err, errCrash) {
+				t.Fatalf("Confirm = %v, want the simulated failure", err)
+			}
+			s.crash = nil
+			p, err := s.Confirm("r1")
+			if err != nil || revision(p) != "r1" {
+				t.Errorf("retry = %v, %v; want the applied r1", revision(p), err)
+			}
+		})
+	}
+}
