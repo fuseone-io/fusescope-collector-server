@@ -34,7 +34,7 @@ type Config = map[string]any
 type Rejection struct{ Paths []string }
 
 func (r *Rejection) Error() string {
-	return "the pushed configuration changes what the allow-list keeps local: " + strings.Join(r.Paths, ", ")
+	return "the pushed configuration changes what the allow-list keeps local, or holds a ${...} reference: " + strings.Join(r.Paths, ", ")
 }
 
 // Merge returns base with the allow-listed parts of push, or a *Rejection.
@@ -103,6 +103,7 @@ func (d *differ) processors(base, push Config) Config {
 		switch {
 		case strings.HasPrefix(name, LogsPipelinePrefix):
 			if inPush {
+				d.references("processors."+name, pv)
 				out[name] = pv
 			}
 		case slices.Contains(blockOnly, name):
@@ -110,6 +111,7 @@ func (d *differ) processors(base, push Config) Config {
 			case !inBase:
 				d.add("processors." + name) // the base must declare and wire it
 			case inPush:
+				d.references("processors."+name, pv)
 				out[name] = pv
 			default:
 				out[name] = bv
@@ -122,6 +124,46 @@ func (d *differ) processors(base, push Config) Config {
 		}
 	}
 	return out
+}
+
+// references records the paths of pushed strings the collector's resolver
+// would expand: a ${...} not escaped as $${...} could read a local file or
+// variable, such as an outbound credential, into telemetry (ADR 0004).
+func (d *differ) references(path string, v any) {
+	switch v := v.(type) {
+	case string:
+		if hasReference(v) {
+			d.add(path)
+		}
+	case Config:
+		for k, e := range v {
+			d.references(path+"."+k, e)
+		}
+	case []any:
+		for i, e := range v {
+			d.references(fmt.Sprintf("%s[%d]", path, i), e)
+		}
+	}
+}
+
+// hasReference reports a "${" preceded by an even number of "$", which
+// confmap expands; an odd number escapes it.
+func hasReference(s string) bool {
+	for i := strings.Index(s, "${"); i >= 0; {
+		dollars := 0
+		for j := i - 1; j >= 0 && s[j] == '$'; j-- {
+			dollars++
+		}
+		if dollars%2 == 0 {
+			return true
+		}
+		next := strings.Index(s[i+2:], "${")
+		if next < 0 {
+			return false
+		}
+		i += 2 + next
+	}
+	return false
 }
 
 func (d *differ) service(base, push Config) Config {
