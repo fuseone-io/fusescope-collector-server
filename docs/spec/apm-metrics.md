@@ -4,7 +4,7 @@ What the collector must derive from spans so that the FuseScope Services page, t
 pages and APM alerts work on span metrics (phase 4). Clean-room (ADR 0002). Sources:
 
 - **[obs]**: [`observed/0.145.0/`](observed/0.145.0/). Span names are in the `traces` part of
-  `test/observe/corpus.py`, the span-metric probes in `apm_spans`. The reference ran
+  `test/observe/corpus.py`, the span-metric probes in `apm_spans` and `address_spans`. The reference ran
   `signozspanmetrics/delta` with the configuration in `test/observe/reference-collector.yaml`.
 - **[be]**: the FuseScope backend (`fuseone-io/fusescope`, read at `fe371d4`); paths below
   are relative to it.
@@ -126,23 +126,77 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
 - **Database.** Any span kind, when the span has `db.system`. The newer `db.system.name` and
   `db.namespace` are not read [obs `db-internal-kind`, `db-old-system-new-namespace` (no
   `db.name`), `db-new-system-old-name` and `SELECT cart` (no series)].
-- **External call.** Span kind client, with an address [obs `external-internal-kind` and
-  `external-server-kind` (no series), `SELECT stock` (client, no address keys: no series)].
-  The address is the first present of:
-  1. `http.host` [obs `precedence`, `precedence-reversed`];
-  2. `net.peer.name`, then `server.address` [obs `address-server-vs-peer`,
-     `address-peer-vs-server`: `peer.example.com` in either order; `UPDATE stock`,
-     `external-host`];
-  3. the host and port of `http.url`, else of `url.full` [obs `address-urls`:
-     `http-url.example.com`; `external-url-only`: `only-url.example.com:8443`].
+- **External call.** Span kind client, when one of the keys below is present: the first rule
+  that applies gives the address, even an empty one, and with none present there is no series
+  [obs `external-internal-kind`, `external-server-kind`, `kind-producer peer.service`,
+  `kind-consumer peer.service`, `kind-server peer.service`, `kind-internal peer.service`,
+  `kind-unspecified peer.service`, `kind-producer server.address`, `rpc-m server kind` (no
+  series); `addr-none`, `SELECT stock`, `addr-only net.sock.peer.name`, `other net.host.name`,
+  `other server.socket.address`, `rpc-g system only`, `rpc-l service method only`,
+  `db-only-name`, `other messaging` (no keys: no series)]. The address probes from
+  `address_spans` in the corpus carry their span name as `container.name`, which tells their
+  series apart.
+  1. **RPC.** With `rpc.system` present, whatever its value, and `rpc.service` or `rpc.method`
+     present: `rpc.service`, then `/` and `rpc.method` when that is present. This comes before
+     every other key, and the span name plays no part [obs `rpc-a`: `a.Svc/Ma` over
+     `server.address` and an integer `server.port`; `b.Svc/Mb`; `x.Other/FromName`: `o.Svc/Mo`;
+     `rpc-d no method`, `rpc-t service only`: `d.Svc`, `t.Svc`; `rpc-e no service`,
+     `rpc-s method only`: `/Me`, `/Ms`; `rpc-u empty service method`: `/`; `rpc-h no address`;
+     `rpc-i http.host`, `rpc-j peer.service`, `rpc-q net.peer.name`, `rpc-r http.url`;
+     `rpc-k other system`, `rpc-n empty system`, `rpc-x int system`, `rpc-p service first`].
+     Without `rpc.system`, or with neither of the two, the rules below apply [obs
+     `rpc-c no system`: `c.example.com`; `rpc-f system address`: `f.example.com`].
+  2. **Host keys**, the first present of `http.host`, `net.peer.name`, `server.address`,
+     `net.peer.ip`, `net.sock.peer.addr`, `network.peer.address`, in that order whatever the
+     attribute order [obs `addr-only <key>` for each key; `addr-pair <a> <b>` for every
+     ordered pair, e.g. `addr-pair network.peer.address net.peer.ip`: `10.0.0.2`; `precedence`,
+     `address-server-vs-peer`, `address-peer-vs-server`, `UPDATE stock`, `external-host`]. A
+     present key wins with an empty value [obs `addr-empty network.peer.address`,
+     `addr-empty-then network.peer.address`, `addr-empty-then server.address`, `empty http.host`,
+     `empty net.peer.name`, `empty net.peer.ip`, `empty net.sock.peer.addr`: `""`;
+     `addr-empty-then peer.service`: `10.0.1.1`].
+     Each host key but `http.host` has a paired port: `net.peer.port` for `net.peer.name` and
+     `net.peer.ip`, `server.port`, `net.sock.peer.port`, `network.peer.port`. When the paired
+     port is present the address is the host, `:` and the port; the other keys' ports do not
+     count [obs `address-string-port`: `string-port.example.com:8080`, `port network.peer.port
+     str`: `10.0.2.2:7002`, `port net.sock.peer.port str`, `port net.peer.ip net.peer.port str`;
+     `address-peer-with-server-port`: `mixed.example.com`, `port net.peer.ip network.peer.port
+     str`, `port network.peer.address net.peer.port str`, `port net.sock.peer.addr net.peer.port
+     str`, `port net.peer.ip net.sock.peer.port str`, `port net.peer.ip server.port str`,
+     `port network.peer.address server.port str`, `port net.peer.name net.sock.peer.port str`,
+     `port server.address net.peer.port str`, `port server.address network.peer.port str`,
+     `port server.address net.peer.ip net.peer.port str`: `sa-over-ip.example.com`;
+     `port http.host server.port str`, `port http.host net.peer.port str`: no port].
+  3. **URLs**, `http.url`, else `url.full`, whatever the attribute order [obs `addr-pair
+     url.full http.url`: `hu.example.com`; `address-urls`]. The value, prefixed with `http://`
+     unless it starts with `http://` or `https://` (case-sensitive), is parsed as a URL
+     (RFC 3986, as Go's `net/url` does) and its host, with the port, is the address
+     [obs `external-url-only`: `only-url.example.com:8443`; `url userinfo`:
+     `ui.example.com:99`; `url no spaces`: `not-a-url`; `url relative no slash`: `relative`;
+     `url.full relative no slash`: `uf-relative`; `url http prefix`: `httpx.example.com`;
+     `url asterisk`: `*`; `url opaque`: `example.com`; `url upper case`, `url.full upper case`,
+     `url other scheme`, `url http single slash`: `HTTP:`, `HTTPS:`, `ftp:`, `http:`;
+     `url relative`, `url scheme-relative`, `url query only`, `empty http.url`, `empty url.full`:
+     `""`; `url space in path`: `space-path.example.com`]. A value that does not parse gives no
+     series, even when a later key is present [obs `url not a url`, `url.full not a url`,
+     `url parse error` (no series)].
+  4. **`peer.service`** [obs `addr-only peer.service`: `ps-service`, `SQL SELECT`: `mysql`,
+     `addr-pair net.sock.peer.name peer.service`, `addr-empty peer.service`: `""`]. It has no
+     port [obs `port peer.service server.port str`, `port peer.service net.peer.port str`,
+     `port peer.service network.peer.port str`].
 
-  A host from 2 is followed by `:` and its paired port, `net.peer.port` or `server.port`, when
-  that is present, read as a string: an integer port gives an empty one [obs
-  `external-server-port`: `port.example.com:`, `address-string-port`:
-  `string-port.example.com:8080`, `external-peer-port`, `SELECT cart`: `db.internal:`]. The
-  other key's port does not count [obs `address-peer-with-server-port`: `mixed.example.com`].
-  The backend drops addresses matching `^(0[.]0[.]0[.]0)?(:[0-9]*)?$|:$`, so `host:` never shows
-  [be `serviceRequests.ts:170`].
+  Every value is read as a string: a value of another type, host, port or RPC part, reads as
+  empty [obs `external-server-port`: `port.example.com:`, `port network.peer.port int`:
+  `10.0.2.1:`, `port net.peer.ip net.peer.port int`, `port net.sock.peer.addr
+  net.sock.peer.port int`, `external-peer-port`, `SELECT cart`: `db.internal:`;
+  `int net.peer.name`: `:3`; `int http.host`, `int peer.service`, `bool network.peer.address`,
+  `url int`: `""`; `rpc-v int service`: `/Mv`; `rpc-w int method`: `w.Svc/`]. An empty host
+  keeps its port [obs `empty host network.peer.port`: `:1`, `empty host net.peer.port`: `:2`].
+  A database span counts as an external call by the same rules, and these keys change nothing
+  on its database series [obs `db-peer-service`, `db-net-peer-name`, `db-network-peer-address`,
+  `db-internal peer.service`].
+  The backend drops addresses matching `^(0[.]0[.]0[.]0)?(:[0-9]*)?$|:$`, so `host:` and `""`
+  never show [be `serviceRequests.ts:170`].
 
 ## 5. Time
 
