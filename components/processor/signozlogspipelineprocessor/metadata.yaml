@@ -1,0 +1,15 @@
+display_name: FuseScope Logs Pipeline Processor
+type: signozlogspipeline
+github_project: fuseone-io/fusescope-collector-server
+
+status:
+  disable_codecov_badge: true
+  class: processor
+  stability:
+    alpha: [logs]
+  distributions: []
+
+tests:
+  config:
+    operators:
+      - {id: noop, type: noop}
