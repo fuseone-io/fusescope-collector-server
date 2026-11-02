@@ -12,8 +12,11 @@ on:
     branches:
       - "feat/**"
       - "fix/**"
+    # Only the ClickHouse harness itself; per-component harnesses under
+    # test/observe/<component>/ record their own observations.
     paths:
-      - test/observe/**
+      - test/observe/*
+      - test/observe/clickhouse/**
       - .github/workflows/observe.yaml
 
 permissions:
