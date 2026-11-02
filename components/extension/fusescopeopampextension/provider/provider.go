@@ -26,6 +26,7 @@ import (
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozllmpricingprocessor"
+	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozspanmapperprocessor"
 )
 
@@ -67,8 +68,9 @@ const minTLSVersion = "1.3"
 // managedFactories are the allow-listed processors this build can preflight;
 // each processor's PR adds itself.
 var managedFactories = map[component.Type]processor.Factory{
-	signozspanmapperprocessor.NewFactory().Type(): signozspanmapperprocessor.NewFactory(),
-	signozllmpricingprocessor.NewFactory().Type(): signozllmpricingprocessor.NewFactory(),
+	signozspanmapperprocessor.NewFactory().Type():   signozspanmapperprocessor.NewFactory(),
+	signozllmpricingprocessor.NewFactory().Type():   signozllmpricingprocessor.NewFactory(),
+	signozlogspipelineprocessor.NewFactory().Type(): signozlogspipelineprocessor.NewFactory(),
 }
 
 // NewFactory returns the fusescopeopamp provider factory.

@@ -1,0 +1,16 @@
+name: observe-logspipeline
+
+services:
+  reference-collector:
+    image: ghcr.io/fuseone-io/fusescope-otel-collector:${REFERENCE_VERSION:-0.145.0}
+    entrypoint: [/fusescope-otel-collector]
+    command: [--config=/etc/reference-collector.yaml]
+    environment:
+      # Read by the X_Expr_Helpers case through env().
+      OBSERVE_MARKER: observed-env-value
+    volumes:
+      - ${OBSERVE_CONFIG:?path to the generated config}:/etc/reference-collector.yaml:ro
+      - ${OBSERVE_OUT:?output directory}:/contract
+    ports:
+      - "127.0.0.1:34318:4318"
+      - "127.0.0.1:34133:13133"
