@@ -76,19 +76,24 @@ CHECKS = {
 }
 
 
-# The scope version is each collector's own build version.
-SCOPE_VERSION = "__scope.version__"
+# Scopes the collectors generate themselves carry each collector's build
+# version; scopes received over OTLP carry the producer's and are kept.
+SCOPE_NAME, SCOPE_VERSION = "__scope.name__", "__scope.version__"
+COLLECTOR_SCOPES = ("github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/",)
 
 
 def anonymize(row):
-    """Replaces the collector identity and build version in a series row, wherever they appear."""
-    name, labels, *maps = row
+    """Replaces the collector identity, and the build version of collector-generated scopes, in a series row."""
+    name, labels, attrs, scope_attrs, resource_attrs = row
     labels = json.loads(labels, strict=False)
     labels.update({k: "<collector>" for k in COLLECTOR_KEYS if k in labels})
-    if SCOPE_VERSION in labels:
-        labels[SCOPE_VERSION] = "<build>"
-    maps = [{k: "<collector>" if k in COLLECTOR_KEYS else "<build>" if k == SCOPE_VERSION else v for k, v in m.items()}
-            for m in maps]
+    attrs, scope_attrs, resource_attrs = (
+        {k: "<collector>" if k in COLLECTOR_KEYS else v for k, v in m.items()} for m in (attrs, scope_attrs, resource_attrs))
+    if labels.get(SCOPE_NAME, "").startswith(COLLECTOR_SCOPES):
+        for m in (labels, scope_attrs):
+            if SCOPE_VERSION in m:
+                m[SCOPE_VERSION] = "<build>"
+    maps = [attrs, scope_attrs, resource_attrs]
     return (name, json.dumps([labels] + maps, sort_keys=True))
 
 

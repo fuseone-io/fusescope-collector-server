@@ -17,7 +17,7 @@ hotrod, telemetrygen, RUM (via fusescope) ──► otel-tee ──► otel-coll
 | `collector.yaml` | this collector's configuration in shadow |
 | `clickhouse/cluster.xml` | single-node `cluster` with an embedded keeper, named `clickhouse-shadow` |
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
-| `compare.py` | the comparison; exits 1 on a difference |
+| `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
 
 ## Derived from the demo's data
 
