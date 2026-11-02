@@ -1,0 +1,13 @@
+display_name: FuseScope Span Mapper Processor
+type: signozspanmapper
+github_project: fuseone-io/fusescope-collector-server
+
+status:
+  disable_codecov_badge: true
+  class: processor
+  stability:
+    alpha: [traces]
+  distributions: []
+
+tests:
+  config: {}
