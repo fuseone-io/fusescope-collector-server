@@ -108,8 +108,17 @@ func encodeObservedCorpus(t *testing.T) []*tracesEncoder {
 	if err != nil {
 		t.Fatal(err)
 	}
+	all := []ptrace.Traces{td, probes}
+	// A third batch, sent after the span-metrics flush (test/observe).
+	if b, err := os.ReadFile(filepath.Join(observed, "corpus", "traces-late.json")); err == nil {
+		late, err := (&ptrace.JSONUnmarshaler{}).UnmarshalTraces(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, late)
+	}
 	var batches []*tracesEncoder
-	for _, batch := range []ptrace.Traces{td, probes} {
+	for _, batch := range all {
 		enc := newTracesEncoder()
 		enc.now = func() time.Time { return time.Unix(0, 0) }
 		_ = enc.encode(batch, nil)

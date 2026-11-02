@@ -268,7 +268,25 @@ def apm_spans(t0):
         sub("external-peer-port", 3, 9, 10, {"net.peer.name": "peer.example.com", "net.peer.port": 9090}),
         # Durations past the last bound.
         sub("long", 1, 11, 61_012, {}),
+        # Address precedence between keys that differ, and ports given as strings.
+        sub("address-server-vs-peer", 3, 12, 13, {"server.address": "server.example.com", "net.peer.name": "peer.example.com"}),
+        sub("address-peer-vs-server", 3, 12, 13, {"net.peer.name": "peer.example.com", "server.address": "server.example.com"}),
+        sub("address-urls", 3, 12, 13, {"http.url": "http://http-url.example.com/a", "url.full": "https://url-full.example.com/b"}),
+        sub("address-string-port", 3, 12, 13, {"server.address": "string-port.example.com", "server.port": "8080"}),
+        sub("address-peer-with-server-port", 3, 12, 13, {"net.peer.name": "mixed.example.com", "server.port": 8443}),
     ]
+
+
+def apm_late_spans(t0):
+    """Spans of the `agg` series in t0's minute, sent after the reference has flushed."""
+    ids = (f"{i:016x}" for i in range(0xe00, 0xe10))
+    return [span(TRACE_D, next(ids), None, "agg", 1, 1, 3, {}, t0) for _ in range(2)]
+
+
+def traces_late(t0):
+    return {"resourceSpans": [
+        {"resource": {"attributes": attrs(APM_RESOURCE)}, "scopeSpans": [{"scope": SCOPE, "spans": apm_late_spans(t0)}]},
+    ]}
 
 
 def traces(t0):
@@ -339,6 +357,9 @@ def traces(t0):
         for i, r in enumerate(PROBE_RESOURCES) if i != 2
     ] + [
         {"resource": {"attributes": attrs(APM_RESOURCE)}, "scopeSpans": [{"scope": SCOPE, "spans": apm_spans(t0)}]},
+        # An empty rather than absent service.name.
+        {"resource": {"attributes": attrs({"service.name": ""})}, "scopeSpans": [{"scope": SCOPE, "spans": [
+            span(TRACE_D, "0000000000000f01", None, "empty-service", 1, 14, 15, {}, t0)]}]},
     ]}
 
 
@@ -537,7 +558,7 @@ def invalid_utf8(t0):
 def main():
     t0, out = int(sys.argv[1]), sys.argv[2]
     os.makedirs(out, exist_ok=True)
-    for name, build in (("traces", traces), ("logs", logs), ("metrics", metrics)):
+    for name, build in (("traces", traces), ("logs", logs), ("metrics", metrics), ("traces-late", traces_late)):
         with open(os.path.join(out, f"{name}.json"), "w") as f:
             json.dump(build(t0), f, indent=2, sort_keys=True)
             f.write("\n")

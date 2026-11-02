@@ -38,6 +38,12 @@ for signal in traces logs; do
   utf8_status+=" $signal=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/x-protobuf' \
     --data-binary @"$out/corpus/$signal-invalid-utf8.pb" "localhost:4318/v1/$signal")"
 done
+# Spans of an already flushed series and minute, after the reference's 10s span-metrics flush.
+sleep 12
+code=$(curl -s -o "$out/late.response" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  --data-binary @"$out/corpus/traces-late.json" "localhost:4318/v1/traces")
+if [ "$code" != 200 ]; then echo "POST /v1/traces (late): $code $(cat "$out/late.response")" >&2; exit 1; fi
+rm "$out/late.response"
 sleep 30
 
 {
