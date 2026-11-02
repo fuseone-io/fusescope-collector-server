@@ -539,3 +539,29 @@ func TestUnsignedTimestamps(t *testing.T) {
 		}
 	}
 }
+
+// An oversized dimension is rejected without growing the key buffer, and the
+// scratch keeps no reference to it afterwards.
+func TestOversizedDimensionLeavesNoScratch(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxSeriesBytes = 1 << 20
+	c, _, _ := newTestConnector(t, cfg)
+	td := traceWith(1, "svc", nil)
+	td.ResourceSpans().At(0).Resource().Attributes().PutStr("host.name", strings.Repeat("h", 2<<20))
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.flush(context.Background())
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cap(c.key) > 64<<10 {
+		t.Errorf("key buffer keeps %d bytes", cap(c.key))
+	}
+	for _, scratch := range [][]kv{c.attrs[:cap(c.attrs)], c.extra[:cap(c.extra)]} {
+		for _, a := range scratch {
+			if a.value != "" || a.typed {
+				t.Fatalf("scratch still references %q", a.key)
+			}
+		}
+	}
+}

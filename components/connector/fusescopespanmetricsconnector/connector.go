@@ -30,6 +30,8 @@ const (
 	nanosPerMinute = uint64(time.Minute)
 	// seriesOverhead covers a series' fixed fields and map entries.
 	seriesOverhead = 256
+	// maxScratchKey is the largest key buffer kept between calls.
+	maxScratchKey = 64 << 10
 )
 
 // kv is one attribute of a point: value is its string form, which identifies
@@ -185,6 +187,7 @@ func (c *spanMetricsConnector) Shutdown(ctx context.Context) error {
 func (c *spanMetricsConnector) ConsumeTraces(_ context.Context, td ptrace.Traces) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.releaseScratch()
 	for _, rs := range td.ResourceSpans().All() {
 		res := rs.Resource().Attributes()
 		service, ok := res.Get("service.name")
@@ -267,6 +270,16 @@ func (c *spanMetricsConnector) addSpan(service string, res pcommon.Map, span ptr
 	}
 }
 
+// releaseScratch drops the scratch's references to the spans just consumed,
+// and a key buffer grown past maxScratchKey.
+func (c *spanMetricsConnector) releaseScratch() {
+	clear(c.attrs[:cap(c.attrs)])
+	clear(c.extra[:cap(c.extra)])
+	if cap(c.key) > maxScratchKey {
+		c.key = nil
+	}
+}
+
 // dimensions resolves the configured dimensions of a span (apm-metrics §3.3).
 // The collector's identity counts as a resource attribute.
 func (c *spanMetricsConnector) dimensions(res, span pcommon.Map) []kv {
@@ -301,15 +314,22 @@ func (c *spanMetricsConnector) dimensions(res, span pcommon.Map) []kv {
 func (c *spanMetricsConnector) add(f *family, attrs []kv, minute uint64) *series {
 	// Attributes come in a fixed order (configured dimensions, then the
 	// connector's own keys), so the key identifies a series without sorting.
+	size := 0
+	for _, a := range attrs {
+		size += len(a.key) + len(a.value)
+	}
+	// A series over the whole budget is refused before its key is built.
+	if 2*size > c.cfg.MaxSeriesBytes {
+		c.dropped++
+		return nil
+	}
 	// Lengths prefix keys and values, so no value can mimic a boundary.
 	b := binary.AppendUvarint(c.key[:0], minute)
-	size := 0
 	for _, a := range attrs {
 		b = binary.AppendUvarint(b, uint64(len(a.key)))
 		b = append(b, a.key...)
 		b = binary.AppendUvarint(b, uint64(len(a.value)))
 		b = append(b, a.value...)
-		size += len(a.key) + len(a.value)
 	}
 	c.key = b
 	if s, ok := f.series[string(b)]; ok {
