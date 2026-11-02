@@ -4,7 +4,9 @@
 package signozlogspipelineprocessor
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +64,14 @@ func TestConfigValidate(t *testing.T) {
 		{name: "missing type", operators: []map[string]any{{"id": "x"}}, wantErr: "missing required field 'type'"},
 		{name: "unsupported type", operators: []map[string]any{{"type": "key_value_parser"}}, wantErr: `unsupported type "key_value_parser"`},
 		{name: "retain is unsupported", operators: []map[string]any{{"type": "retain", "fields": []any{"attributes.a"}}}, wantErr: "unsupported type"},
-		{name: "grok is not in this build", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w}"}}, wantErr: "not supported by this build"},
+		{name: "grok", operators: []map[string]any{{"type": "grok_parser", "parse_from": "body", "parse_to": "attributes", "pattern": "%{WORD:w} %{NUMBER:n:int}"}}},
+		{name: "grok inline group", operators: []map[string]any{{"type": "grok_parser", "pattern": "(?<verb>[A-Z]+) %{GREEDYDATA:rest}"}}},
+		{name: "grok without pattern", operators: []map[string]any{{"type": "grok_parser", "parse_from": "body"}}, wantErr: "missing required field 'pattern'"},
+		{name: "grok unknown pattern name", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{NOSUCHPATTERN:x}"}}, wantErr: "no pattern found for %{NOSUCHPATTERN}"},
+		{name: "grok invalid regex", operators: []map[string]any{{"type": "grok_parser", "pattern": "(?<x>[a-"}}, wantErr: "pattern"},
+		{name: "grok invalid type", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w:bool}"}}, wantErr: "invalid pattern"},
+		{name: "grok unknown field", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w}", "regex": "x"}}, wantErr: "regex"},
+		{name: "grok bad parse_from", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w}", "parse_from": "nowhere.a"}}, wantErr: "unrecognized prefix"},
 		{name: "unknown operator field", operators: []map[string]any{add(map[string]any{"foo": "bar"})}, wantErr: "foo"},
 		{name: "unknown nested field", operators: []map[string]any{{"type": "trace_parser", "trace_id": map[string]any{"parse_from": "attributes.t", "x": 1}}}, wantErr: "x"},
 		{name: "duplicate id", operators: []map[string]any{add(nil), add(nil)}, wantErr: "used twice"},
@@ -100,6 +109,96 @@ func TestConfigValidate(t *testing.T) {
 				return
 			}
 			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// A pushed grok pattern is bounded before it is expanded: repeating a large
+// macro would otherwise expand into hundreds of megabytes in quadratic time
+// during validation (regression from review of #31).
+func TestGrokPatternLimits(t *testing.T) {
+	grok := func(pattern string) []map[string]any {
+		return []map[string]any{{"type": "grok_parser", "parse_from": "body", "pattern": pattern}}
+	}
+	tests := []struct {
+		name    string
+		pattern string
+		wantErr string
+	}{
+		{"repeated macro", strings.Repeat("%{IPV6}", 500_000), "longer than"},
+		{"too many references", strings.Repeat("%{IPV6}", maxGrokPatternRefs+1), "references"},
+		{"too long", strings.Repeat("a", maxGrokPatternBytes+1), "longer than"},
+		{"at the reference limit", strings.Repeat("%{COMBINEDAPACHELOG} ", maxGrokPatternRefs), ""},
+		{"at the length limit", strings.Repeat("a", maxGrokPatternBytes), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			err := (&Config{Operators: grok(tt.pattern)}).Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tt.wantErr)
+			}
+			assert.Less(t, time.Since(start), 5*time.Second, "validation is bounded")
+		})
+	}
+}
+
+// env() would read the collector's environment into exported logs, so a
+// configuration naming it is refused in every expression position (spec
+// §4.1), and the error names the operator, never the expression.
+func TestEnvIsRefused(t *testing.T) {
+	const secret = "FUSESCOPE_TEST_SECRET_NAME"
+	route := func(expr string) []map[string]any {
+		return []map[string]any{
+			{"id": "router_signoz", "type": "router", "default": "noop", "routes": []any{map[string]any{"expr": expr, "output": "noop"}}},
+			{"id": "noop", "type": "noop"},
+		}
+	}
+	add := func(key, value string) []map[string]any {
+		op := map[string]any{"id": "op1", "type": "add", "field": "attributes.a", "value": "1"}
+		op[key] = value
+		return []map[string]any{op}
+	}
+	tests := []struct {
+		name      string
+		operators []map[string]any
+		wantID    string
+	}{
+		{"if", add("if", `env("`+secret+`") != nil`), `"op1"`},
+		{"route expr", route(`env("` + secret + `") == "x"`), `"router_signoz"`},
+		{"second route expr", []map[string]any{
+			{"id": "r", "type": "router", "routes": []any{
+				map[string]any{"expr": "true", "output": "noop"},
+				map[string]any{"expr": `env("` + secret + `") == "x"`, "output": "noop"},
+			}},
+			{"id": "noop", "type": "noop"},
+		}, `"r"`},
+		{"EXPR value", add("value", `EXPR(env("`+secret+`"))`), `"op1"`},
+		{"EXPR value inside a call", add("value", `EXPR(lower(env("`+secret+`")))`), `"op1"`},
+		{"aliased with let", add("value", `EXPR(let f = env; f("`+secret+`"))`), `"op1"`},
+		{"bare identifier", add("value", `EXPR(env)`), `"op1"`},
+		{"the internal alias", add("if", `os_env_func("`+secret+`") != nil`), `"op1"`},
+		{"grok if", []map[string]any{{"id": "g", "type": "grok_parser", "pattern": "%{WORD:w}", "if": `env("` + secret + `") == ""`}}, `"g"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&Config{Operators: tt.operators}).Validate()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "env()")
+			assert.ErrorContains(t, err, tt.wantID)
+			assert.NotContains(t, err.Error(), secret, "the error must not echo the expression")
+		})
+	}
+}
+
+// Fields and attributes named env are not the function.
+func TestEnvAsAFieldName(t *testing.T) {
+	for _, expr := range []string{`attributes.env == "prod"`, `attributes["env"] == "prod"`, `resource?.env != nil`, `body.env == "x"`, `"env" in attributes`} {
+		t.Run(expr, func(t *testing.T) {
+			err := (&Config{Operators: []map[string]any{{"type": "add", "field": "attributes.a", "value": "1", "if": expr}}}).Validate()
+			assert.NoError(t, err)
 		})
 	}
 }

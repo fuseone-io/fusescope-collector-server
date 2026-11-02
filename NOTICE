@@ -10,3 +10,11 @@ as unmodified Go module dependencies.
 It also includes, as an unmodified Go module dependency of ch-go,
 github.com/segmentio/asm (https://github.com/segmentio/asm), licensed under the
 MIT No Attribution License (MIT-0).
+
+components/processor/signozlogspipelineprocessor/internal/grok
+  Grok parsing library and its pattern files, imported from
+  github.com/vjeantet/grok v1.0.1 (https://github.com/vjeantet/grok).
+  Copyright The vjeantet/grok Authors.
+  Licensed under the Apache License, Version 2.0
+  (components/processor/signozlogspipelineprocessor/internal/grok/LICENSE).
+  Changes made by FuseOne are listed in that directory's README.md.

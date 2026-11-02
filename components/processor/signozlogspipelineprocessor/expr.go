@@ -5,8 +5,8 @@ package signozlogspipelineprocessor // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"sync"
 
@@ -24,9 +24,12 @@ const parsedBodyKey = "__signozlogspipelineprocessor_internal__parsedBodyJson"
 const (
 	bodyVar      = "body"
 	bodyFieldVar = "body_map"
-	envFunc      = "env"
-	envFuncVar   = "os_env_func"
 )
+
+// errEnv refuses env(), which would read the collector's environment into
+// the logs of a pipeline the backend pushes (spec §4.1). os_env_func is the
+// name the reference gives it inside its expression environment.
+var errEnv = errors.New("env() is not allowed: a pipeline may not read the collector's environment")
 
 // program is a compiled pipeline expression (spec §4).
 type program struct {
@@ -42,12 +45,16 @@ func compileBool(input string) (*program, error) {
 
 func compile(input string, options ...expr.Option) (*program, error) {
 	patch := &bodyFieldPatcher{}
+	guard := &envGuard{}
 	options = append([]expr.Option{
 		expr.AllowUndefinedVariables(),
-		expr.Patch(envFuncPatcher{}),
+		expr.Patch(guard),
 		expr.Patch(patch),
 	}, options...)
 	p, err := expr.Compile(input, options...)
+	if guard.found {
+		return nil, errEnv
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +74,6 @@ func (p *program) run(e *entry.Entry) (result any, err error) {
 			err = fmt.Errorf("expression panicked: %v", r)
 		}
 	}()
-	env[envFuncVar] = os.Getenv
 	env["isJSON"] = isJSON
 	env["unquote"] = unquote
 	env["$"] = e.Body
@@ -95,16 +101,16 @@ func (p *program) matches(e *entry.Entry) (bool, error) {
 	return b, nil
 }
 
-// envFuncPatcher points env(...) at the variable holding os.Getenv.
-type envFuncPatcher struct{}
+// envGuard records whether an expression names env or os_env_func, called
+// or not, so that neither a call nor an alias (let f = env) gets through.
+// Neither is in the expression environment either.
+type envGuard struct {
+	found bool
+}
 
-func (envFuncPatcher) Visit(node *ast.Node) {
-	call, ok := (*node).(*ast.CallNode)
-	if !ok {
-		return
-	}
-	if callee, ok := call.Callee.(*ast.IdentifierNode); ok && callee.Value == envFunc {
-		callee.Value = envFuncVar
+func (g *envGuard) Visit(node *ast.Node) {
+	if id, ok := (*node).(*ast.IdentifierNode); ok && (id.Value == "env" || id.Value == "os_env_func") {
+		g.found = true
 	}
 }
 

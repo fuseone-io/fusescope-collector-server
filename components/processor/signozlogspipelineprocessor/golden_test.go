@@ -59,12 +59,23 @@ var unsupported = map[string]string{
 }
 
 // stricter are configurations the reference starts with and this processor
-// refuses (spec §1.2).
-var stricter = map[string]bool{
-	"R_UnknownOperatorField": true,
-	"R_UnknownTraceField":    true,
-	"R_AddNoValue":           true,
-	"R_GrokBadPattern":       true,
+// refuses, with the reason (spec §1.2).
+var stricter = map[string]string{
+	"R_UnknownOperatorField":          "a field the operator does not have",
+	"R_UnknownTraceField":             "a field the operator does not have",
+	"R_AddNoValue":                    "add without value",
+	"R_GrokBadPattern":                "a grok pattern naming an unknown pattern",
+	"Grok_InvalidPattern_ConfigError": "a grok pattern naming an unknown pattern",
+	"X_Expr_Helpers":                  "env() is refused (spec §4.1)",
+}
+
+// withoutEnv rewrites the cases using env() so their outputs are still
+// compared: env("OBSERVE_MARKER") becomes the value the observation's compose
+// file gave the reference.
+var withoutEnv = map[string]func(string) string{
+	"X_Expr_Helpers": func(processors string) string {
+		return strings.ReplaceAll(processors, `EXPR(env(\"OBSERVE_MARKER\"))`, "observed-env-value")
+	},
 }
 
 func readObserved(t *testing.T, name string, v any) {
@@ -112,18 +123,6 @@ func loadConfig(raw map[string]any) (*Config, error) {
 	return cfg, cfg.Validate()
 }
 
-func usesGrok(c observedCase) bool {
-	for _, p := range c.Processors {
-		ops, _ := p["operators"].([]any)
-		for _, op := range ops {
-			if m, _ := op.(map[string]any); m["type"] == grokType {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // chain builds the case's processors in order, ending in sink.
 func chain(t *testing.T, c observedCase, sink consumer.Logs) consumer.Logs {
 	t.Helper()
@@ -142,8 +141,6 @@ func chain(t *testing.T, c observedCase, sink consumer.Logs) consumer.Logs {
 // grouped by resource and scope (spec §5.2: group order is not part of the
 // contract).
 func TestObservedOutputs(t *testing.T) {
-	// The value the observation's compose file gives the reference.
-	t.Setenv("OBSERVE_MARKER", "observed-env-value")
 	var cases observedCases
 	readObserved(t, "cases.json", &cases)
 	var outputs map[string][]json.RawMessage
@@ -154,8 +151,17 @@ func TestObservedOutputs(t *testing.T) {
 			if reason, ok := unsupported[c.Name]; ok {
 				t.Skip(reason)
 			}
-			if usesGrok(c) {
-				t.Skip("grok_parser is not supported by this build yet (spec §3.2)")
+			if rewrite, ok := withoutEnv[c.Name]; ok {
+				raw, err := json.Marshal(c.Processors)
+				require.NoError(t, err)
+				rewritten := rewrite(string(raw))
+				require.NotEqual(t, string(raw), rewritten, "the rewrite no longer applies")
+				d := json.NewDecoder(strings.NewReader(rewritten))
+				d.UseNumber()
+				c.Processors = nil
+				require.NoError(t, d.Decode(&c.Processors))
+			} else if reason, ok := stricter[c.Name]; ok {
+				t.Skip("this processor refuses the configuration: " + reason)
 			}
 			want, ok := outputs[c.Name]
 			if !ok {
@@ -236,7 +242,7 @@ func TestObservedStartup(t *testing.T) {
 				}
 			}
 			switch {
-			case stricter[r.Name], usesGrok(c):
+			case stricter[r.Name] != "":
 				assert.Error(t, err)
 			case r.Starts:
 				assert.NoError(t, err)

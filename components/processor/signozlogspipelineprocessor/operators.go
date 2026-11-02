@@ -25,12 +25,13 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/transformer/noop"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/transformer/remove"
 	"go.opentelemetry.io/collector/component"
+
+	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor/internal/grok"
 )
 
 const (
 	routerType = "router"
 	noopType   = "noop"
-	grokType   = "grok_parser"
 )
 
 // builders are the stanza-backed operator types (spec §3). router and noop
@@ -42,6 +43,9 @@ var builders = map[string]func() operator.Builder{
 	"copy": func() operator.Builder { return &copyConfig{Config: *copy.NewConfig()} },
 	"json_parser": func() operator.Builder {
 		return &jsonConfig{ParserConfig: helper.NewParserConfig("json_parser", "json_parser")}
+	},
+	"grok_parser": func() operator.Builder {
+		return &grokConfig{ParserConfig: helper.NewParserConfig("grok_parser", "grok_parser")}
 	},
 	"move": func() operator.Builder { return move.NewConfig() },
 	"normalize": func() operator.Builder {
@@ -109,6 +113,73 @@ func (o *addOperator) transform(e *entry.Entry) error {
 		return fmt.Errorf("evaluate value expression: %w", err)
 	}
 	return e.Set(o.field, deepCopy(result))
+}
+
+// Limits on a grok pattern before it is expanded (spec §3.2).
+const (
+	maxGrokPatternBytes = 4096
+	maxGrokPatternRefs  = 64
+)
+
+// grokConfig parses a string with a grok pattern over upstream's default
+// pattern set, keeping named captures only (spec §3.2).
+type grokConfig struct {
+	helper.ParserConfig `mapstructure:",squash"`
+	Pattern             string `mapstructure:"pattern"`
+}
+
+func (c *grokConfig) Build(set component.TelemetrySettings) (operator.Operator, error) {
+	p, err := c.ParserConfig.Build(set)
+	if err != nil {
+		return nil, err
+	}
+	if c.Pattern == "" {
+		return nil, errors.New("grok_parser: missing required field 'pattern'")
+	}
+	// Each %{NAME} expands to its definition, up to kilobytes, and expansion
+	// rescans the growing string, so a pushed pattern is bounded before it
+	// is expanded (spec §3.2).
+	if len(c.Pattern) > maxGrokPatternBytes {
+		return nil, fmt.Errorf("grok_parser: pattern is longer than %d bytes", maxGrokPatternBytes)
+	}
+	if n := strings.Count(c.Pattern, "%{"); n > maxGrokPatternRefs {
+		return nil, fmt.Errorf("grok_parser: pattern has %d %%{...} references, more than %d", n, maxGrokPatternRefs)
+	}
+	g, err := grok.NewWithConfig(&grok.Config{NamedCapturesOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	// Compiling here refuses an unknown pattern name or an invalid regex at
+	// configuration time (spec §1.2). The operator's parser compiles nothing
+	// afterwards, so concurrent calls only read it.
+	if _, err := g.Match(c.Pattern, ""); err != nil {
+		return nil, fmt.Errorf("grok_parser: pattern: %w", err)
+	}
+	return &grokOperator{ParserOperator: p, grok: g, pattern: c.Pattern}, nil
+}
+
+type grokOperator struct {
+	helper.ParserOperator
+	grok    *grok.Grok
+	pattern string
+}
+
+func (o *grokOperator) Process(ctx context.Context, e *entry.Entry) error {
+	return o.ProcessWith(ctx, e, o.parse)
+}
+
+func (o *grokOperator) ProcessBatch(ctx context.Context, entries []*entry.Entry) error {
+	return o.ProcessBatchWith(ctx, entries, o.parse)
+}
+
+// parse returns the named captures, an empty map when the pattern does not
+// match; a mismatch is not an error.
+func (o *grokOperator) parse(value any) (any, error) {
+	text, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("%w: type %T cannot be parsed with grok", errUnparsable, value)
+	}
+	return o.grok.ParseTyped(o.pattern, text)
 }
 
 // jsonConfig parses a JSON object, optionally flattening nested objects

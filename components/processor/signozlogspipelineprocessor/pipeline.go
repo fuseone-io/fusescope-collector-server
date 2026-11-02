@@ -129,9 +129,6 @@ func parseSpecs(operators []map[string]any) ([]spec, error) {
 			return nil, fmt.Errorf("operators[%d]: missing required field 'type'", i)
 		}
 		if _, ok := builders[typ]; !ok && typ != routerType {
-			if typ == grokType {
-				return nil, fmt.Errorf("operators[%d]: type %q is not supported by this build yet", i, typ)
-			}
 			return nil, fmt.Errorf("operators[%d]: unsupported type %q", i, typ)
 		}
 		s := spec{typ: typ, id: typ, config: config}
@@ -205,6 +202,7 @@ func buildNode(s spec, next int, resolve func(from, id string) (int, error), out
 // operator reads; move and remove are absent because they delete their field.
 var bodyReadFields = map[string][][]string{
 	"copy":            {{"from"}},
+	"grok_parser":     {{"parse_from"}},
 	"json_parser":     {{"parse_from"}},
 	"regex_parser":    {{"parse_from"}},
 	"severity_parser": {{"parse_from"}},
