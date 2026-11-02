@@ -11,15 +11,20 @@ hotrod, telemetrygen, RUM (via fusescope) ──► otel-collector ──► cli
                                        shadow-compare: both, read-only, per settled window
 ```
 
-A first version put a tee in front of the demo collector. After the shadow collector was recreated, the tee was left
-with a dead gRPC connection to it, its shadow side backed up, the senders retried, and the demo collector was
-overloaded: the demo lost about 7 minutes of data (2026-11-02, 22:29–22:36 UTC) and got duplicated spans at 22:28.
-Hence no hop in front of the demo, and an exporter that detects a dead connection (below).
+Two attempts went wrong before this one, both on 2026-11-02:
+- A tee in front of the demo collector kept a dead gRPC connection to the shadow collector after it was recreated;
+  its shadow side backed up, senders retried, and the demo collector, already close to its memory limit, refused and
+  was overloaded: about 7 minutes of demo data lost (22:29–22:36 UTC) and duplicated spans at 22:28. Hence no hop in
+  front of the demo, and an exporter that detects a dead connection.
+- The first exporter block deployed pointed at a local test name that resolved to the demo collector itself, which
+  then exported to itself in a loop: duplicated demo data for about 2 minutes (23:10–23:12 UTC). Hence the block as a
+  reviewed file, [`demo-collector-shadow.yaml`](demo-collector-shadow.yaml), and an endpoint check before it is used.
 
 | File | What |
 |---|---|
-| `compose.shadow.yaml` | override for the demo's `compose.yaml`: adds the shadow services |
+| `compose.shadow.yaml` | override for the demo's `compose.yaml`: adds the shadow services, gives the demo collector 768 MiB and 0.5 CPU |
 | `collector.yaml` | this collector's configuration in shadow |
+| `demo-collector-shadow.yaml` | the block merged into the demo collector's configuration to feed the shadow |
 | `clickhouse/cluster.xml` | single-node `cluster` with an embedded keeper, named `clickhouse-shadow` |
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
@@ -64,9 +69,9 @@ $c up --no-deps migrator-shadow
 $c up -d --no-deps fusescope-collector-shadow
 ```
 
-Then the demo's owner adds to `otel-collector/config.yaml` (this repository does not read that file, ADR 0002) an
-exporter and one pipeline per signal fed by the existing OTLP receiver, leaving the existing pipelines as they are;
-use the receiver's actual name if it is not `otlp`:
+Then the demo collector's configuration gets an exporter and one pipeline per signal fed by its existing `otlp`
+receiver (its own telemetry names it `otlp`), leaving its existing pipelines as they are. The block is
+[`demo-collector-shadow.yaml`](demo-collector-shadow.yaml):
 
 ```yaml
 exporters:
@@ -99,9 +104,24 @@ service:
       exporters: [otlp/shadow]
 ```
 
-and restarts it with `docker restart fusescope-demo-otel-collector-1`. The shadow pipelines carry exactly what the
-OTLP receiver accepted, before any of the demo collector's processing, so neither its host metrics nor its span
-metrics reach the shadow.
+The demo collector's command takes a single `--config`, so the block is merged into its file. With the demo owner's
+go-ahead (an exception to ADR 0002 for this deployment file, which is merged without being read), on the demo host:
+
+```sh
+cd /opt/fusescope/otel-collector && cp -p config.yaml config.yaml.bak-pre-shadow
+yq() { docker run --rm -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro mikefarah/yq:4.44.3 "$@"; }
+# Headroom: its memory limiter refused at 256 MiB (limit_mib 320, spike 64, from its own logs).
+yq -i '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)' /w/config.yaml
+yq eval-all '. as $i ireduce ({}; . * $i)' /w/config.yaml /s/demo-collector-shadow.yaml > merged.yaml
+yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml   # must print dns:///fusescope-collector-shadow:4317
+mv merged.yaml config.yaml
+cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps otel-collector   # 768 MiB, 0.5 CPU
+```
+
+Watch the first minutes and restore `config.yaml.bak-pre-shadow` at once if the demo collector logs `otlp/shadow`
+errors or refusals, or if the demo receives clearly more spans than the shadow (duplicates). The shadow pipelines
+carry exactly what the OTLP receiver accepted, before any of the demo collector's processing, so neither its host
+metrics nor its span metrics reach the shadow.
 
 Check: the demo's UI keeps showing new data, and `docker logs fusescope-demo-otel-collector-1` shows no
 `otlp/shadow` export errors.
@@ -125,10 +145,12 @@ keys, and series per metric must be equal. Phase 6 asks for a week with every ho
 
 ## Rollback
 
-Remove the `otlp/shadow` exporter and the `*/shadow` pipelines from `otel-collector/config.yaml`, restart
-`otel-collector`, then stop the shadow:
+Restore `otel-collector/config.yaml.bak-pre-shadow`, restart the demo collector with the demo's compose alone, then stop
+the shadow:
 
 ```sh
+cp -p otel-collector/config.yaml.bak-pre-shadow otel-collector/config.yaml
+docker compose -f compose.yaml up -d --no-deps otel-collector
 docker compose -f compose.yaml -f shadow/compose.shadow.yaml rm -sf fusescope-collector-shadow migrator-shadow clickhouse-shadow
 docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's data
 ```
@@ -138,6 +160,6 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 - A full `otlp/shadow` queue fails the request at the demo's OTLP receiver, as any exporter of a pipeline does, and
   senders retry. The keepalive, the 5 s timeout and the 30 s retry limit keep the queue (5 000 requests) from filling
   at the demo's few requests a second, even while the shadow collector is down; if it stays unreachable, roll back.
-- The demo collector holds the queued copies in its own memory (384 MiB limit); at the demo's volume that is a few
-  MiB at most.
+- The demo collector holds the queued copies in its own memory (768 MiB, limiter at 640 MiB); at the demo's volume
+  that is a few MiB at most.
 - The shadow collector shares the host's CPU and memory with the demo; the limits above bound it.
