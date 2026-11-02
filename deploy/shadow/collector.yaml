@@ -8,13 +8,24 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
-  hostmetrics:
+  host_metrics:
     collection_interval: 60s
     root_path: /hostfs
     scrapers:
-      cpu: {}
+      # Per logical CPU, and no logical count: the demo writes system.cpu.time
+      # with a cpu label and no system.cpu.logical.count.
+      cpu:
+        metrics:
+          system.cpu.time:
+            attributes: [cpu, state]
+          system.cpu.logical.count:
+            enabled: false
       load: {}
-      disk: {}
+      # The demo writes no series for the optical drive.
+      disk:
+        exclude:
+          devices: [sr0]
+          match_type: strict
       filesystem: {}
       memory: {}
 
@@ -57,6 +68,6 @@ service:
       receivers: [otlp, fusescope_spanmetrics]
       exporters: [fusescope_clickhouse]
     metrics/host:
-      receivers: [hostmetrics]
+      receivers: [host_metrics]
       processors: [resourcedetection/system]
       exporters: [fusescope_clickhouse]

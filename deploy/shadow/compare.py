@@ -76,12 +76,19 @@ CHECKS = {
 }
 
 
+# The scope version is each collector's own build version.
+SCOPE_VERSION = "__scope.version__"
+
+
 def anonymize(row):
-    """Replaces the collector identity in a series row, wherever it appears."""
+    """Replaces the collector identity and build version in a series row, wherever they appear."""
     name, labels, *maps = row
     labels = json.loads(labels, strict=False)
     labels.update({k: "<collector>" for k in COLLECTOR_KEYS if k in labels})
-    maps = [{k: "<collector>" if k in COLLECTOR_KEYS else v for k, v in m.items()} for m in maps]
+    if SCOPE_VERSION in labels:
+        labels[SCOPE_VERSION] = "<build>"
+    maps = [{k: "<collector>" if k in COLLECTOR_KEYS else "<build>" if k == SCOPE_VERSION else v for k, v in m.items()}
+            for m in maps]
     return (name, json.dumps([labels] + maps, sort_keys=True))
 
 
