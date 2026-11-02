@@ -156,9 +156,14 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
 - `signoz.collector.id` holds this collector's `service.instance.id`, or a random UUID when it
   has none. It is set as if it were a resource attribute, so its `resource_` copy appears as in
   the reference.
-- **Series limit.** At most `max_series` (100000) series are kept between flushes, across the
-  six metrics; spans of further series are dropped from the metrics with a warning. The
-  reference's `dimensions_cache_size` was not observed when exceeded (§7).
+- **Series limits.** At most `max_series` (100000) series, holding at most `max_series_bytes`
+  (64 MiB) of keys and attributes, are kept between flushes, across the six metrics; spans of
+  further series are dropped from the metrics with a warning. The reference's
+  `dimensions_cache_size` was not observed when exceeded (§7).
+- **Refused flushes.** A flush the metrics pipeline refuses with a retryable error is sent
+  again with the next flush, as long as it holds at most `max_series` points; a permanent
+  refusal is dropped with an error. The spans were already acknowledged, so nothing upstream
+  can resend them. Shutdown ends a periodic flush in progress and reports a failed last flush.
 
 ## 7. Still to observe
 
@@ -183,6 +188,7 @@ metrics pipeline receives from it and exports to `fusescope_clickhouse`.
 | `latency_histogram_buckets` | the bounds in §2 | durations, positive and increasing |
 | `metrics_flush_interval` | `10s` | how often the deltas are emitted |
 | `max_series` | `100000` | §6 |
+| `max_series_bytes` | `67108864` (64 MiB) | §6 |
 
 The defaults reproduce the reference configuration, so the parity suite runs the connector with
 none of these set. Dimensions named like a connector key (`service.name`, `operation`,

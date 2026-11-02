@@ -5,12 +5,15 @@ package fusescopespanmetricsconnector
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/connector/connectortest"
+	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -261,5 +264,137 @@ func TestAttributeValuesKeepTheirType(t *testing.T) {
 				t.Errorf("%s %s is %s, want %s", name, key, v.Type(), want)
 			}
 		}
+	}
+}
+
+// A large dimension value over many series is bounded in bytes, not only in
+// series (apm-metrics §6).
+func TestMaxSeriesBytes(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxSeriesBytes = 256 << 10
+	c, _, logs := newTestConnector(t, cfg)
+	td := traceWith(200, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
+	td.ResourceSpans().At(0).Resource().Attributes().PutStr("host.name", strings.Repeat("h", 8<<10))
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	held := c.bytes
+	c.mu.Unlock()
+	if held > cfg.MaxSeriesBytes {
+		t.Errorf("%d bytes of series held, want at most %d", held, cfg.MaxSeriesBytes)
+	}
+	c.flush(context.Background())
+	if logs.FilterMessageSnippet("max_series").Len() != 1 {
+		t.Error("no warning about dropped series")
+	}
+}
+
+// Attribute values containing the key's separators still identify their own series.
+func TestSeriesKeysAreUnambiguous(t *testing.T) {
+	c, sink, _ := newTestConnector(t, defaultConfig())
+	td := traceWith(2, "svc", func(i int, s ptrace.Span) {
+		if i == 0 {
+			s.Attributes().PutStr("service.namespace", "a\xffdeployment.environment\xfeb")
+			s.Attributes().PutStr("deployment.environment", "c")
+		} else {
+			s.Attributes().PutStr("service.namespace", "a")
+			s.Attributes().PutStr("deployment.environment", "b\xffdeployment.environment\xfec")
+		}
+	})
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	c.flush(context.Background())
+	if n := len(points(sink.AllMetrics()[0], "signoz_calls_total")); n != 2 {
+		t.Errorf("%d series, want 2", n)
+	}
+}
+
+// blockingSink holds ConsumeMetrics until its context ends.
+type blockingSink struct{ consumertest.MetricsSink }
+
+func (b *blockingSink) ConsumeMetrics(ctx context.Context, _ pmetric.Metrics) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Shutdown cancels a periodic flush stuck downstream and honours its deadline.
+func TestShutdownCancelsFlush(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MetricsFlushInterval = 10 * time.Millisecond
+	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), &blockingSink{})
+	if err := c.Start(context.Background(), componenttest.NewNopHost()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // a flush is now blocked downstream
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_ = c.Shutdown(ctx)
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("shutdown took %v", d)
+	}
+}
+
+// flakySink refuses its first batches with a retryable or permanent error.
+type flakySink struct {
+	consumertest.MetricsSink
+	refuse []error
+}
+
+func (f *flakySink) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
+	if len(f.refuse) > 0 {
+		err := f.refuse[0]
+		f.refuse = f.refuse[1:]
+		return err
+	}
+	return f.MetricsSink.ConsumeMetrics(ctx, md)
+}
+
+// A flush refused with a retryable error is sent again with the next one; a
+// permanent refusal is dropped.
+func TestRefusedFlushes(t *testing.T) {
+	tests := []struct {
+		name       string
+		refuse     error
+		wantPoints int
+	}{
+		{"retryable", errors.New("queue is full"), 2},
+		{"permanent", consumererror.NewPermanent(errors.New("bad data")), 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := &flakySink{refuse: []error{tt.refuse}}
+			c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+			for range 2 {
+				if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+					t.Fatal(err)
+				}
+				c.flush(context.Background())
+			}
+			got := 0
+			for _, md := range sink.AllMetrics() {
+				got += len(points(md, "signoz_calls_total"))
+			}
+			if got != tt.wantPoints {
+				t.Errorf("%d calls points delivered, want %d", got, tt.wantPoints)
+			}
+		})
+	}
+}
+
+// Shutdown reports a final flush that could not be delivered.
+func TestShutdownReportsFinalFailure(t *testing.T) {
+	sink := &flakySink{refuse: []error{errors.New("down")}}
+	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Shutdown(context.Background()); err == nil {
+		t.Error("Shutdown hid the failed final flush")
 	}
 }

@@ -18,8 +18,10 @@ type Config struct {
 	LatencyHistogramBuckets []time.Duration `mapstructure:"latency_histogram_buckets"`
 	// MetricsFlushInterval is how often the deltas are emitted.
 	MetricsFlushInterval time.Duration `mapstructure:"metrics_flush_interval"`
-	// MaxSeries bounds the series kept between flushes (apm-metrics §6).
-	MaxSeries int `mapstructure:"max_series"`
+	// MaxSeries and MaxSeriesBytes bound the series kept between flushes,
+	// in number and in bytes (apm-metrics §6).
+	MaxSeries      int `mapstructure:"max_series"`
+	MaxSeriesBytes int `mapstructure:"max_series_bytes"`
 }
 
 // Dimension is a span or resource attribute copied to the points.
@@ -42,6 +44,7 @@ func defaultConfig() *Config {
 		},
 		MetricsFlushInterval: 10 * time.Second,
 		MaxSeries:            100_000,
+		MaxSeriesBytes:       64 << 20,
 	}
 	cfg.Dimensions = append(cfg.Dimensions,
 		Dimension{Name: "service.namespace", Default: def("default")},
@@ -81,6 +84,9 @@ func (cfg *Config) Validate() error {
 	}
 	if cfg.MaxSeries < 1 {
 		errs = append(errs, errors.New("max_series must be at least 1"))
+	}
+	if cfg.MaxSeriesBytes < 1 {
+		errs = append(errs, errors.New("max_series_bytes must be at least 1"))
 	}
 	return errors.Join(errs...)
 }

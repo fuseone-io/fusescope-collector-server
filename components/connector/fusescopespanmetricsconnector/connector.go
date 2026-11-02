@@ -6,15 +6,16 @@ package fusescopespanmetricsconnector // import "github.com/fuseone-io/fusescope
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -27,6 +28,8 @@ const (
 	// collectorIDKey is the dimension that holds this collector's identity (apm-metrics §3.3).
 	collectorIDKey = "signoz.collector.id"
 	nanosPerMinute = int64(time.Minute)
+	// seriesOverhead covers a series' fixed fields and map entries.
+	seriesOverhead = 256
 )
 
 // kv is one attribute of a point: value is its string form, which identifies
@@ -71,10 +74,18 @@ type spanMetricsConnector struct {
 	db       family
 	external family
 	total    int
-	dropped  int
+	// bytes estimates what the series hold: their key and their attributes.
+	bytes   int
+	dropped int
+	// flushMu serializes flushes; pending, under it, is a flush refused with a
+	// retryable error, sent again first.
+	flushMu sync.Mutex
+	pending pmetric.Metrics
 
-	quit chan struct{}
-	done sync.WaitGroup
+	// ctx ends periodic flushes on shutdown.
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   sync.WaitGroup
 
 	// scratch, used under mu
 	attrs []kv
@@ -83,7 +94,7 @@ type spanMetricsConnector struct {
 }
 
 func newConnector(cfg *Config, set connector.Settings, next consumer.Metrics) *spanMetricsConnector {
-	c := &spanMetricsConnector{cfg: cfg, logger: set.Logger, next: next}
+	c := &spanMetricsConnector{cfg: cfg, logger: set.Logger, next: next, pending: pmetric.NewMetrics()}
 	for _, b := range cfg.LatencyHistogramBuckets {
 		c.bounds = append(c.bounds, float64(b)/float64(time.Millisecond))
 	}
@@ -110,7 +121,7 @@ func (c *spanMetricsConnector) reset() {
 	for _, f := range []*family{&c.calls, &c.latency, &c.db, &c.external} {
 		f.series, f.order = map[string]*series{}, f.order[:0]
 	}
-	c.total, c.dropped = 0, 0
+	c.total, c.bytes, c.dropped = 0, 0, 0
 }
 
 func (c *spanMetricsConnector) Capabilities() consumer.Capabilities {
@@ -118,7 +129,7 @@ func (c *spanMetricsConnector) Capabilities() consumer.Capabilities {
 }
 
 func (c *spanMetricsConnector) Start(context.Context, component.Host) error {
-	c.quit = make(chan struct{})
+	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.done.Add(1)
 	go func() {
 		defer c.done.Done()
@@ -126,25 +137,25 @@ func (c *spanMetricsConnector) Start(context.Context, component.Host) error {
 		defer t.Stop()
 		for {
 			select {
-			case <-c.quit:
+			case <-c.ctx.Done():
 				return
 			case <-t.C:
-				c.flush(context.Background())
+				_ = c.flush(c.ctx)
 			}
 		}
 	}()
 	return nil
 }
 
-// Shutdown emits what is still aggregated.
+// Shutdown ends a periodic flush in progress, then emits what is still
+// aggregated within ctx, and reports if that last flush failed.
 func (c *spanMetricsConnector) Shutdown(ctx context.Context) error {
-	if c.quit != nil {
-		close(c.quit)
+	if c.cancel != nil {
+		c.cancel()
 		c.done.Wait()
-		c.quit = nil
+		c.cancel = nil
 	}
-	c.flush(ctx)
-	return nil
+	return c.flush(ctx)
 }
 
 func (c *spanMetricsConnector) ConsumeTraces(_ context.Context, td ptrace.Traces) error {
@@ -266,22 +277,28 @@ func (c *spanMetricsConnector) dimensions(res, span pcommon.Map) []kv {
 func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series {
 	// Attributes come in a fixed order (configured dimensions, then the
 	// connector's own keys), so the key identifies a series without sorting.
-	b := strconv.AppendInt(c.key[:0], minute, 10)
+	// Lengths prefix keys and values, so no value can mimic a boundary.
+	b := binary.AppendVarint(c.key[:0], minute)
+	size := 0
 	for _, a := range attrs {
-		b = append(b, 0xff)
+		b = binary.AppendUvarint(b, uint64(len(a.key)))
 		b = append(b, a.key...)
-		b = append(b, 0xfe)
+		b = binary.AppendUvarint(b, uint64(len(a.value)))
 		b = append(b, a.value...)
+		size += len(a.key) + len(a.value)
 	}
 	c.key = b
 	if s, ok := f.series[string(b)]; ok {
 		return s
 	}
-	key := string(b)
-	if c.total >= c.cfg.MaxSeries {
+	// The series keeps its key and a copy of its attributes.
+	size += len(b) + seriesOverhead
+	if c.total >= c.cfg.MaxSeries || c.bytes+size > c.cfg.MaxSeriesBytes {
 		c.dropped++
 		return nil
 	}
+	key := string(b)
+	c.bytes += size
 	s := &series{attrs: pcommon.NewMap(), minute: minute}
 	s.attrs.EnsureCapacity(len(attrs))
 	for _, a := range attrs {
@@ -297,21 +314,39 @@ func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series 
 	return s
 }
 
-// flush emits the deltas aggregated since the last flush.
-func (c *spanMetricsConnector) flush(ctx context.Context) {
+// flush emits the deltas aggregated since the last flush, after a batch an
+// earlier flush could not deliver.
+func (c *spanMetricsConnector) flush(ctx context.Context) error {
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
 	c.mu.Lock()
 	md, dropped := c.build(), c.dropped
 	c.reset()
 	c.mu.Unlock()
 	if dropped > 0 {
-		c.logger.Warn("span metrics over max_series were dropped", zap.Int("dropped_spans", dropped), zap.Int("max_series", c.cfg.MaxSeries))
+		c.logger.Warn("span metrics over max_series or max_series_bytes were dropped",
+			zap.Int("dropped_spans", dropped), zap.Int("max_series", c.cfg.MaxSeries), zap.Int("max_series_bytes", c.cfg.MaxSeriesBytes))
+	}
+	if c.pending.DataPointCount() > 0 {
+		// Deltas of one series in two batches add up downstream; keep the older first.
+		md.ResourceMetrics().MoveAndAppendTo(c.pending.ResourceMetrics())
+		md, c.pending = c.pending, pmetric.NewMetrics()
 	}
 	if md.DataPointCount() == 0 {
-		return
+		return nil
 	}
-	if err := c.next.ConsumeMetrics(ctx, md); err != nil {
-		c.logger.Error("could not export span metrics", zap.Error(err))
+	err := c.next.ConsumeMetrics(ctx, md)
+	switch {
+	case err == nil:
+		return nil
+	case consumererror.IsPermanent(err) || md.DataPointCount() > c.cfg.MaxSeries:
+		c.logger.Error("span metrics dropped", zap.Error(err), zap.Int("points", md.DataPointCount()))
+	default:
+		// Refused before acceptance: the spans are acknowledged, so only we can resend.
+		c.pending = md
+		c.logger.Warn("span metrics refused; sending them again with the next flush", zap.Error(err))
 	}
+	return err
 }
 
 func (c *spanMetricsConnector) build() pmetric.Metrics {
