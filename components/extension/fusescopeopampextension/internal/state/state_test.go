@@ -5,6 +5,8 @@ package state
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -196,5 +198,34 @@ func TestPeekWritesNothing(t *testing.T) {
 	st, _ := open(t, dir, "").Start()
 	if revision(st.Applied) != "r1" || revision(st.Failed) != "r2" {
 		t.Errorf("Start after Peek = applied %q, failed %q; want r1 and r2", revision(st.Applied), revision(st.Failed))
+	}
+}
+
+// Peek neither creates the directory nor removes a temporary file, which may
+// be a running collector's write in progress; Start drops leftovers.
+func TestPeekLeavesDirectory(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := open(t, missing, "").Peek(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(missing); err == nil {
+		t.Error("Peek created the state directory")
+	}
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, pendingFile+tmpSuffix)
+	if err := os.WriteFile(tmp, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open(t, dir, "").Peek(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tmp); err != nil {
+		t.Error("Peek removed a temporary file")
+	}
+	if _, err := open(t, dir, "").Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tmp); err == nil {
+		t.Error("Start kept a temporary file a crash left")
 	}
 }

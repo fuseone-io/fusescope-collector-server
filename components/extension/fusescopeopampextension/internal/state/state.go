@@ -44,21 +44,28 @@ type Store struct {
 // errCrash is returned when a test stops a sequence midway.
 var errCrash = errors.New("simulated crash")
 
-// Open opens dir, creating it, and drops temporary files a crash left.
+// Open opens dir without touching it: a collector that only validates its
+// configuration may share dir with one that runs.
 func Open(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+	return &Store{dir: dir}, nil
+}
+
+// prepare creates the directory and drops temporary files a crash left; only
+// the collector that really starts does it.
+func (s *Store) prepare() error {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return err
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(s.dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), tmpSuffix) {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+			_ = os.Remove(filepath.Join(s.dir, e.Name()))
 		}
 	}
-	return &Store{dir: dir}, nil
+	return nil
 }
 
 // Dir is the state directory.
@@ -107,6 +114,11 @@ func (s *Store) Start() (Startup, error) {
 
 func (s *Store) start(write bool) (Startup, error) {
 	var st Startup
+	if write {
+		if err := s.prepare(); err != nil {
+			return st, err
+		}
+	}
 	applied, err := s.read(appliedFile)
 	if err != nil {
 		return st, err
