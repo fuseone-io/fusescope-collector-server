@@ -229,3 +229,28 @@ func TestPeekLeavesDirectory(t *testing.T) {
 		t.Error("Start kept a temporary file a crash left")
 	}
 }
+
+// A failure found at start survives restarts, including one interrupted
+// right after it was recorded, until ClearFailed.
+func TestFailedKeptUntilCleared(t *testing.T) {
+	dir := t.TempDir()
+	_ = open(t, dir, "").Begin(push("r1")) // the collector exits applying r1
+	if _, err := open(t, dir, "before rename pending.json").Start(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // restarts before reconnecting
+		st, err := open(t, dir, "").Start()
+		if err != nil || revision(st.Failed) != "r1" {
+			t.Fatalf("Start = failed %q, %v; want r1", revision(st.Failed), err)
+		}
+		if st.Failed.Config != nil {
+			t.Error("the failure record holds the pushed configuration")
+		}
+	}
+	if err := open(t, dir, "").ClearFailed(); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := open(t, dir, "").Start(); st.Failed != nil {
+		t.Errorf("failed %q after ClearFailed", revision(st.Failed))
+	}
+}

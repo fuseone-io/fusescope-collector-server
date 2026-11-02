@@ -390,6 +390,19 @@ func TestFailureDespitePreflight(t *testing.T) {
 		t.Fatal("collector kept running a graph that failed to start")
 	}
 
+	// A restart while the backend is unreachable keeps the failure to report.
+	offline := startCollector(t, writeBase(t, "ws://127.0.0.1:1/v1/opamp", storage))
+	failedFile := filepath.Join(storage, "failed.json")
+	deadline := time.Now().Add(10 * time.Second)
+	for _, err := os.Stat(failedFile); err != nil; _, err = os.Stat(failedFile) {
+		if time.Now().After(deadline) {
+			t.Fatal("the failure was not recorded at start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	offline.col.Shutdown()
+	<-offline.done
+
 	b2 := startBackend(t)
 	path2 := writeBase(t, b2.endpoint, storage) // same storage, new backend address
 	r2 := startCollector(t, path2)
@@ -401,6 +414,10 @@ func TestFailureDespitePreflight(t *testing.T) {
 	b2.waitFor("the last applied push to run", func() bool {
 		return strings.Contains(string(b2.effective), "signozlogspipeline/pipeline_test") &&
 			!strings.Contains(string(b2.effective), "fail_in_graph")
+	})
+	b2.waitFor("the reported failure to be dropped", func() bool {
+		_, err := os.Stat(failedFile)
+		return err != nil
 	})
 }
 

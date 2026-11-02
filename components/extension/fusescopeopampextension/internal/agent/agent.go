@@ -146,6 +146,21 @@ func (a *Agent) Load(base merge.Config) (*Status, error) {
 	return nil, nil
 }
 
+// FailedReported is called once the backend has answered since the start,
+// so it has the failure the start reported, if any: the record is dropped.
+func (a *Agent) FailedReported() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.failed == nil {
+		return
+	}
+	if err := a.store.ClearFailed(); err != nil {
+		a.logger.Warn("could not drop the reported OpAMP failure; it will be reported again at the next start", zap.Error(err))
+		return
+	}
+	a.failed = nil
+}
+
 // OnActivate sets what Activate runs once the start is recorded.
 func (a *Agent) OnActivate(fn func(context.Context) error) {
 	a.mu.Lock()

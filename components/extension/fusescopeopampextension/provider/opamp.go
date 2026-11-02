@@ -57,6 +57,9 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 		InstanceUid:    types.InstanceUid(uid),
 		Callbacks: types.Callbacks{
 			OnMessage: func(ctx context.Context, msg *types.MessageData) {
+				// The server answers each message; the first one carried the
+				// status of a push that failed before the last exit.
+				a.FailedReported()
 				if msg.RemoteConfig != nil {
 					oc.onRemoteConfig(ctx, a, msg.RemoteConfig)
 				}

@@ -3,7 +3,8 @@
 
 // Package state persists the OpAMP agent's state across restarts (ADR 0008
 // §4 and the reload lifecycle): the instance UID, the last applied push, a
-// pending push and the start-from-cache marker. Every write is atomic.
+// pending push, the start-from-cache marker and a failure not yet reported.
+// Every write is atomic.
 package state // import "github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/state"
 
 import (
@@ -23,6 +24,7 @@ const (
 	appliedFile  = "applied.json"
 	pendingFile  = "pending.json"
 	startingFile = "starting.json"
+	failedFile   = "failed.json"
 	tmpSuffix    = ".tmp"
 )
 
@@ -131,10 +133,20 @@ func (s *Store) start(write bool) (Startup, error) {
 	if err != nil {
 		return st, err
 	}
+	// A failure an earlier start found and never got to the backend.
+	if st.Failed, err = s.read(failedFile); err != nil {
+		return st, err
+	}
 	if pending != nil {
 		// Promoted but not yet cleared when the process stopped: it was applied.
 		if applied == nil || applied.Revision != pending.Revision {
-			st.Failed = pending
+			st.Failed = &Push{Hash: pending.Hash, Revision: pending.Revision}
+			if write {
+				// Kept until reported, so a restart before reconnecting keeps it.
+				if err := s.writeJSON(failedFile, st.Failed); err != nil {
+					return st, err
+				}
+			}
 		}
 		if write {
 			if err := s.remove(pendingFile); err != nil {
@@ -165,6 +177,9 @@ func (s *Store) start(write bool) (Startup, error) {
 	}
 	return st, nil
 }
+
+// ClearFailed drops the failure Start found, once the backend has it.
+func (s *Store) ClearFailed() error { return s.remove(failedFile) }
 
 // Begin records p as pending before the reload that applies it.
 func (s *Store) Begin(p *Push) error { return s.writeJSON(pendingFile, p) }

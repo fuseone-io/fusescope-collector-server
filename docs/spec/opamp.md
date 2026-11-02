@@ -85,7 +85,8 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 - `FAILED` lists the configuration paths that differed, never values.
 - A push is preflighted; `APPLIED` is reported, and the push cached, only once the new graph
   is confirmed running; a push that stops the collector is reported `FAILED` at the next start
-  (ADR 0008, reload lifecycle).
+  (ADR 0008, reload lifecycle), and that failure is kept on disk until the backend answers, so
+  restarts while it is unreachable do not lose it.
 
 ## 7. Backend behaviour the collector does not depend on
 
