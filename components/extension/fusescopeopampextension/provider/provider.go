@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
+	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozllmpricingprocessor"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozspanmapperprocessor"
 )
 
@@ -67,6 +68,7 @@ const minTLSVersion = "1.3"
 // each processor's PR adds itself.
 var managedFactories = map[component.Type]processor.Factory{
 	signozspanmapperprocessor.NewFactory().Type(): signozspanmapperprocessor.NewFactory(),
+	signozllmpricingprocessor.NewFactory().Type(): signozllmpricingprocessor.NewFactory(),
 }
 
 // NewFactory returns the fusescopeopamp provider factory.

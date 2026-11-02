@@ -82,11 +82,13 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
   gives them; anything else rejects the push.
 - The base configuration wires and declares `signozspanmapper` and `signozllmpricing`, since
   the backend never places them (§5).
-- A string in a pushed allow-listed block holding a `${...}` reference that `$${...}` does not
-  escape rejects the push: the collector's resolver would expand it, reading a local file or
-  variable, such as an outbound credential, into a processor and from there into telemetry (ADR
-  0004). The backend escapes `$` in log pipelines (§3) and writes no reference elsewhere.
 - `FAILED` lists the configuration paths that differed, never values.
+- A pushed allow-listed block may not hold a confmap reference (`${...}`, not escaped as
+  `$${`) that the base does not hold at the same path: the collector would resolve it, so a
+  push could read a local credential file or environment variable into an exported value
+  (ADR 0004). A reference the base already holds there, echoed back by the backend, is kept.
+  The backend escapes `$` as `$$` in log pipeline values (§3) and writes no reference
+  elsewhere.
 - A push is preflighted; `APPLIED` is reported, and the push cached, only once the new graph
   is confirmed running; a push that stops the collector is reported `FAILED` at the next start
   (ADR 0008, reload lifecycle), and that failure is kept on disk until the backend answers, so

@@ -103,7 +103,7 @@ func (d *differ) processors(base, push Config) Config {
 		switch {
 		case strings.HasPrefix(name, LogsPipelinePrefix):
 			if inPush {
-				d.references("processors."+name, pv)
+				d.substitutions("processors."+name, bv, pv)
 				out[name] = pv
 			}
 		case slices.Contains(blockOnly, name):
@@ -111,7 +111,7 @@ func (d *differ) processors(base, push Config) Config {
 			case !inBase:
 				d.add("processors." + name) // the base must declare and wire it
 			case inPush:
-				d.references("processors."+name, pv)
+				d.substitutions("processors."+name, bv, pv)
 				out[name] = pv
 			default:
 				out[name] = bv
@@ -126,42 +126,47 @@ func (d *differ) processors(base, push Config) Config {
 	return out
 }
 
-// references records the paths of pushed strings the collector's resolver
-// would expand: a ${...} not escaped as $${...} could read a local file or
-// variable, such as an outbound credential, into telemetry (ADR 0004).
-func (d *differ) references(path string, v any) {
-	switch v := v.(type) {
+// substitutions records where push holds a confmap reference ("${...}")
+// that base does not hold at the same path: the collector would resolve it,
+// so a push could read local files or environment into exported values.
+func (d *differ) substitutions(path string, base, push any) {
+	switch p := push.(type) {
 	case string:
-		if hasReference(v) {
+		if b, ok := base.(string); hasReference(p) && (!ok || b != p) {
 			d.add(path)
 		}
 	case Config:
-		for k, e := range v {
-			d.references(path+"."+k, e)
+		bm, _ := base.(Config)
+		for k, v := range p {
+			if _, inBase := bm[k]; hasReference(k) && !inBase {
+				d.add(path)
+			}
+			d.substitutions(path+"."+k, bm[k], v)
 		}
 	case []any:
-		for i, e := range v {
-			d.references(fmt.Sprintf("%s[%d]", path, i), e)
+		bl, _ := base.([]any)
+		for i, v := range p {
+			var b any
+			if i < len(bl) {
+				b = bl[i]
+			}
+			d.substitutions(fmt.Sprintf("%s[%d]", path, i), b, v)
 		}
 	}
 }
 
-// hasReference reports a "${" preceded by an even number of "$", which
-// confmap expands; an odd number escapes it.
+// hasReference reports a "${" whose "$" is not escaped as "$$".
 func hasReference(s string) bool {
-	for i := strings.Index(s, "${"); i >= 0; {
-		dollars := 0
-		for j := i - 1; j >= 0 && s[j] == '$'; j-- {
-			dollars++
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '$' {
+			continue
 		}
-		if dollars%2 == 0 {
+		if s[i+1] == '{' {
 			return true
 		}
-		next := strings.Index(s[i+2:], "${")
-		if next < 0 {
-			return false
+		if s[i+1] == '$' {
+			i++
 		}
-		i += 2 + next
 	}
 	return false
 }
