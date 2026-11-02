@@ -118,6 +118,92 @@ func TestProcessRecords(t *testing.T) {
 	}
 }
 
+// Values written into a record are copies: a record never contains itself
+// and records never share maps (regressions from review of #29).
+func TestWrittenValuesAreCopies(t *testing.T) {
+	m := map[string]any{"k": "v"}
+	tests := []struct {
+		name      string
+		operators []map[string]any
+		body      any
+		attrs     map[string]any
+		want      map[string]any
+		wantBody  any
+	}{
+		{
+			name:      "add EXPR(attributes) into attributes",
+			operators: []map[string]any{{"type": "add", "field": "attributes.snapshot", "value": "EXPR(attributes)"}},
+			attrs:     map[string]any{"a": "1"},
+			want:      map[string]any{"a": "1", "snapshot": map[string]any{"a": "1"}},
+		},
+		{
+			name:      "copy a map into its own member",
+			operators: []map[string]any{{"type": "copy", "from": "attributes.m", "to": "attributes.m.self"}},
+			attrs:     map[string]any{"m": map[string]any{"k": "v"}},
+			want:      map[string]any{"m": map[string]any{"k": "v", "self": map[string]any{"k": "v"}}},
+		},
+		{
+			name:      "json_parser from a map body into its own member",
+			operators: []map[string]any{{"type": "json_parser", "parse_from": "body", "parse_to": "body.parsed"}},
+			body:      map[string]any{"k": "v"},
+			want:      map[string]any{},
+			wantBody:  map[string]any{"k": "v", "parsed": map[string]any{"k": "v"}},
+		},
+		{
+			name: "a literal map is not shared with the configuration",
+			operators: []map[string]any{
+				{"id": "set", "type": "add", "field": "attributes.m", "value": m},
+				{"type": "add", "field": "attributes.m.k", "value": "changed"},
+			},
+			want: map[string]any{"m": map[string]any{"k": "changed"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newTestProcessor(t, tt.operators...)
+			var wg sync.WaitGroup
+			for range 4 {
+				wg.Go(func() {
+					for range 20 {
+						ld := oneRecord("", tt.attrs)
+						if tt.body != nil {
+							require.NoError(t, firstRecord(ld).Body().FromRaw(tt.body))
+						}
+						out, err := p.processLogs(context.Background(), ld)
+						if assert.NoError(t, err) {
+							assert.Equal(t, tt.want, firstRecord(out).Attributes().AsRaw())
+							if tt.wantBody != nil {
+								assert.Equal(t, tt.wantBody, firstRecord(out).Body().AsRaw())
+							}
+						}
+					}
+				})
+			}
+			wg.Wait()
+			assert.Equal(t, map[string]any{"k": "v"}, m)
+		})
+	}
+}
+
+// JSON null is not an object (regression from review of #29).
+func TestJSONNullIsAnError(t *testing.T) {
+	for _, tt := range []struct {
+		onError string
+		kept    bool
+	}{{"send", true}, {"drop", false}} {
+		t.Run(tt.onError, func(t *testing.T) {
+			p := newTestProcessor(t, map[string]any{"type": "json_parser", "parse_from": "body", "parse_to": "body", "on_error": tt.onError})
+			out, err := p.processLogs(context.Background(), oneRecord("null", map[string]any{}))
+			if !tt.kept {
+				assert.ErrorIs(t, err, processorhelper.ErrSkipProcessingData)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "null", firstRecord(out).Body().Str())
+		})
+	}
+}
+
 func TestOnError(t *testing.T) {
 	// attributes.n + 1 fails at run time for a string n.
 	for _, tt := range []struct {

@@ -148,6 +148,10 @@ that does not match is not an error: the record goes on with an empty map writte
 Sets `field` to `value`. A string value `EXPR(<expression>)` is evaluated (§4) and its result set;
 any other value is set as it is, with its type.
 
+`add`, `copy` and `json_parser` write copies of maps and lists, never the value they read or the
+configured one, so a record never contains itself and records share nothing (a choice of this
+processor; the observed outputs are the same either way).
+
 ### 3.5 `normalize`
 
 [B] `pipelinesim/json.go:119-206`; [O] `Normalize_*`. The backend's API does not accept it

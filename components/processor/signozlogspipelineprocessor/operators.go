@@ -38,7 +38,7 @@ var builders = map[string]func() operator.Builder{
 	"add": func() operator.Builder {
 		return &addConfig{TransformerConfig: helper.NewTransformerConfig("add", "add")}
 	},
-	"copy": func() operator.Builder { return copy.NewConfig() },
+	"copy": func() operator.Builder { return &copyConfig{Config: *copy.NewConfig()} },
 	"json_parser": func() operator.Builder {
 		return &jsonConfig{ParserConfig: helper.NewParserConfig("json_parser", "json_parser")}
 	},
@@ -98,13 +98,13 @@ func (o *addOperator) ProcessBatch(ctx context.Context, entries []*entry.Entry) 
 
 func (o *addOperator) transform(e *entry.Entry) error {
 	if o.program == nil {
-		return e.Set(o.field, o.value)
+		return e.Set(o.field, deepCopy(o.value))
 	}
 	result, err := o.program.run(e)
 	if err != nil {
 		return fmt.Errorf("evaluate value expression: %w", err)
 	}
-	return e.Set(o.field, result)
+	return e.Set(o.field, deepCopy(result))
 }
 
 // jsonConfig parses a JSON object, optionally flattening nested objects
@@ -145,8 +145,11 @@ func (o *jsonOperator) parse(value any) (any, error) {
 		if err := json.Unmarshal([]byte(v), &parsed); err != nil {
 			return nil, err
 		}
+		if parsed == nil {
+			return nil, fmt.Errorf("%w: JSON null is not an object", errUnparsable)
+		}
 	case map[string]any:
-		parsed = v
+		parsed = deepCopy(v).(map[string]any)
 	default:
 		return nil, fmt.Errorf("%w: type %T is not a JSON string", errUnparsable, value)
 	}
@@ -312,6 +315,64 @@ func (o *severityOperator) parse(e *entry.Entry) error {
 		}
 	}
 	return o.parser.Parse(e)
+}
+
+// copyConfig is stanza's copy writing a deep copy, so copying a map into
+// one of its own members cannot make the record cyclic.
+type copyConfig struct {
+	copy.Config `mapstructure:",squash"`
+}
+
+func (c *copyConfig) Build(set component.TelemetrySettings) (operator.Operator, error) {
+	op, err := c.Config.Build(set)
+	if err != nil {
+		return nil, err
+	}
+	t := op.(*copy.Transformer)
+	return &copyOperator{TransformerOperator: t.TransformerOperator, from: t.From, to: t.To}, nil
+}
+
+type copyOperator struct {
+	helper.TransformerOperator
+	from, to entry.Field
+}
+
+func (o *copyOperator) Process(ctx context.Context, e *entry.Entry) error {
+	return o.ProcessWith(ctx, e, o.transform)
+}
+
+func (o *copyOperator) ProcessBatch(ctx context.Context, entries []*entry.Entry) error {
+	return o.ProcessBatchWith(ctx, entries, o.Process)
+}
+
+func (o *copyOperator) transform(e *entry.Entry) error {
+	v, ok := o.from.Get(e)
+	if !ok {
+		return fmt.Errorf("copy: from field does not exist in this entry: %s", o.from.String())
+	}
+	return o.to.Set(e, deepCopy(v))
+}
+
+// deepCopy copies maps, lists and bytes, so a value written into a record
+// shares nothing with the configuration, another record or itself.
+func deepCopy(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = deepCopy(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = deepCopy(item)
+		}
+		return out
+	case []byte:
+		return append([]byte(nil), v...)
+	}
+	return value
 }
 
 // timeConfig parses layouts without a zone in UTC (spec §3.7).
