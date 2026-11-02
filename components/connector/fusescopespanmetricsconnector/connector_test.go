@@ -437,3 +437,78 @@ func TestHistogramStorageCounts(t *testing.T) {
 		t.Errorf("%d latency series hold %d bytes of counters, over max_series_bytes", n, n*buckets*8)
 	}
 }
+
+// slowSink delivers after a delay, unless its context ends first.
+type slowSink struct {
+	consumertest.MetricsSink
+	delay  time.Duration
+	refuse error
+}
+
+func (s *slowSink) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
+	select {
+	case <-time.After(s.delay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if s.refuse != nil {
+		return s.refuse
+	}
+	return s.MetricsSink.ConsumeMetrics(ctx, md)
+}
+
+// Shutdown lets a flush in progress finish within its deadline, and reports
+// that flush's failure.
+func TestShutdownDrainsTheActiveFlush(t *testing.T) {
+	tests := []struct {
+		name    string
+		refuse  error
+		wantErr bool
+	}{
+		{"delivered", nil, false},
+		{"refused", errors.New("down"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.MetricsFlushInterval = 10 * time.Millisecond
+			sink := &slowSink{delay: 200 * time.Millisecond, refuse: tt.refuse}
+			c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), sink)
+			if err := c.Start(context.Background(), componenttest.NewNopHost()); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(50 * time.Millisecond) // the flush is now in progress
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			err := c.Shutdown(ctx)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Shutdown = %v, want error %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && sink.DataPointCount() == 0 {
+				t.Error("the flush in progress was cut short")
+			}
+		})
+	}
+}
+
+// A dimension holding an array is charged for its elements, not its text.
+func TestTypedValuesCountInBytes(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxSeriesBytes = 1 << 20
+	c := newConnector(cfg, connectortest.NewNopSettings(metadata.Type), consumertest.NewNop())
+	td := traceWith(500, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
+	arr := td.ResourceSpans().At(0).Resource().Attributes().PutEmptySlice("host.name")
+	for range 2_000 {
+		arr.AppendEmpty().SetInt(1)
+	}
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	// Each series holds the array twice (host.name and resource_host.name).
+	if held := c.total * 2 * 2_000 * 16; held > 2*cfg.MaxSeriesBytes {
+		t.Errorf("%d series hold about %d bytes of array elements, far over %d", c.total, held, cfg.MaxSeriesBytes)
+	}
+}

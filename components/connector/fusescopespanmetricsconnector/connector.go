@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -82,10 +83,13 @@ type spanMetricsConnector struct {
 	// flushMu serializes flushes.
 	flushMu sync.Mutex
 
-	// ctx ends periodic flushes on shutdown.
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   sync.WaitGroup
+	// quit stops scheduling flushes; cancel ends one in progress once the
+	// shutdown deadline passes. shutdownErr is the failure of a flush that was
+	// in progress when shutdown began.
+	quit        chan struct{}
+	cancel      context.CancelFunc
+	done        sync.WaitGroup
+	shutdownErr error
 
 	// scratch, used under mu
 	attrs []kv
@@ -133,7 +137,9 @@ func (c *spanMetricsConnector) Capabilities() consumer.Capabilities {
 }
 
 func (c *spanMetricsConnector) Start(context.Context, component.Host) error {
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+	var flushCtx context.Context
+	flushCtx, c.cancel = context.WithCancel(context.Background())
+	c.quit = make(chan struct{})
 	c.done.Add(1)
 	go func() {
 		defer c.done.Done()
@@ -141,25 +147,39 @@ func (c *spanMetricsConnector) Start(context.Context, component.Host) error {
 		defer t.Stop()
 		for {
 			select {
-			case <-c.ctx.Done():
+			case <-c.quit:
 				return
 			case <-t.C:
-				_ = c.flush(c.ctx)
+				err := c.flush(flushCtx)
+				select {
+				case <-c.quit:
+					c.shutdownErr = err
+					return
+				default:
+				}
 			}
 		}
 	}()
 	return nil
 }
 
-// Shutdown ends a periodic flush in progress, then emits what is still
-// aggregated within ctx, and reports if that last flush failed.
+// Shutdown stops scheduling flushes, lets one in progress finish within ctx,
+// then emits what is still aggregated, and reports either flush's failure.
 func (c *spanMetricsConnector) Shutdown(ctx context.Context) error {
-	if c.cancel != nil {
+	if c.quit != nil {
+		close(c.quit)
+		stopped := make(chan struct{})
+		go func() { c.done.Wait(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-ctx.Done():
+			c.cancel()
+			<-stopped
+		}
 		c.cancel()
-		c.done.Wait()
-		c.cancel = nil
+		c.quit = nil
 	}
-	return c.flush(ctx)
+	return errors.Join(c.shutdownErr, c.flush(ctx))
 }
 
 func (c *spanMetricsConnector) ConsumeTraces(_ context.Context, td ptrace.Traces) error {
@@ -295,7 +315,13 @@ func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series 
 	if s, ok := f.series[string(b)]; ok {
 		return s
 	}
-	// The series keeps its key and a copy of its attributes.
+	// The series keeps its key and a copy of its attributes; a typed value may
+	// hold more than its text, an array or map in particular.
+	for _, a := range attrs {
+		if a.typed {
+			size += max(valueBytes(a.src)-len(a.value), 0)
+		}
+	}
 	size += len(b) + seriesOverhead + f.bytes
 	if c.total+f.points > c.cfg.MaxSeries || c.bytes+size > c.cfg.MaxSeriesBytes {
 		c.dropped++
@@ -395,6 +421,31 @@ func (c *spanMetricsConnector) build() pmetric.Metrics {
 	sum("signoz_external_call_latency_count", "1", &c.external, count)
 	sum("signoz_external_call_latency_sum", "1", &c.external, total)
 	return md
+}
+
+// valueBytes estimates the memory a copy of v holds.
+func valueBytes(v pcommon.Value) int {
+	const entry = 32
+	switch v.Type() {
+	case pcommon.ValueTypeStr:
+		return entry + len(v.Str())
+	case pcommon.ValueTypeBytes:
+		return entry + v.Bytes().Len()
+	case pcommon.ValueTypeSlice:
+		n := entry
+		for _, e := range v.Slice().All() {
+			n += valueBytes(e)
+		}
+		return n
+	case pcommon.ValueTypeMap:
+		n := entry
+		for k, e := range v.Map().All() {
+			n += len(k) + valueBytes(e)
+		}
+		return n
+	default:
+		return entry
+	}
 }
 
 func point(m pcommon.Map, s *series) {
