@@ -69,7 +69,13 @@ This processor is **stricter** than the reference in these cases, which the refe
 - `add` without `value` ([O] `R_AddNoValue`);
 - `add` without `field` (not observed): the write would fail on every record, so `on_error: drop`
   would discard every matching log while the push is reported `APPLIED`;
-- a grok pattern naming an unknown pattern ([O] `R_GrokBadPattern`).
+- a grok pattern naming an unknown pattern, or one that is not a valid regular expression
+  ([O] `R_GrokBadPattern`, `Grok_InvalidPattern_ConfigError`): the reference starts and fails
+  the operator on every record, so `on_error` decides each record's fate while the push is
+  reported `APPLIED` ([B] `pipelinesim/operators.go:119-125`, which compiles the pattern per
+  record);
+- an expression naming `env` (§4.1, a deliberate deviation for security; [O] `X_Expr_Helpers`
+  uses it and is refused).
 
 The backend never generates these (§1.1), and ADR 0008's preflight requires unknown fields to fail,
 so a push with them is reported `FAILED` instead of running with an ignored field.
@@ -126,7 +132,23 @@ yields `""`; `%{X:name:int}` and `%{X:name:float}` convert. The match is unancho
 that does not match is not an error: the record goes on with an empty map written to `parse_to`
 (which replaces a non-map body). [B] `pipelinesim/operators.go:79-125`.
 
-**Not implemented in this build** (§7): a configuration with `grok_parser` is refused.
+The backend's simulator runs `github.com/vjeantet/grok` v1.0.1 (Apache-2.0) with
+`NamedCapturesOnly` and its default pattern set ([B] `pipelinesim/operators.go:96`, `pkg/grok`).
+This processor embeds the same library, its code unchanged, in `internal/grok` (its README lists the
+import's few changes, `NOTICE` credits it), and uses it the same way:
+
+- the default pattern set is the library's built-in map (`patterns.go`), not its `patterns/`
+  files, which are embedded but not loaded, so a name the reference does not know is not
+  accepted here either;
+- `%{X:name:int}` becomes an integer and `%{X:name:float}` a double ([O] `Grok_TypeConversions`,
+  `Pipeline_ManyOperatorsChain`); a capture that does not convert (not observed) becomes `0`, as
+  the library ignores the conversion error;
+- a dotted semantic name (`%{WORD:http.method}`) keeps its dots ([O] `Grok_DottedFieldNames`).
+
+The pattern is compiled when the operator is built, so an unknown pattern name or an invalid
+regular expression is refused (§1.2). Go's `regexp` (RE2) matches in time linear in the input
+without backtracking, so no pattern can take exponential time; it has no match timeout, and none
+is needed.
 
 ### 3.3 `json_parser`
 
@@ -176,7 +198,6 @@ integers, with `msg` renamed `message` when `message` is absent; any other body 
 | `timestamp` | the record time (`time.Time`) |
 | `severity_text`, `severity_number` | text and number |
 | `trace_id`, `span_id`, `trace_flags` | bytes (nil when unset) |
-| `env(name)` | the collector's environment variable |
 | `isJSON(v)` | whether a string or bytes is valid JSON |
 | `unquote(s)` | `s` without Go string quotes, or unchanged; an error for a non-string |
 
@@ -184,6 +205,23 @@ integers, with `msg` renamed `message` when `message` is absent; any other body 
 expr-lang built-ins (`type`, `fromJSON`, `lower`, `matches`, `in`, `??`, …) are available; the
 backend's filters use them (`pkg/query-service/queryBuilderToExpr/queryBuilderToExpr.go:55-110`).
 Undefined names are nil.
+
+**`env` is refused (deliberate deviation).** The reference also offers `env(name)`, the
+collector's environment variable ([B] `pipelineexpr/pipelineexpr.go:25-26,63,83-93`; [O]
+`X_Expr_Helpers`). Pipelines arrive over OpAMP, so `env` would let the backend, or anyone able
+to push, read the collector's environment into exported logs. ADR 0004 keeps credentials local
+and ADR 0008 lets a push change only processing; this is the expression counterpart of the
+refusal of `${...}` references in pushed blocks ([opamp](opamp.md) §6). So:
+
+- an expression (`if`, a route `expr`, an `EXPR(...)` value) that names `env`, called or not
+  (`let f = env; f("X")`), or `os_env_func`, the reference's internal name for it, does not
+  compile: the configuration is refused (§1.2), and a push using it fails preflight and is
+  reported `FAILED` with the operator named (`operator "op1" (add): …`), never the expression;
+- neither name is in the expression environment, so `$env["os_env_func"]` is nil.
+
+Fields and attributes named `env` (`attributes.env`, `attributes["env"]`, `"env" in resource`)
+are not affected. The backend never generates `env` (`pipelineBuilder.go`,
+`pkg/query-service/queryBuilderToExpr`).
 
 ### 4.2 Results
 
@@ -251,15 +289,10 @@ Records that leave the processor are rebuilt ([O] `X_Metadata_*`; [B] `pipelines
 
 ## 7. Not reproduced, open questions
 
-- **`grok_parser` is not in this build.** Parity needs the Logstash legacy pattern set and grok
-  semantics of §3.2; doing it requires a new dependency (for example `github.com/vjeantet/grok`,
-  Apache-2.0, which the backend's simulator vendors) or bundling the pattern definitions, which
-  needs a decision (CLAUDE.md, ADR 0005). Until then a push with a grok operator fails preflight and
-  is reported `FAILED`; [O] `Grok_*` are skipped by the golden test.
 - `body_map` leaking between records in the reference (§4.3) is not reproduced.
 - Group order in the output (§5.2) is not reproduced; nothing downstream depends on it.
 - Whether the reference's operators populate the parsed-body cache when they read `body.<field>`
   (§4.3), rather than reading the body separately, is not observable except through a later
   `attributes` expression; this processor uses the cache.
-- `env(name)` exposes the collector's environment to pipelines the backend pushes. ADR 0004 keeps
-  credentials in files, not the environment; the function is kept for parity.
+- `env(name)` is refused rather than reproduced (§4.1). [O] `X_Expr_Helpers` is refused as
+  observed; the golden test replays it with `env(...)` replaced by the value the reference read.
