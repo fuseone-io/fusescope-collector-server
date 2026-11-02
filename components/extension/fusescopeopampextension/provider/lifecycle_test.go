@@ -211,7 +211,14 @@ type running struct {
 
 func startCollector(t *testing.T, path string) *running {
 	t.Helper()
-	managedFactories = map[component.Type]processor.Factory{logsPipelineType: testProcessor()}
+	return startCollectorWith(t, path, map[component.Type]processor.Factory{logsPipelineType: testProcessor()})
+}
+
+// startCollectorWith runs the collector with managed the processors the
+// provider can preflight.
+func startCollectorWith(t *testing.T, path string, managed map[component.Type]processor.Factory) *running {
+	t.Helper()
+	managedFactories = managed
 	set := otelcol.CollectorSettings{
 		BuildInfo: component.BuildInfo{Command: "test", Version: "0"},
 		Factories: func() (otelcol.Factories, error) {
@@ -296,24 +303,41 @@ func TestFirstMessage(t *testing.T) {
 }
 
 func TestPushLifecycle(t *testing.T) {
+	unused := func(block map[string]any) func(cfg map[string]any) {
+		return func(cfg map[string]any) {
+			procs, _ := cfg["processors"].(map[string]any)
+			if procs == nil {
+				procs = map[string]any{}
+				cfg["processors"] = procs
+			}
+			procs["signozlogspipeline/pipeline_unused"] = block
+		}
+	}
 	tests := []struct {
 		name        string
 		edit        func(cfg map[string]any)
 		wantApplied bool
 		wantMessage string
 		forbidden   string
+		noFactory   bool
 	}{
-		{"log pipeline applied", func(cfg map[string]any) { addLogsPipeline(cfg, map[string]any{}) }, true, "", ""},
+		{"log pipeline applied", func(cfg map[string]any) { addLogsPipeline(cfg, map[string]any{}) }, true, "", "", false},
 		{"exporter changed", func(cfg map[string]any) {
 			cfg["exporters"].(map[string]any)["nop"] = map[string]any{"secret": "s3cr3t-value"}
-		}, false, "exporters.nop", "s3cr3t-value"},
-		{"preflight failure", func(cfg map[string]any) { addLogsPipeline(cfg, map[string]any{"fail_start": true}) }, false, "preflight", ""},
+		}, false, "exporters.nop", "s3cr3t-value", false},
+		{"preflight failure", func(cfg map[string]any) { addLogsPipeline(cfg, map[string]any{"fail_start": true}) }, false, "preflight", "", false},
+		{"unused declaration with a bad field", unused(map[string]any{"no_such": 1}), false, "no_such", "", false},
+		{"unused declaration of a type not in this build", unused(map[string]any{}), false, "not in this build", "", true},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := startBackend(t)
 			storage := t.TempDir()
-			r := startCollector(t, writeBase(t, b.endpoint, storage))
+			managed := map[component.Type]processor.Factory{logsPipelineType: testProcessor()}
+			if tt.noFactory {
+				managed = map[component.Type]processor.Factory{}
+			}
+			r := startCollectorWith(t, writeBase(t, b.endpoint, storage), managed)
 			hash := fmt.Sprintf("log_pipelines:%d", i+1)
 			b.push(hash, tt.edit)
 			st := b.status(hash)

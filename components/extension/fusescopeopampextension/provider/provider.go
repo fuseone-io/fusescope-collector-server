@@ -51,9 +51,14 @@ func (s *Settings) validate() error {
 		return errors.New("fusescope_opamp: wss:// with tls.insecure: true is contradictory")
 	case s.Storage == "":
 		return errors.New("fusescope_opamp.storage must name a directory")
+	case !s.TLS.Insecure && s.TLS.MinVersion != "" && s.TLS.MinVersion < minTLSVersion:
+		return fmt.Errorf("fusescope_opamp.tls.min_version must be at least %s (ADR 0004)", minTLSVersion)
 	}
 	return nil
 }
+
+// minTLSVersion is the floor of ADR 0004, also when min_version is unset.
+const minTLSVersion = "1.3"
 
 // managedFactories are the allow-listed processors this build can preflight;
 // each processor's PR adds itself.

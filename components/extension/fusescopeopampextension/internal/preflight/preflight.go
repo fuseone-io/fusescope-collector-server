@@ -24,20 +24,22 @@ import (
 	"go.uber.org/zap"
 )
 
-// Check builds, starts and shuts down every processor of procs, in the
+// Check validates every processor declaration of procs (its type in this
+// build, its config shape and Validate), since the collector decodes unused
+// declarations too, then builds, starts and shuts down each one in the
 // signal of each pipeline that lists it, within timeout each. A processor
-// whose Start outlasts timeout fails the check; its Shutdown still runs
-// once Start returns.
+// whose Start outlasts timeout fails the check; its Shutdown still runs once
+// Start returns.
 func Check(ctx context.Context, logger *zap.Logger, factories map[component.Type]processor.Factory,
 	procs map[string]any, pipelines map[string][]string, timeout time.Duration,
 ) error {
 	var errs []error
 	for name, raw := range procs {
-		signals := signalsOf(name, pipelines)
-		if len(signals) == 0 {
-			continue // declared but unused: the collector does not build it
+		if _, _, _, err := decode(factories, name, raw); err != nil {
+			errs = append(errs, fmt.Errorf("processor %q: %w", name, err))
+			continue
 		}
-		for _, sig := range signals {
+		for _, sig := range signalsOf(name, pipelines) {
 			if err := check(ctx, logger, factories, name, raw, sig, timeout); err != nil {
 				errs = append(errs, fmt.Errorf("processor %q in %s pipelines: %w", name, sig, err))
 			}
@@ -64,23 +66,32 @@ func signalsOf(name string, pipelines map[string][]string) []pipeline.Signal {
 	return out
 }
 
-func check(ctx context.Context, logger *zap.Logger, factories map[component.Type]processor.Factory,
-	name string, raw any, sig pipeline.Signal, timeout time.Duration,
-) error {
+// decode checks a declaration as the collector would decode it.
+func decode(factories map[component.Type]processor.Factory, name string, raw any) (component.ID, processor.Factory, component.Config, error) {
 	var id component.ID
 	if err := id.UnmarshalText([]byte(name)); err != nil {
-		return err
+		return id, nil, nil, err
 	}
 	f, ok := factories[id.Type()]
 	if !ok {
-		return fmt.Errorf("type %q is not in this build", id.Type())
+		return id, nil, nil, fmt.Errorf("type %q is not in this build", id.Type())
 	}
 	cfg := f.CreateDefaultConfig()
 	m, _ := raw.(map[string]any)
 	if err := confmap.NewFromStringMap(m).Unmarshal(cfg); err != nil {
-		return err
+		return id, nil, nil, err
 	}
 	if err := confmap.Validate(cfg); err != nil {
+		return id, nil, nil, err
+	}
+	return id, f, cfg, nil
+}
+
+func check(ctx context.Context, logger *zap.Logger, factories map[component.Type]processor.Factory,
+	name string, raw any, sig pipeline.Signal, timeout time.Duration,
+) error {
+	id, f, cfg, err := decode(factories, name, raw)
+	if err != nil {
 		return err
 	}
 	set := processor.Settings{
@@ -94,7 +105,6 @@ func check(ctx context.Context, logger *zap.Logger, factories map[component.Type
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var comp component.Component
-	var err error
 	switch sig {
 	case pipeline.SignalLogs:
 		comp, err = f.CreateLogs(ctx, set, cfg, consumertest.NewNop())

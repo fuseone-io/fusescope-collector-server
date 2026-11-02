@@ -61,6 +61,9 @@ func Open(dir string) (*Store, error) {
 	return &Store{dir: dir}, nil
 }
 
+// Dir is the state directory.
+func (s *Store) Dir() string { return s.dir }
+
 // InstanceUID returns the stored instance UID, creating it once.
 func (s *Store) InstanceUID() ([16]byte, error) {
 	var uid [16]byte
@@ -136,6 +139,15 @@ func (s *Store) Start() (Startup, error) {
 
 // Begin records p as pending before the reload that applies it.
 func (s *Store) Begin(p *Push) error { return s.writeJSON(pendingFile, p) }
+
+// Abort drops the pending push of revision, which will not be applied.
+func (s *Store) Abort(revision string) error {
+	pending, err := s.read(pendingFile)
+	if err != nil || pending == nil || pending.Revision != revision {
+		return err
+	}
+	return s.remove(pendingFile)
+}
 
 // Confirm records that revision runs. A pending push of that revision is
 // promoted to applied, persisted before Confirm returns it, so the caller

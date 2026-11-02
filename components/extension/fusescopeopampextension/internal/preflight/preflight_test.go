@@ -88,11 +88,29 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// A processor no pipeline lists is not built.
-func TestUnusedProcessorIsSkipped(t *testing.T) {
-	err := Check(context.Background(), zap.NewNop(), map[component.Type]processor.Factory{},
-		map[string]any{"signozlogspipeline/pipeline_a": map[string]any{}}, map[string][]string{"logs": {"batch"}}, time.Second)
-	if err != nil {
-		t.Errorf("Check = %v, want nil for an unused processor", err)
+// A declaration no pipeline lists is still decoded by the collector, so it
+// must be valid; it is not started.
+func TestUnusedDeclarations(t *testing.T) {
+	unused := map[string][]string{"logs": {"batch"}}
+	factories := map[component.Type]processor.Factory{testType: testFactory()}
+	tests := []struct {
+		name    string
+		types   map[component.Type]processor.Factory
+		raw     map[string]any
+		wantErr bool
+	}{
+		{"valid", factories, map[string]any{}, false},
+		{"not started, even if it would fail", factories, map[string]any{"fail_start": true}, false},
+		{"type not in this build", map[component.Type]processor.Factory{}, map[string]any{}, true},
+		{"unknown field", factories, map[string]any{"no_such": 1}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Check(context.Background(), zap.NewNop(), tt.types,
+				map[string]any{"signozlogspipeline/pipeline_a": tt.raw}, unused, time.Second)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Check = %v, want error %v", err, tt.wantErr)
+			}
+		})
 	}
 }

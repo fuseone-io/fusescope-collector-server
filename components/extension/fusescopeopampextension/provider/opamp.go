@@ -5,6 +5,7 @@ package provider // import "github.com/fuseone-io/fusescope-collector-server/com
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"runtime"
@@ -75,9 +76,9 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 		settings.RemoteConfigStatus = remoteStatus(*failed)
 	}
 	if !s.TLS.Insecure {
-		tlsCfg, err := s.TLS.LoadTLSConfig(ctx)
+		tlsCfg, err := clientTLS(ctx, s)
 		if err != nil {
-			return nil, fmt.Errorf("fusescope_opamp.tls: %w", err)
+			return nil, err
 		}
 		settings.TLSConfig = tlsCfg
 	}
@@ -85,6 +86,18 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 		return nil, fmt.Errorf("start OpAMP client: %w", err)
 	}
 	return oc, nil
+}
+
+// clientTLS loads the TLS settings with the TLS 1.3 floor of ADR 0004.
+func clientTLS(ctx context.Context, s *Settings) (*tls.Config, error) {
+	tlsCfg, err := s.TLS.LoadTLSConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fusescope_opamp.tls: %w", err)
+	}
+	if tlsCfg.MinVersion < tls.VersionTLS13 {
+		tlsCfg.MinVersion = tls.VersionTLS13
+	}
+	return tlsCfg, nil
 }
 
 func (oc *opampClient) onRemoteConfig(ctx context.Context, a *agent.Agent, rc *protobufs.AgentRemoteConfig) {

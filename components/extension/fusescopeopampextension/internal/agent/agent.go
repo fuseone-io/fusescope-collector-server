@@ -56,17 +56,28 @@ type Agent struct {
 	store     *state.Store
 	factories map[component.Type]processor.Factory
 
-	mu       sync.Mutex
-	base     merge.Config
-	running  merge.Config // merged configuration the collector runs or will
-	revision string       // injected into the extension; confirms running
-	applied  []byte       // body of the last applied push, merged again on a new base
-	pending  *state.Push
-	pendingM merge.Config
-	reload   func()
-	reporter Reporter
-	failed   *state.Push // from the last start, reported once connected
+	// lifecycle serializes the transitions of pending and applied pushes, on
+	// disk and in memory; mu guards the fields below and is taken inside it.
+	lifecycle sync.Mutex
+	mu        sync.Mutex
+	base      merge.Config
+	running   merge.Config // merged configuration the collector runs or will
+	revision  string       // injected into the extension; confirms running
+	applied   []byte       // body of the last applied push, merged again on a new base
+	pending   *state.Push
+	pendingM  merge.Config
+	reload    func()
+	reporter  Reporter
+	failed    *state.Push // from the last start, reported once connected
+	// ready is set once the startup graph reports Ready; until then a push
+	// matching what runs has its APPLIED deferred to deferred.
+	ready    bool
+	deferred []byte
+	// queued is the latest push received while another was pending.
+	queued *queuedPush
 }
+
+type queuedPush struct{ hash, body []byte }
 
 // New opens the agent's state.
 func New(logger *zap.Logger, dir string, factories map[component.Type]processor.Factory) (*Agent, error) {
@@ -80,6 +91,8 @@ func New(logger *zap.Logger, dir string, factories map[component.Type]processor.
 // InstanceUID is the agent's persistent identity.
 func (a *Agent) InstanceUID() ([16]byte, error) { return a.store.InstanceUID() }
 
+func (a *Agent) storeDir() string { return a.store.Dir() }
+
 // Start reads the persisted lifecycle and decides what the collector runs
 // first: the base merged again with the last applied push, if it still
 // fits the base, else the base alone. It returns a push that failed while
@@ -91,7 +104,7 @@ func (a *Agent) Start(base merge.Config) (*Status, error) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.base, a.running = base, base
+	a.base, a.running, a.revision = base, base, newRevision()
 	if st.DroppedCache {
 		a.logger.Warn("the last start from the cached OpAMP configuration never completed; running the local configuration alone")
 	}
@@ -119,10 +132,13 @@ func (a *Agent) SetReloader(reload func(), reporter Reporter) {
 // Config is what the provider returns: the merged configuration with the
 // revision to confirm injected into the extension's config.
 func (a *Agent) Config(base merge.Config) merge.Config {
+	a.lifecycle.Lock()
+	defer a.lifecycle.Unlock()
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var rejected *Status
 	if !equalConfig(a.base, base) {
-		// The local file changed: merge the applied push again on the new base.
+		// The local file changed: merge the applied and the pending push again
+		// on the new base, so neither brings back what the base changed.
 		a.base, a.running = base, base
 		if a.applied != nil {
 			if m, err := a.mergePush(base, a.applied); err != nil {
@@ -131,10 +147,26 @@ func (a *Agent) Config(base merge.Config) merge.Config {
 				a.running = m
 			}
 		}
+		if a.pending != nil {
+			if m, err := a.mergePush(base, a.pending.Config); err != nil {
+				rejected = &Status{Hash: a.pending.Hash, Message: err.Error()}
+				if aerr := a.store.Abort(a.pending.Revision); aerr != nil {
+					a.logger.Error("could not drop the pending OpAMP configuration", zap.Error(aerr))
+				}
+				a.pending, a.pendingM = nil, nil
+			} else {
+				a.pendingM = m
+			}
+		}
 	}
 	cfg, rev := a.running, a.revision
 	if a.pendingM != nil {
 		cfg, rev = a.pendingM, a.pending.Revision
+	}
+	reporter := a.reporter
+	a.mu.Unlock()
+	if rejected != nil && reporter != nil {
+		reporter.Report(*rejected)
 	}
 	return withRevision(cfg, rev)
 }
@@ -148,15 +180,22 @@ func (a *Agent) Effective() merge.Config {
 }
 
 // Push handles one pushed configuration and returns the status to report
-// now: a failure, or nil while the push is pending.
+// now: a failure, an immediate APPLIED, or nil while it is pending or queued.
 func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
 	fail := func(msg string) *Status { return &Status{Hash: hash, Message: msg} }
 	if len(body) > MaxPushBytes {
 		return fail(fmt.Sprintf("the pushed configuration exceeds %d bytes", MaxPushBytes))
 	}
 	a.mu.Lock()
-	base := a.base
+	base, busy := a.base, a.pending != nil
+	if busy {
+		// One pending revision at a time: the latest push waits for its confirmation.
+		a.queued = &queuedPush{hash: hash, body: body}
+	}
 	a.mu.Unlock()
+	if busy {
+		return nil
+	}
 	merged, err := a.mergePush(base, body)
 	if err != nil {
 		return fail(err.Error())
@@ -166,26 +205,47 @@ func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
 		return fail(fmt.Sprintf("the pushed configuration has more than %d managed processors", MaxManagedProcessors))
 	}
 	a.mu.Lock()
-	same := a.pending == nil && equalConfig(merged, a.running)
-	a.mu.Unlock()
-	if same {
-		// Already running, as after a reconnect: no reload needed.
-		return &Status{Hash: hash, Applied: true}
+	if equalConfig(merged, a.running) {
+		// Already running, as after a reconnect: no reload needed, but not
+		// APPLIED before the startup graph is confirmed.
+		ready := a.ready
+		if !ready {
+			a.deferred = hash
+		}
+		a.mu.Unlock()
+		if ready {
+			return &Status{Hash: hash, Applied: true}
+		}
+		return nil
 	}
+	a.mu.Unlock()
 	if !extensionEnabled(merged) {
 		return fail("the local configuration does not enable the " + ExtensionName + " extension, so the collector cannot confirm a push")
 	}
 	if err := preflight.Check(ctx, a.logger, a.factories, procs, pipelines, PreflightTimeout); err != nil {
 		return fail("preflight: " + err.Error())
 	}
+
+	a.lifecycle.Lock()
+	a.mu.Lock()
+	if a.pending != nil || !equalConfig(base, a.base) {
+		// Another push or a new base got in during preflight: try again after it.
+		a.queued = &queuedPush{hash: hash, body: body}
+		a.mu.Unlock()
+		a.lifecycle.Unlock()
+		return nil
+	}
+	a.mu.Unlock()
 	p := &state.Push{Hash: hash, Revision: newRevision(), Config: body}
 	if err := a.store.Begin(p); err != nil {
+		a.lifecycle.Unlock()
 		return fail("could not record the pending configuration")
 	}
 	a.mu.Lock()
 	a.pending, a.pendingM = p, merged
 	reload := a.reload
 	a.mu.Unlock()
+	a.lifecycle.Unlock()
 	if reload != nil {
 		reload()
 	}
@@ -193,24 +253,55 @@ func (a *Agent) Push(ctx context.Context, hash, body []byte) *Status {
 }
 
 // Confirm is called by the extension when revision runs. A pending push of
-// that revision is promoted on disk first, then reported APPLIED.
+// that revision is promoted on disk first, then reported APPLIED; a push
+// queued meanwhile is handled next.
 func (a *Agent) Confirm(revision string) {
+	a.lifecycle.Lock()
 	promoted, err := a.store.Confirm(revision)
 	if err != nil {
+		a.lifecycle.Unlock()
 		a.logger.Error("could not record the applied OpAMP configuration", zap.Error(err))
 		return
 	}
 	a.mu.Lock()
-	var reporter Reporter
+	var statuses []Status
+	changed := false
+	if revision == a.revision && !a.ready {
+		a.ready = true
+		if a.deferred != nil {
+			statuses = append(statuses, Status{Hash: a.deferred, Applied: true})
+			a.deferred = nil
+		}
+	}
 	if promoted != nil && a.pending != nil && a.pending.Revision == revision {
 		a.running, a.revision, a.applied = a.pendingM, revision, a.pending.Config
 		a.pending, a.pendingM = nil, nil
-		reporter = a.reporter
+		a.ready = true
+		statuses = append(statuses, Status{Hash: promoted.Hash, Applied: true})
+		changed = true
+	}
+	reporter, next := a.reporter, a.queued
+	if a.pending == nil {
+		a.queued = nil
+	} else {
+		next = nil
 	}
 	a.mu.Unlock()
+	a.lifecycle.Unlock()
 	if reporter != nil {
-		reporter.Report(Status{Hash: promoted.Hash, Applied: true})
-		reporter.EffectiveConfigChanged()
+		for _, st := range statuses {
+			reporter.Report(st)
+		}
+		if changed {
+			reporter.EffectiveConfigChanged()
+		}
+	}
+	if next != nil {
+		go func() {
+			if st := a.Push(context.Background(), next.hash, next.body); st != nil && reporter != nil {
+				reporter.Report(*st)
+			}
+		}()
 	}
 }
 
