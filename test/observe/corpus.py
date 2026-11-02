@@ -274,6 +274,10 @@ def apm_spans(t0):
         sub("address-urls", 3, 12, 13, {"http.url": "http://http-url.example.com/a", "url.full": "https://url-full.example.com/b"}),
         sub("address-string-port", 3, 12, 13, {"server.address": "string-port.example.com", "server.port": "8080"}),
         sub("address-peer-with-server-port", 3, 12, 13, {"net.peer.name": "mixed.example.com", "server.port": 8443}),
+        # http_host and external_http_url from one URL key, without an HTTP method.
+        sub("url-full-only-client", 3, 16, 17, {"url.full": "https://client-full.example.com/c"}),
+        sub("http-url-only-client", 3, 16, 17, {"http.url": "http://client-old.example.com/d"}),
+        sub("url-full-only-server", 2, 16, 17, {"url.full": "https://server-full.example.com/e"}),
     ]
 
 
@@ -424,6 +428,9 @@ def logs(t0):
         {"resource": {"attributes": attrs(CHECKOUT)}, "scopeLogs": [{"scope": SCOPE, "logRecords": records}]},
         {"resource": {"attributes": attrs(PROBE_RESOURCES[2])}, "scopeLogs": [
             {"scope": {"name": "probe", "attributes": attrs({"scope.attr": "x", "scope.n": 2})}, "logRecords": probes}]},
+        # A resource attribute with an empty value.
+        {"resource": {"attributes": attrs({"service.name": "probe-empty-res", "empty.res": ""})}, "scopeLogs": [
+            {"scope": SCOPE, "logRecords": [rec(20, 9, "INFO", "empty resource value", {})]}]},
     ]}
 
 
