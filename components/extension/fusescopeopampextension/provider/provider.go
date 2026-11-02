@@ -158,6 +158,9 @@ func (p *provider) reload() {
 }
 
 func (p *provider) Shutdown(ctx context.Context) error {
+	if p.agent != nil {
+		p.agent.Close()
+	}
 	p.mu.Lock()
 	c := p.client
 	p.mu.Unlock()

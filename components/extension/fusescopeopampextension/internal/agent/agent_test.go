@@ -453,3 +453,38 @@ func TestPushRetriedWhenBaseChangesDuringPreflight(t *testing.T) {
 		t.Errorf("the push was not merged on the changed base:\n%s", fmtConfig(a.Effective()))
 	}
 }
+
+// Close ends a confirmation retry loop that would otherwise run while the
+// revision stays pending.
+func TestCloseStopsConfirmRetry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	a, _, _ := started(t, base)
+	a.Confirm(revisionOf(a))
+	_ = a.Push(context.Background(), []byte("h1"), []byte(push))
+	dir := a.storeDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	a.Confirm(revisionOf(a))
+	a.mu.Lock()
+	retrying := a.retrying
+	a.mu.Unlock()
+	if !retrying {
+		t.Fatal("the failed confirmation is not being retried")
+	}
+	closed := make(chan struct{})
+	go func() { a.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not stop the retry loop")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.retrying {
+		t.Error("the retry loop still runs after Close")
+	}
+}

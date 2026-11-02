@@ -81,8 +81,12 @@ type Agent struct {
 	// numbers pushes in arrival order, so an older one never replaces a newer.
 	queued *queuedPush
 	seq    uint64
-	// retrying is set while a confirmation that could not be recorded is retried.
+	// retrying is set while a confirmation that could not be recorded is
+	// retried; Close closes done and waits for the retry loop in retries.
 	retrying bool
+	done     chan struct{}
+	closed   bool
+	retries  sync.WaitGroup
 	// reportReady is set when the local configuration changed: once its
 	// revision is Ready, the new effective configuration is reported.
 	reportReady bool
@@ -104,7 +108,7 @@ func New(logger *zap.Logger, dir string, factories map[component.Type]processor.
 	if err != nil {
 		return nil, fmt.Errorf("open OpAMP state %s: %w", dir, err)
 	}
-	return &Agent{logger: logger, store: store, factories: factories}, nil
+	return &Agent{logger: logger, store: store, factories: factories, done: make(chan struct{})}, nil
 }
 
 // InstanceUID is the agent's persistent identity.
@@ -370,17 +374,23 @@ func (a *Agent) Confirm(revision string) {
 // succeeds; the push stays pending, and unreported, until then.
 func (a *Agent) retryConfirm(revision string) {
 	a.mu.Lock()
-	if a.retrying {
+	if a.retrying || a.closed {
 		a.mu.Unlock()
 		return
 	}
 	a.retrying = true
+	a.retries.Add(1)
 	a.mu.Unlock()
 	go func() {
+		defer a.retries.Done()
 		defer func() { a.mu.Lock(); a.retrying = false; a.mu.Unlock() }()
 		delay := confirmRetryStart
 		for {
-			time.Sleep(delay)
+			select {
+			case <-time.After(delay):
+			case <-a.done:
+				return
+			}
 			a.mu.Lock()
 			pending := a.pending != nil && a.pending.Revision == revision
 			startup := revision == a.revision && !a.ready
@@ -395,6 +405,17 @@ func (a *Agent) retryConfirm(revision string) {
 			delay = min(2*delay, confirmRetryMax)
 		}
 	}()
+}
+
+// Close stops retrying confirmations and waits for the retry loop to end.
+func (a *Agent) Close() {
+	a.mu.Lock()
+	if !a.closed {
+		a.closed = true
+		close(a.done)
+	}
+	a.mu.Unlock()
+	a.retries.Wait()
 }
 
 func (a *Agent) confirm(revision string) error {
