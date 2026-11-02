@@ -51,13 +51,8 @@ func byLabels(t *testing.T, rows, series []row) []row {
 	return out
 }
 
-// metadataCap is the most metadata rows the reference was seen to keep; at
-// the cap it drops the rest, which the exporter writes (metrics §5).
-const metadataCap = 1000
-
 func TestMetricsMatchObservedRows(t *testing.T) {
 	enc := encodeObservedMetrics(t)
-	atCap := len(readObserved(t, "signoz_metrics", "metadata")) == metadataCap
 	wantSeries := readObserved(t, "signoz_metrics", "time_series_v4")
 	gotSeries := blockRows(enc.series.input())
 
@@ -78,15 +73,7 @@ func TestMetricsMatchObservedRows(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.table, func(t *testing.T) {
-			want, got := indexRows(t, tt.want, tt.key, tt.ignore), indexRows(t, tt.got, tt.key, tt.ignore)
-			if tt.table == "metadata" && atCap {
-				for k := range got {
-					if _, ok := want[k]; !ok {
-						delete(got, k)
-					}
-				}
-			}
-			compareRows(t, want, got)
+			compareRows(t, indexRows(t, tt.want, tt.key, tt.ignore), indexRows(t, tt.got, tt.key, tt.ignore))
 		})
 	}
 }
