@@ -85,7 +85,8 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 - `FAILED` lists the configuration paths that differed, never values.
 - A push is preflighted; `APPLIED` is reported, and the push cached, only once the new graph
   is confirmed running; a push that stops the collector is reported `FAILED` at the next start
-  (ADR 0008, reload lifecycle).
+  (ADR 0008, reload lifecycle), and that failure is kept on disk until the backend answers, so
+  restarts while it is unreachable do not lose it.
 
 ## 7. Backend behaviour the collector does not depend on
 
@@ -98,3 +99,37 @@ Recorded so it is not mistaken for collector bugs ([fuseone-io/fusescope#261](ht
 - the span mapping and LLM pricing features have no element type, so their part of the hash
   is `:<version>` and their status rows are likely never updated
   (`pkg/types/opamptypes/agent.go:126-138`, `manager.go:112-133`).
+
+## 8. Running it
+
+The collector runs with `--config fusescopeopamp:<file>`. The file is the base configuration
+plus a top-level section that never reaches the collector:
+
+```yaml
+fusescope_opamp:
+  endpoint: wss://backend:4320/v1/opamp   # ws:// only with tls.insecure: true
+  tls: {ca_file: /etc/fusescope/ca.pem}   # configtls client settings
+  storage: /var/lib/fusescope-collector/opamp
+extensions:
+  fusescope_opamp: {}                     # confirms pushes; required
+service:
+  extensions: [fusescope_opamp]
+  pipelines:
+    logs: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [fusescope_clickhouse]}
+    traces: {receivers: [otlp], processors: [memory_limiter, signozspanmapper, batch, signozllmpricing], exporters: [fusescope_clickhouse]}
+```
+
+The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
+in it itself (`$$` for a literal `$`); other substitution schemes are not available there. A change
+of these settings takes a restart: the reload after it fails with an error saying so.
+
+The provider refuses a base configuration without the `fusescope_opamp` extension. The OpAMP
+client starts, and the start is recorded on disk, only when that extension starts, so `validate`
+neither connects to the backend nor changes the persisted state. A change of the local file is a
+new revision too: once its graph is `Ready`, the new effective configuration is reported, and a
+push being preflighted meanwhile is merged again on the new base.
+
+Limits, each rejecting a push with `FAILED`: 4 MiB of pushed YAML, 256 allow-listed processors,
+10 s for each processor's preflight start. A processor type this build lacks fails the
+preflight, so pushes with it are rejected until the build has it.
+

@@ -22,8 +22,9 @@ contrib OpAMP supervisor restarts the collector with whatever the server sends.
 
 ## Decision
 
-1. **A confmap provider, `fusescope_opamp`,** is the collector's configuration source. Run as
-   `--config fusescope_opamp:/etc/fusescope-collector/config.yaml`, it:
+1. **A confmap provider, `fusescopeopamp`,** is the collector's configuration source (URI schemes
+   allow no underscore; the companion extension is `fusescope_opamp`). Run as
+   `--config fusescopeopamp:/etc/fusescope-collector/config.yaml`, it:
    - reads the local file, the base configuration, and removes its top-level
      `fusescope_opamp:` section, which holds the provider's own settings (endpoint, TLS,
      storage);
