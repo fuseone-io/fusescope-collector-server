@@ -1,0 +1,530 @@
+[
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_p1\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor failed to compile expression 'body != nil && body matches \"^(?P<x>[A-Z+\"': error parsing regexp: missing closing ]: `[A-Z+` (1:21)\n | body != nil && body matches \"^(?P<x>[A-Z+\"\n | ....................^",
+  "name": "Regex_InvalidRegex_ConfigError",
+  "origin": "backend",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_p1\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor no named capture groups in regex pattern",
+  "name": "Regex_NoNamedGroup",
+  "origin": "backend",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : invalid configuration: processors::signozlogspipeline/c0_pipeline_p1::baseconfig::operators::1::builder: invalid `layout` for `epoch` type\nprocessors::signozlogspipeline/c0_pipeline_p1::baseconfig::operators::1::builder::timeparser: invalid `layout` for `epoch` type",
+  "name": "Time_EpochInvalidLayout_ConfigError",
+  "origin": "backend",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_p1\": decoding failed due to the following error(s):\n\n'operators[1]' unsupported type 'retain'",
+  "name": "Retain_Fields",
+  "origin": "backend",
+  "starts": false
+ },
+ {
+  "error": "",
+  "name": "R_UnknownOperatorField",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'signozlogspipelineprocessor.Config' has invalid keys: extra",
+  "name": "R_UnknownProcessorField",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : invalid configuration: processors::signozlogspipeline/c0_pipeline_x: no operators were configured for signozlogspipeline processor",
+  "name": "R_NoOperatorsKey",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : invalid configuration: processors::signozlogspipeline/c0_pipeline_x: no operators were configured for signozlogspipeline processor",
+  "name": "R_EmptyOperators",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor operator with id 'op' already exists in pipeline",
+  "name": "R_DuplicateID",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor operator 'missing' does not exist: {\"operator_id\":\"op\"}",
+  "name": "R_OutputUnknown",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor pipeline has a circular dependency: {\"cycles\":\"(a -\\u003e b -\\u003e a)\"}",
+  "name": "R_Cycle",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor failed to compile expression 'body ==': unexpected token EOF (1:7)\n | body ==\n | ......^",
+  "name": "R_BadIfExpr",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor failed to compile expression 'body ==': unexpected token EOF (1:7)\n | body ==\n | ......^",
+  "name": "R_BadRouteExpr",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor operator config has an invalid `on_error` field.: {\"on_error\":\"bogus\"}",
+  "name": "R_BadOnError",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' unsupported type 'key_value_parser'",
+  "name": "R_UnknownType_KeyValue",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' unsupported type 'filter'",
+  "name": "R_UnknownType_Filter",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' unsupported type 'flatten'",
+  "name": "R_UnknownType_Flatten",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' unsupported type 'bogus'",
+  "name": "R_UnknownType_Bogus",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' missing required field 'type'",
+  "name": "R_NoType",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "",
+  "name": "R_SeverityBadMappingKey",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' unmarshal to add: decoding failed due to the following error(s):\n\n'field' unrecognized prefix",
+  "name": "R_BadField",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "",
+  "name": "R_GrokBadPattern",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor missing required field 'pattern'",
+  "name": "R_GrokNoPattern",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[0]' unmarshal to json_parser: decoding failed due to the following error(s):\n\n'max_flattening_depth' expected type 'int', got unconvertible type 'string'",
+  "name": "R_JSONBadDepthType",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "failed to start collector service: failed to start : invalid configuration: processors::signozlogspipeline/c0_pipeline_x::baseconfig::operators::0::builder: unsupported layout_type moment\nprocessors::signozlogspipeline/c0_pipeline_x::baseconfig::operators::0::builder::timeparser: unsupported layout_type moment",
+  "name": "R_TimeBadLayoutType",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "",
+  "name": "R_AddNoValue",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to build pipelines: failed to create \"signozlogspipeline/c0_pipeline_x\" processor, in pipeline \"logs/c0\": couldn't build \"signozlogspipeline\" processor failed to compile expression '': unexpected token EOF (1:3)\n | 1 +\n | ..^",
+  "name": "R_AddBadExpr",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "",
+  "name": "R_UnknownTraceField",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "R_OK_Probe",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_Passthrough",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_RouterTypeOf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_Regex",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_RegexNoIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_RegexNoIfDrop",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_JSON",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_JSONToBodyFlatten",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_Grok",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_FieldAccess",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_FilterOnBodyField",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_BodyFieldWithoutIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_SeverityFromBody",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Bodies_RemoveBody",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Metadata_AddAttribute",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Metadata_SplitResource",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Metadata_MoveToResource",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Metadata_Untouched",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Metadata_TwoPipelines",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Order_ServiceListWins",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_IfRuntimeErrorSend",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_IfRuntimeErrorDrop",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_IfRuntimeErrorDefault",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_RouteRuntimeError",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_ValueRuntimeError",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_ValueRuntimeErrorSend",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_Helpers",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_Expr_BodyMapVariable",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_JSON_Nulls",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_JSON_NullsFlatten",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "failed to start collector service: failed to start : failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):\n\n'processors' error reading configuration for \"signozlogspipeline/c0_pipeline_x\": decoding failed due to the following error(s):\n\n'operators[2]' unmarshal to copy: decoding failed due to the following error(s):\n\n'from' attributes cannot be referenced without subfield",
+  "name": "X_ParsedBodyCache_Leak",
+  "origin": "hand-written",
+  "starts": false
+ },
+ {
+  "error": "",
+  "name": "X_ParsedBodyCache_Visible",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_ParsedBodyCache_Stale",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_ParsedBodyCache_AcrossPipelines",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_OnlyNoop",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_IDDefaultsToType",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_ImplicitChain",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_RouterNoDefault",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_StanzaIfOnly",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_AddNonString",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Severity",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Severity_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Time",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Time_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Trace",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Trace_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Regex",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Regex_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_JSON",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_JSON_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Copy",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Copy_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Move",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Move_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Remove",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_Remove_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_AddField",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_AddField_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_MoveToBodyField",
+  "origin": "hand-written",
+  "starts": true
+ },
+ {
+  "error": "",
+  "name": "X_BodyField_MoveToBodyField_AfterIf",
+  "origin": "hand-written",
+  "starts": true
+ }
+]
