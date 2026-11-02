@@ -110,7 +110,7 @@ fusescope_opamp:
   tls: {ca_file: /etc/fusescope/ca.pem}   # configtls client settings
   storage: /var/lib/fusescope-collector/opamp
 extensions:
-  fusescope_opamp: {}                     # confirms pushes; required to accept any
+  fusescope_opamp: {}                     # confirms pushes; required
 service:
   extensions: [fusescope_opamp]
   pipelines:
@@ -121,6 +121,12 @@ service:
 The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
 in it itself (`$$` for a literal `$`); other substitution schemes are not available there. A change
 of these settings takes a restart: the reload after it fails with an error saying so.
+
+The provider refuses a base configuration without the `fusescope_opamp` extension. The OpAMP
+client starts, and the start is recorded on disk, only when that extension starts, so `validate`
+neither connects to the backend nor changes the persisted state. A change of the local file is a
+new revision too: once its graph is `Ready`, the new effective configuration is reported, and a
+push being preflighted meanwhile is merged again on the new base.
 
 Limits, each rejecting a push with `FAILED`: 4 MiB of pushed YAML, 256 allow-listed processors,
 10 s for each processor's preflight start. A processor type this build lacks fails the

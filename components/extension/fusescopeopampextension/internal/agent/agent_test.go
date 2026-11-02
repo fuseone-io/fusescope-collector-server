@@ -64,7 +64,7 @@ func TestCacheRevalidatedAgainstNewBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Start(mustParse(t, base)); err != nil {
+	if _, err := a.Load(mustParse(t, base)); err != nil {
 		t.Fatal(err)
 	}
 	// Record an applied push without a build of its processor.
@@ -76,9 +76,7 @@ func TestCacheRevalidatedAgainstNewBase(t *testing.T) {
 	}
 
 	same, _ := New(zap.NewNop(), dir, nil)
-	if _, err := same.Start(mustParse(t, base)); err != nil {
-		t.Fatal(err)
-	}
+	load(t, same, base)
 	if !strings.Contains(fmtConfig(same.Effective()), "pipeline_a") {
 		t.Error("the cached push was not merged on the unchanged base")
 	}
@@ -86,12 +84,45 @@ func TestCacheRevalidatedAgainstNewBase(t *testing.T) {
 
 	upgraded := strings.Replace(base, "endpoint: local", "endpoint: upgraded", 1)
 	next, _ := New(zap.NewNop(), dir, nil)
-	if _, err := next.Start(mustParse(t, upgraded)); err != nil {
-		t.Fatal(err)
-	}
+	load(t, next, upgraded)
 	eff := fmtConfig(next.Effective())
 	if strings.Contains(eff, "pipeline_a") || !strings.Contains(eff, "upgraded") {
 		t.Errorf("a push the new base rejects must not revert it; effective:\n%s", eff)
+	}
+}
+
+// load loads base and activates, as a collector start does.
+func load(t *testing.T, a *Agent, base string) {
+	t.Helper()
+	if _, err := a.Load(mustParse(t, base)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Loading, as validating the configuration does, records no start: however
+// often it runs, a start after it still uses the cache.
+func TestLoadRecordsNoStart(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := New(zap.NewNop(), dir, nil)
+	load(t, a, base)
+	_ = a.store.Begin(&pushRecord{Hash: []byte("h1"), Revision: "r1", Config: []byte(push)})
+	_, _ = a.store.Confirm("r1")
+	for range 3 {
+		v, _ := New(zap.NewNop(), dir, nil)
+		if _, err := v.Load(mustParse(t, base)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "starting.json")); err == nil {
+		t.Fatal("loading the configuration left a startup marker")
+	}
+	next, _ := New(zap.NewNop(), dir, nil)
+	load(t, next, base)
+	if !strings.Contains(fmtConfig(next.Effective()), "pipeline_a") {
+		t.Error("the start after validations dropped the cached push")
 	}
 }
 
@@ -103,12 +134,13 @@ func fmtConfig(m map[string]any) string {
 // --- lifecycle races and ordering ---
 
 type recorder struct {
-	mu       sync.Mutex
-	statuses []Status
+	mu        sync.Mutex
+	statuses  []Status
+	effective atomic.Int32
 }
 
 func (r *recorder) Report(st Status)        { r.mu.Lock(); r.statuses = append(r.statuses, st); r.mu.Unlock() }
-func (r *recorder) EffectiveConfigChanged() {}
+func (r *recorder) EffectiveConfigChanged() { r.effective.Add(1) }
 func (r *recorder) find(hash string) *Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -131,13 +163,16 @@ func okFactory() processor.Factory {
 
 func started(t *testing.T, base string) (*Agent, *recorder, *atomic.Int32) {
 	t.Helper()
-	a, err := New(zap.NewNop(), t.TempDir(), map[component.Type]processor.Factory{logsType: okFactory()})
+	return startedWith(t, base, okFactory())
+}
+
+func startedWith(t *testing.T, base string, f processor.Factory) (*Agent, *recorder, *atomic.Int32) {
+	t.Helper()
+	a, err := New(zap.NewNop(), t.TempDir(), map[component.Type]processor.Factory{logsType: f})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Start(mustParse(t, base)); err != nil {
-		t.Fatal(err)
-	}
+	load(t, a, base)
 	r := &recorder{}
 	reloads := &atomic.Int32{}
 	a.SetReloader(func() { reloads.Add(1) }, r)
@@ -283,9 +318,7 @@ func TestStartupConfirmRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.Start(mustParse(t, base)); err != nil {
-		t.Fatal(err)
-	}
+	load(t, first, base)
 	first.SetReloader(func() {}, &recorder{})
 	first.Confirm(revisionOf(first))
 	_ = first.Push(context.Background(), []byte("h1"), []byte(push))
@@ -295,9 +328,7 @@ func TestStartupConfirmRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Start(mustParse(t, base)); err != nil { // starts from the cache
-		t.Fatal(err)
-	}
+	load(t, a, base) // starts from the cache
 	r := &recorder{}
 	a.SetReloader(func() {}, r)
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -362,5 +393,63 @@ func TestMatchingPushWaitsForARecordingOne(t *testing.T) {
 	waitFor(t, func() bool { st := r.find("newer"); return st != nil && st.Applied })
 	if strings.Contains(fmtConfig(a.Effective()), "pipeline_a") {
 		t.Error("the older push overwrote the newer one")
+	}
+}
+
+// A local configuration change is a new graph: once Ready, the new effective
+// configuration is reported, so the backend edits what runs.
+func TestLocalReloadReportsEffective(t *testing.T) {
+	a, r, _ := started(t, base)
+	startRev := revisionOf(a)
+	a.Confirm(startRev)
+	changed := mustParse(t, strings.Replace(base, "endpoint: local", "endpoint: changed", 1))
+	cfg := a.Config(changed)
+	rev := cfg["extensions"].(map[string]any)[ExtensionName].(map[string]any)["revision"].(string)
+	if rev == startRev {
+		t.Fatal("the changed local configuration kept the old revision")
+	}
+	if n := r.effective.Load(); n != 0 {
+		t.Fatalf("effective configuration reported %d times before Ready", n)
+	}
+	a.Confirm(rev)
+	if n := r.effective.Load(); n != 1 {
+		t.Errorf("effective configuration reported %d times after Ready; want 1", n)
+	}
+	if !strings.Contains(fmtConfig(a.Effective()), "changed") {
+		t.Error("the effective configuration is not the changed one")
+	}
+}
+
+// A local reload during a push's preflight, with nothing pending, makes the
+// push merge again at once on the new base, not wait in the queue.
+func TestPushRetriedWhenBaseChangesDuringPreflight(t *testing.T) {
+	var a *Agent
+	var once sync.Once
+	// A local log pipeline: the push's own log pipelines replace it, so the
+	// push still fits the changed base.
+	changed := strings.Replace(base, "processors: []", "processors: [signozlogspipeline/pipeline_local]", 1) +
+		"processors: {signozlogspipeline/pipeline_local: {}}\n"
+	f := processor.NewFactory(logsType, func() component.Config { return &struct{}{} },
+		processor.WithLogs(func(ctx context.Context, set processor.Settings, c component.Config, next consumer.Logs) (processor.Logs, error) {
+			return processorhelper.NewLogs(ctx, set, c, next, func(_ context.Context, ld plog.Logs) (plog.Logs, error) { return ld, nil },
+				processorhelper.WithStart(func(context.Context, component.Host) error {
+					once.Do(func() { a.Config(mustParse(t, changed)) })
+					return nil
+				}))
+		}, component.StabilityLevelAlpha))
+	a, r, reloads := startedWith(t, base, f)
+	a.Confirm(revisionOf(a))
+	if st := a.Push(context.Background(), []byte("h1"), []byte(push)); st != nil {
+		t.Fatalf("push = %+v; want pending", st)
+	}
+	if reloads.Load() != 1 {
+		t.Fatalf("reloads = %d; the push waited instead of merging again", reloads.Load())
+	}
+	a.Confirm(revisionOf(a))
+	if st := r.find("h1"); st == nil || !st.Applied {
+		t.Fatalf("h1 = %+v; want APPLIED", st)
+	}
+	if !equalConfig(a.base, mustParse(t, changed)) || !strings.Contains(fmtConfig(a.Effective()), "pipeline_a") {
+		t.Errorf("the push was not merged on the changed base:\n%s", fmtConfig(a.Effective()))
 	}
 }

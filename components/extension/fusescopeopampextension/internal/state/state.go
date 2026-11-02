@@ -93,8 +93,19 @@ type Startup struct {
 	DroppedCache bool
 }
 
-// Start reads the state at start and marks a start from the cache.
+// Peek reports what Start would find, without writing anything, so that
+// validating a configuration leaves the state as it was.
+func (s *Store) Peek() (Startup, error) {
+	return s.start(false)
+}
+
+// Start reads the state when the collector really starts, and records it:
+// it clears a failed pending push and marks a start from the cache.
 func (s *Store) Start() (Startup, error) {
+	return s.start(true)
+}
+
+func (s *Store) start(write bool) (Startup, error) {
 	var st Startup
 	applied, err := s.read(appliedFile)
 	if err != nil {
@@ -113,24 +124,30 @@ func (s *Store) Start() (Startup, error) {
 		if applied == nil || applied.Revision != pending.Revision {
 			st.Failed = pending
 		}
-		if err := s.remove(pendingFile); err != nil {
-			return st, err
+		if write {
+			if err := s.remove(pendingFile); err != nil {
+				return st, err
+			}
 		}
 	}
 	if starting != nil && applied != nil && starting.Revision == applied.Revision {
 		// The last start from this cache never reached Ready.
 		st.DroppedCache = true
-		if err := s.remove(appliedFile); err != nil {
-			return st, err
-		}
-		if err := s.remove(startingFile); err != nil {
-			return st, err
+		if write {
+			if err := s.remove(appliedFile); err != nil {
+				return st, err
+			}
+			if err := s.remove(startingFile); err != nil {
+				return st, err
+			}
 		}
 		return st, nil
 	}
 	if applied != nil {
-		if err := s.writeJSON(startingFile, &Push{Revision: applied.Revision}); err != nil {
-			return st, err
+		if write {
+			if err := s.writeJSON(startingFile, &Push{Revision: applied.Revision}); err != nil {
+				return st, err
+			}
 		}
 		st.Applied = applied
 	}

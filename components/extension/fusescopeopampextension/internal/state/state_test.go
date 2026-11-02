@@ -179,3 +179,22 @@ func TestConfirmRetryAfterPromotion(t *testing.T) {
 		})
 	}
 }
+
+// Peek, as configuration validation uses it, changes nothing on disk.
+func TestPeekWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir, "")
+	_ = s.Begin(push("r1"))
+	_, _ = s.Confirm("r1")
+	_ = s.Begin(push("r2")) // a pending push the collector never confirmed
+	for range 3 {
+		st, err := open(t, dir, "").Peek()
+		if err != nil || revision(st.Applied) != "r1" || revision(st.Failed) != "r2" {
+			t.Fatalf("Peek = %+v, %v", st, err)
+		}
+	}
+	st, _ := open(t, dir, "").Start()
+	if revision(st.Applied) != "r1" || revision(st.Failed) != "r2" {
+		t.Errorf("Start after Peek = applied %q, failed %q; want r1 and r2", revision(st.Applied), revision(st.Failed))
+	}
+}

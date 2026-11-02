@@ -219,8 +219,25 @@ func startCollector(t *testing.T, path string) *running {
 // provider can preflight.
 func startCollectorWith(t *testing.T, path string, managed map[component.Type]processor.Factory) *running {
 	t.Helper()
+	col, err := otelcol.NewCollector(collectorSettings(path, managed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &running{col: col, done: make(chan error, 1)}
+	go func() { r.done <- col.Run(context.Background()) }()
+	t.Cleanup(func() {
+		col.Shutdown()
+		select {
+		case <-r.done:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	return r
+}
+
+func collectorSettings(path string, managed map[component.Type]processor.Factory) otelcol.CollectorSettings {
 	managedFactories = managed
-	set := otelcol.CollectorSettings{
+	return otelcol.CollectorSettings{
 		BuildInfo: component.BuildInfo{Command: "test", Version: "0"},
 		Factories: func() (otelcol.Factories, error) {
 			f := otelcol.Factories{Telemetry: otelconftelemetry.NewFactory()}
@@ -242,20 +259,6 @@ func startCollectorWith(t *testing.T, path string, managed map[component.Type]pr
 			ProviderFactories: []confmap.ProviderFactory{NewFactory()},
 		}},
 	}
-	col, err := otelcol.NewCollector(set)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &running{col: col, done: make(chan error, 1)}
-	go func() { r.done <- col.Run(context.Background()) }()
-	t.Cleanup(func() {
-		col.Shutdown()
-		select {
-		case <-r.done:
-		case <-time.After(5 * time.Second):
-		}
-	})
-	return r
 }
 
 func (r *running) stillRunning(t *testing.T) {
@@ -450,4 +453,46 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// Validating the configuration, as `validate` does, neither connects to the
+// backend nor records a start, so the next start still runs the cached push.
+func TestValidateKeepsState(t *testing.T) {
+	b := startBackend(t)
+	storage := t.TempDir()
+	path := writeBase(t, b.endpoint, storage)
+	managed := map[component.Type]processor.Factory{logsPipelineType: testProcessor()}
+	r := startCollectorWith(t, path, managed)
+	b.push("log_pipelines:1", func(cfg map[string]any) { addLogsPipeline(cfg, map[string]any{}) })
+	if st := b.status("log_pipelines:1"); st.GetStatus() != protobufs.RemoteConfigStatuses_RemoteConfigStatuses_APPLIED {
+		t.Fatalf("status %v %q", st.GetStatus(), st.GetErrorMessage())
+	}
+	r.col.Shutdown()
+	<-r.done
+
+	other := startBackend(t)
+	for range 2 {
+		col, err := otelcol.NewCollector(collectorSettings(writeBase(t, other.endpoint, storage), managed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := col.DryRun(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	other.mu.Lock()
+	connected := other.first != nil
+	other.mu.Unlock()
+	if connected {
+		t.Error("validating the configuration connected to the backend")
+	}
+	if _, err := os.Stat(filepath.Join(storage, "starting.json")); err == nil {
+		t.Fatal("validating the configuration left a startup marker")
+	}
+
+	startCollectorWith(t, writeBase(t, other.endpoint, storage), managed)
+	other.waitFor("the cached push to run", func() bool {
+		return strings.Contains(string(other.effective), "signozlogspipeline/pipeline_test")
+	})
 }

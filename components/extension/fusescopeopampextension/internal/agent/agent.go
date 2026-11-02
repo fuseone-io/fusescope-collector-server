@@ -83,6 +83,12 @@ type Agent struct {
 	seq    uint64
 	// retrying is set while a confirmation that could not be recorded is retried.
 	retrying bool
+	// reportReady is set when the local configuration changed: once its
+	// revision is Ready, the new effective configuration is reported.
+	reportReady bool
+	// activate runs once the collector really starts; activated is set then.
+	activate  func(context.Context) error
+	activated bool
 	// beforeBegin, set in tests, runs while a push is being recorded.
 	beforeBegin func()
 }
@@ -106,12 +112,13 @@ func (a *Agent) InstanceUID() ([16]byte, error) { return a.store.InstanceUID() }
 
 func (a *Agent) storeDir() string { return a.store.Dir() }
 
-// Start reads the persisted lifecycle and decides what the collector runs
+// Load reads the persisted lifecycle and decides what the collector runs
 // first: the base merged again with the last applied push, if it still
 // fits the base, else the base alone. It returns a push that failed while
-// being applied before the last exit, to report FAILED.
-func (a *Agent) Start(base merge.Config) (*Status, error) {
-	st, err := a.store.Start()
+// being applied before the last exit, to report FAILED. It writes nothing,
+// since validating a configuration loads it too; Activate records the start.
+func (a *Agent) Load(base merge.Config) (*Status, error) {
+	st, err := a.store.Peek()
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +142,37 @@ func (a *Agent) Start(base merge.Config) (*Status, error) {
 	return nil, nil
 }
 
+// OnActivate sets what Activate runs once the start is recorded.
+func (a *Agent) OnActivate(fn func(context.Context) error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.activate = fn
+}
+
+// Activate is called by the extension when the collector starts its graph;
+// only the first call does anything. It records the start on disk, so a
+// start from the cache that never gets Ready is not repeated, then runs the
+// OnActivate function.
+func (a *Agent) Activate(ctx context.Context) error {
+	a.lifecycle.Lock()
+	defer a.lifecycle.Unlock()
+	a.mu.Lock()
+	if a.activated {
+		a.mu.Unlock()
+		return nil
+	}
+	a.activated = true
+	fn := a.activate
+	a.mu.Unlock()
+	if _, err := a.store.Start(); err != nil {
+		return fmt.Errorf("record the OpAMP start: %w", err)
+	}
+	if fn != nil {
+		return fn(ctx)
+	}
+	return nil
+}
+
 // SetReloader sets how to ask the collector to reload, and the reporter.
 func (a *Agent) SetReloader(reload func(), reporter Reporter) {
 	a.mu.Lock()
@@ -151,8 +189,10 @@ func (a *Agent) Config(base merge.Config) merge.Config {
 	var rejected *Status
 	if !equalConfig(a.base, base) {
 		// The local file changed: merge the applied and the pending push again
-		// on the new base, so neither brings back what the base changed.
+		// on the new base, so neither brings back what the base changed. The
+		// new graph gets its own revision, so its Ready reports it effective.
 		a.base, a.running = base, base
+		a.revision, a.ready, a.reportReady = newRevision(), false, true
 		if a.applied != nil {
 			if m, err := a.mergePush(base, a.applied); err != nil {
 				a.logger.Warn("the applied OpAMP configuration no longer fits the changed local one; running the local configuration alone", zap.Error(err))
@@ -261,7 +301,7 @@ func (a *Agent) push(ctx context.Context, seq uint64, hash, body []byte) *Status
 	}
 	a.mu.Unlock()
 	a.lifecycle.Unlock()
-	if !extensionEnabled(merged) {
+	if !ExtensionEnabled(merged) {
 		return fail("the local configuration does not enable the " + ExtensionName + " extension, so the collector cannot confirm a push")
 	}
 	if err := preflight.Check(ctx, a.logger, a.factories, procs, pipelines, PreflightTimeout); err != nil {
@@ -275,12 +315,18 @@ func (a *Agent) push(ctx context.Context, seq uint64, hash, body []byte) *Status
 		a.lifecycle.Unlock()
 		return nil // superseded during preflight
 	}
-	if a.pending != nil || !equalConfig(base, a.base) {
-		// Another push or a new base got in during preflight: try again after it.
+	if a.pending != nil {
+		// Another push got in during preflight: try again after it.
 		a.queue(seq, hash, body)
 		a.mu.Unlock()
 		a.lifecycle.Unlock()
 		return nil
+	}
+	if !equalConfig(base, a.base) {
+		// The local configuration changed during preflight: merge again now.
+		a.mu.Unlock()
+		a.lifecycle.Unlock()
+		return a.push(ctx, seq, hash, body)
 	}
 	a.mu.Unlock()
 	if a.beforeBegin != nil {
@@ -363,6 +409,7 @@ func (a *Agent) confirm(revision string) error {
 	changed := false
 	if revision == a.revision && !a.ready {
 		a.ready = true
+		changed, a.reportReady = a.reportReady, false
 		if a.deferred != nil {
 			statuses = append(statuses, Status{Hash: a.deferred, Applied: true})
 			a.deferred = nil
@@ -371,7 +418,7 @@ func (a *Agent) confirm(revision string) error {
 	if promoted != nil && a.pending != nil && a.pending.Revision == revision {
 		a.running, a.revision, a.applied = a.pendingM, revision, a.pending.Config
 		a.pending, a.pendingM = nil, nil
-		a.ready = true
+		a.ready, a.reportReady = true, false
 		statuses = append(statuses, Status{Hash: promoted.Hash, Applied: true})
 		changed = true
 	}
@@ -429,7 +476,8 @@ func managed(cfg merge.Config) (map[string]any, map[string][]string) {
 	return procs, pipelines
 }
 
-func extensionEnabled(cfg merge.Config) bool {
+// ExtensionEnabled reports whether cfg declares and enables the extension.
+func ExtensionEnabled(cfg merge.Config) bool {
 	if _, ok := asMap(cfg["extensions"])[ExtensionName]; !ok {
 		return false
 	}

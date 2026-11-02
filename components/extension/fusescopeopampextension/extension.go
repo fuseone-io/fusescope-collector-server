@@ -35,8 +35,16 @@ type watcher struct{ revision string }
 
 var _ extensioncapabilities.PipelineWatcher = (*watcher)(nil)
 
-func (*watcher) Start(context.Context, component.Host) error { return nil }
-func (*watcher) Shutdown(context.Context) error              { return nil }
+// Start tells the provider's agent that the collector really runs, as
+// opposed to validating its configuration.
+func (*watcher) Start(ctx context.Context, _ component.Host) error {
+	if a := agent.Current(); a != nil {
+		return a.Activate(ctx)
+	}
+	return nil
+}
+
+func (*watcher) Shutdown(context.Context) error { return nil }
 
 // Ready is called once every pipeline is built and every receiver started.
 func (w *watcher) Ready() error {

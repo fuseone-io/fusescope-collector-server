@@ -81,6 +81,7 @@ type provider struct {
 	initErr  error
 	settings *Settings // the settings the client started with
 	agent    *agent.Agent
+	mu       sync.Mutex
 	client   *opampClient
 	watcher  atomic.Pointer[confmap.WatcherFunc]
 }
@@ -105,7 +106,7 @@ func (p *provider) Retrieve(ctx context.Context, uri string, watcher confmap.Wat
 	}
 	p.once.Do(func() {
 		p.settings = settings
-		p.initErr = p.start(ctx, base, settings)
+		p.initErr = p.start(base, settings)
 	})
 	if p.initErr != nil {
 		return nil, p.initErr
@@ -116,27 +117,37 @@ func (p *provider) Retrieve(ctx context.Context, uri string, watcher confmap.Wat
 	return confmap.NewRetrieved(p.agent.Config(base))
 }
 
-func (p *provider) start(ctx context.Context, base map[string]any, s *Settings) error {
+func (p *provider) start(base map[string]any, s *Settings) error {
 	a, err := agent.New(p.logger, s.Storage, p.factories)
 	if err != nil {
 		return err
 	}
-	failed, err := a.Start(base)
+	if !agent.ExtensionEnabled(base) {
+		return fmt.Errorf("the %s provider needs the %s extension declared and listed in service.extensions", Scheme, agent.ExtensionName)
+	}
+	failed, err := a.Load(base)
 	if err != nil {
 		return fmt.Errorf("read OpAMP state: %w", err)
 	}
 	p.agent = a
 	agent.SetCurrent(a)
-	if s.TLS.Insecure {
-		p.logger.Warn("OpAMP to the backend is in plaintext; remote configuration travels unencrypted and unauthenticated",
-			zap.String("endpoint", redactURL(s.Endpoint)))
-	}
-	c, err := startClient(ctx, p.logger, s, a, failed)
-	if err != nil {
-		return err
-	}
-	p.client = c
-	a.SetReloader(p.reload, c)
+	// The client starts with the collector, not when the configuration is
+	// only validated, so validation neither records a start nor takes pushes.
+	a.OnActivate(func(ctx context.Context) error {
+		if s.TLS.Insecure {
+			p.logger.Warn("OpAMP to the backend is in plaintext; remote configuration travels unencrypted and unauthenticated",
+				zap.String("endpoint", redactURL(s.Endpoint)))
+		}
+		c, err := startClient(ctx, p.logger, s, a, failed)
+		if err != nil {
+			return err
+		}
+		p.mu.Lock()
+		p.client = c
+		p.mu.Unlock()
+		a.SetReloader(p.reload, c)
+		return nil
+	})
 	return nil
 }
 
@@ -147,8 +158,11 @@ func (p *provider) reload() {
 }
 
 func (p *provider) Shutdown(ctx context.Context) error {
-	if p.client != nil {
-		return p.client.stop(ctx)
+	p.mu.Lock()
+	c := p.client
+	p.mu.Unlock()
+	if c != nil {
+		return c.stop(ctx)
 	}
 	return nil
 }
