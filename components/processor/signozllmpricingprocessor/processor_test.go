@@ -5,6 +5,7 @@ package signozllmpricingprocessor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"path"
@@ -205,6 +206,27 @@ func TestReservedPrefixIsRemoved(t *testing.T) {
 	want := "gen_ai.request.model=Str:foo gen_ai.usage.input_tokens=Int:1 signoz.gen_ai=Double:1 Signoz.gen_ai.x=Double:1 x.cost=Double:1"
 	if got := render(spanAttrs(td)); got != want {
 		t.Errorf("span: %s, want %s", got, want)
+	}
+}
+
+// Maps whose flattened keys, as the ClickHouse exporter writes them, fall
+// under the prefix lose those entries too (spec §5, a deliberate deviation).
+func TestReservedPrefixInNestedMaps(t *testing.T) {
+	td := ptrace.NewTraces()
+	attrs := td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty().Attributes()
+	attrs.PutEmptyMap("signoz.gen_ai").PutDouble("usage.tokens.cost", 999)
+	s := attrs.PutEmptyMap("signoz")
+	s.PutDouble("gen_ai.usage.input_tokens.cost", 999)
+	s.PutEmptyMap("gen_ai").PutDouble("z", 1)
+	s.PutEmptyMap("gen").PutDouble("ai", 1)
+	s.PutDouble("other", 1)
+	attrs.PutEmptyMap("other").PutDouble("signoz.gen_ai.w", 1)
+	if _, err := newPricer(testConfig(gpt4o)).processTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"other":{"signoz.gen_ai.w":1},"signoz":{"gen":{"ai":1},"other":1}}`
+	if got, _ := json.Marshal(attrs.AsRaw()); string(got) != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
 

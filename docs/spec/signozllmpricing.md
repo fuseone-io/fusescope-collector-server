@@ -175,6 +175,16 @@ configured output names outside the prefix (`c.total` under `custom-attrs`) [obs
 
 So a sender cannot plant a cost the backend would read as the processor's.
 
+**Deliberate deviation: nested maps.** The reference keeps map-valued attributes whose
+flattened keys fall under the prefix: `signoz.gen_ai = {usage.tokens.cost: 999}` and
+`signoz = {gen_ai.usage.input_tokens.cost: 999}` pass unchanged [obs main:
+`removal-nested-maps`]. The ClickHouse exporter flattens maps into dotted keys
+(clickhouse-traces), so these land as `signoz.gen_ai.usage.tokens.cost` and defeat the rule
+above. The FuseScope collector also removes, from span and resource map attributes, every entry
+whose flattened key starts with `signoz.gen_ai.`, and the whole attribute when its own key is
+`signoz.gen_ai`; other entries stay (`signoz = {other: 1}`, `other = {signoz.gen_ai.w: 1}`). The
+golden test applies this rule to the observed output before comparing.
+
 ## 6. Open questions
 
 - **`cache.mode`.** The backend labels `subtract` "OpenAI style" and `additive` "Anthropic

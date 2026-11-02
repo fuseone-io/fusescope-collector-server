@@ -15,6 +15,7 @@ import (
 
 	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processortest"
 
@@ -81,6 +82,24 @@ func canonical(t *testing.T, td ptrace.Traces) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// withDeviations applies to the observed output the one rule where this
+// processor deliberately differs from the reference: reserved entries of
+// nested maps (spec §5).
+func withDeviations(td ptrace.Traces) ptrace.Traces {
+	nested := func(attrs pcommon.Map) {
+		attrs.RemoveIf(func(k string, v pcommon.Value) bool { return reservedNested(k, v) })
+	}
+	for _, rs := range td.ResourceSpans().All() {
+		nested(rs.Resource().Attributes())
+		for _, ss := range rs.ScopeSpans().All() {
+			for _, s := range ss.Spans().All() {
+				nested(s.Attributes())
+			}
+		}
+	}
+	return td
 }
 
 // loadCase builds the processor configuration of one observed case the way
@@ -162,7 +181,7 @@ func TestMatchesObservation(t *testing.T) {
 			for _, td := range sink.AllTraces() {
 				td.ResourceSpans().MoveAndAppendTo(got.ResourceSpans())
 			}
-			if g, w := canonical(t, got), canonical(t, readTraces(t, filepath.Join(observed, "outputs", name+".jsonl"))); g != w {
+			if g, w := canonical(t, got), canonical(t, withDeviations(readTraces(t, filepath.Join(observed, "outputs", name+".jsonl")))); g != w {
 				t.Errorf("output differs from the observation\ngot  %s\nwant %s", g, w)
 			}
 		})

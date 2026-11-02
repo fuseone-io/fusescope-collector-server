@@ -179,6 +179,8 @@ def kv(key, value):
         if value != value or value in (float("inf"), float("-inf")):
             return {"key": key, "value": {"doubleValue": {"inf": "Infinity", "-inf": "-Infinity"}.get(str(value), "NaN")}}
         return {"key": key, "value": {"doubleValue": value}}
+    if isinstance(value, dict):
+        return {"key": key, "value": {"kvlistValue": {"values": [kv(k, v) for k, v in value.items()]}}}
     return {"key": key, "value": {"stringValue": value}}
 
 
@@ -271,7 +273,12 @@ SPANS = [
     ("removal-prefixes", usage("foo-model", 1000, 200, **{
         "signoz.other": 1.0, "signoz.gen_ai": 1.0, "signoz.gen_aix": 1.0, "Signoz.gen_ai.x": 1.0,
         "signoz.gen_ai.usage.input_tokens": 1.0, "gen_ai.usage.cost": 1.0})),
-    ("removal-on-priced-span", usage("gpt-4o", 1000, 200, **{"signoz.gen_ai.other": 1.0, "signoz.other": 1.0})),
+    # Maps whose flattened keys (as the ClickHouse exporter writes them) fall under the prefix.
+    ("removal-nested-maps", usage("foo-model", 1000, 200, **{
+        "signoz.gen_ai": {"usage.tokens.cost": 999.0, "x": {"y": 1.0}},
+        "signoz": {"gen_ai.usage.input_tokens.cost": 999.0, "gen_ai": {"z": 1.0}, "other": 1.0},
+        "other": {"signoz.gen_ai.w": 1.0}})),
+    ("removal-on-priced-span",usage("gpt-4o", 1000, 200, **{"signoz.gen_ai.other": 1.0, "signoz.other": 1.0})),
     ("nan-tokens", usage("gpt-4o", float("nan"), 200)),
     ("infinite-tokens", usage("gpt-4o", 1000, float("inf"))),
 ] + [

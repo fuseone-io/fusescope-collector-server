@@ -2150,6 +2150,115 @@
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
        "spanId": "0000000000000043",
+       "name": "removal-nested-maps",
+       "kind": 3,
+       "startTimeUnixNano": "1767225600000000000",
+       "endTimeUnixNano": "1767225601000000000",
+       "attributes": [
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "foo-model"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "1000"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "200"
+         }
+        },
+        {
+         "key": "signoz.gen_ai",
+         "value": {
+          "kvlistValue": {
+           "values": [
+            {
+             "key": "usage.tokens.cost",
+             "value": {
+              "doubleValue": 999.0
+             }
+            },
+            {
+             "key": "x",
+             "value": {
+              "kvlistValue": {
+               "values": [
+                {
+                 "key": "y",
+                 "value": {
+                  "doubleValue": 1.0
+                 }
+                }
+               ]
+              }
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "key": "signoz",
+         "value": {
+          "kvlistValue": {
+           "values": [
+            {
+             "key": "gen_ai.usage.input_tokens.cost",
+             "value": {
+              "doubleValue": 999.0
+             }
+            },
+            {
+             "key": "gen_ai",
+             "value": {
+              "kvlistValue": {
+               "values": [
+                {
+                 "key": "z",
+                 "value": {
+                  "doubleValue": 1.0
+                 }
+                }
+               ]
+              }
+             }
+            },
+            {
+             "key": "other",
+             "value": {
+              "doubleValue": 1.0
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "key": "other",
+         "value": {
+          "kvlistValue": {
+           "values": [
+            {
+             "key": "signoz.gen_ai.w",
+             "value": {
+              "doubleValue": 1.0
+             }
+            }
+           ]
+          }
+         }
+        }
+       ]
+      },
+      {
+       "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
+       "spanId": "0000000000000044",
        "name": "removal-on-priced-span",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2189,7 +2298,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000044",
+       "spanId": "0000000000000045",
        "name": "nan-tokens",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2217,7 +2326,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000045",
+       "spanId": "0000000000000046",
        "name": "infinite-tokens",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2245,7 +2354,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000046",
+       "spanId": "0000000000000047",
        "name": "cache-subtract-below",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2285,7 +2394,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000047",
+       "spanId": "0000000000000048",
        "name": "cache-subtract-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2325,7 +2434,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000048",
+       "spanId": "0000000000000049",
        "name": "cache-subtract-read-below-sum-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2365,7 +2474,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000049",
+       "spanId": "000000000000004a",
        "name": "cache-subtract-read-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2399,7 +2508,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000004a",
+       "spanId": "000000000000004b",
        "name": "cache-subtract-read-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2433,7 +2542,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000004b",
+       "spanId": "000000000000004c",
        "name": "cache-subtract-write-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2467,7 +2576,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000004c",
+       "spanId": "000000000000004d",
        "name": "cache-subtract-zero-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2507,7 +2616,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000004d",
+       "spanId": "000000000000004e",
        "name": "cache-subtract-no-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2541,7 +2650,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000004e",
+       "spanId": "000000000000004f",
        "name": "cache-subtract-negative-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2575,7 +2684,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000004f",
+       "spanId": "0000000000000050",
        "name": "cache-subtract-double-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2609,7 +2718,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000050",
+       "spanId": "0000000000000051",
        "name": "cache-additive-below",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2649,7 +2758,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000051",
+       "spanId": "0000000000000052",
        "name": "cache-additive-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2689,7 +2798,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000052",
+       "spanId": "0000000000000053",
        "name": "cache-additive-read-below-sum-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2729,7 +2838,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000053",
+       "spanId": "0000000000000054",
        "name": "cache-additive-read-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2763,7 +2872,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000054",
+       "spanId": "0000000000000055",
        "name": "cache-additive-read-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2797,7 +2906,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000055",
+       "spanId": "0000000000000056",
        "name": "cache-additive-write-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2831,7 +2940,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000056",
+       "spanId": "0000000000000057",
        "name": "cache-additive-zero-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2871,7 +2980,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000057",
+       "spanId": "0000000000000058",
        "name": "cache-additive-no-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2905,7 +3014,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000058",
+       "spanId": "0000000000000059",
        "name": "cache-additive-negative-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2939,7 +3048,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000059",
+       "spanId": "000000000000005a",
        "name": "cache-additive-double-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -2973,7 +3082,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000005a",
+       "spanId": "000000000000005b",
        "name": "cache-none-below",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3013,7 +3122,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000005b",
+       "spanId": "000000000000005c",
        "name": "cache-none-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3053,7 +3162,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000005c",
+       "spanId": "000000000000005d",
        "name": "cache-none-read-below-sum-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3093,7 +3202,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000005d",
+       "spanId": "000000000000005e",
        "name": "cache-none-read-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3127,7 +3236,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000005e",
+       "spanId": "000000000000005f",
        "name": "cache-none-read-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3161,7 +3270,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000005f",
+       "spanId": "0000000000000060",
        "name": "cache-none-write-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3195,7 +3304,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000060",
+       "spanId": "0000000000000061",
        "name": "cache-none-zero-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3235,7 +3344,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000061",
+       "spanId": "0000000000000062",
        "name": "cache-none-no-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3269,7 +3378,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000062",
+       "spanId": "0000000000000063",
        "name": "cache-none-negative-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3303,7 +3412,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000063",
+       "spanId": "0000000000000064",
        "name": "cache-none-double-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3337,7 +3446,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000064",
+       "spanId": "0000000000000065",
        "name": "cache-no-block-below",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3377,7 +3486,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000065",
+       "spanId": "0000000000000066",
        "name": "cache-no-block-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3417,7 +3526,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000066",
+       "spanId": "0000000000000067",
        "name": "cache-no-block-read-below-sum-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3457,7 +3566,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000067",
+       "spanId": "0000000000000068",
        "name": "cache-no-block-read-equal",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3491,7 +3600,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000068",
+       "spanId": "0000000000000069",
        "name": "cache-no-block-read-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3525,7 +3634,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "0000000000000069",
+       "spanId": "000000000000006a",
        "name": "cache-no-block-write-above",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3559,7 +3668,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000006a",
+       "spanId": "000000000000006b",
        "name": "cache-no-block-zero-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3599,7 +3708,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000006b",
+       "spanId": "000000000000006c",
        "name": "cache-no-block-no-input",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3633,7 +3742,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000006c",
+       "spanId": "000000000000006d",
        "name": "cache-no-block-negative-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3667,7 +3776,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000006d",
+       "spanId": "000000000000006e",
        "name": "cache-no-block-double-read",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3754,7 +3863,7 @@
      "spans": [
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000006e",
+       "spanId": "000000000000006f",
        "name": "model-on-resource",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",
@@ -3763,7 +3872,7 @@
       },
       {
        "traceId": "5d1c0e3a7b9f4e2d8c6a4b2e0f1d3c5a",
-       "spanId": "000000000000006f",
+       "spanId": "0000000000000070",
        "name": "removal-events-links",
        "kind": 3,
        "startTimeUnixNano": "1767225600000000000",

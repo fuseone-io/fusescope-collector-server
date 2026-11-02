@@ -101,7 +101,28 @@ func (p *pricer) processTraces(_ context.Context, td ptrace.Traces) (ptrace.Trac
 }
 
 func removeReserved(attrs pcommon.Map) {
-	attrs.RemoveIf(func(k string, _ pcommon.Value) bool { return strings.HasPrefix(k, reservedPrefix) })
+	attrs.RemoveIf(func(k string, v pcommon.Value) bool {
+		return strings.HasPrefix(k, reservedPrefix) || reservedNested(k, v)
+	})
+}
+
+// reservedNested removes, from a map value at path, the entries whose
+// flattened keys (the ClickHouse exporter joins kvlist keys with '.') fall
+// under the prefix, and reports whether all of the value does. The reference
+// keeps them; spec §5 deviates so no cost can be planted this way.
+func reservedNested(path string, v pcommon.Value) bool {
+	n := len(path)
+	if v.Type() != pcommon.ValueTypeMap || n >= len(reservedPrefix) || reservedPrefix[n] != '.' || !strings.HasPrefix(reservedPrefix, path) {
+		return false
+	}
+	if n == len(reservedPrefix)-1 {
+		return true
+	}
+	v.Map().RemoveIf(func(k string, nested pcommon.Value) bool {
+		full := path + "." + k
+		return strings.HasPrefix(full, reservedPrefix) || reservedNested(full, nested)
+	})
+	return false
 }
 
 func (p *pricer) match(model string) *rule {
