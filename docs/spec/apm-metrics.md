@@ -197,4 +197,5 @@ metrics pipeline receives from it and exports to `fusescope_clickhouse`.
 
 The defaults reproduce the reference configuration, so the parity suite runs the connector with
 none of these set. Dimensions named like a connector key (`service.name`, `operation`,
-`span.kind`, `status.code`, `http.status_code`, `db.system`, `db.name`, `address`) are refused.
+`span.kind`, `status.code`, `http.status_code`, `db.system`, `db.name`, `address`), or starting
+with `resource_`, the prefix of the connector's resource copies, are refused.

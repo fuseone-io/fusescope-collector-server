@@ -27,7 +27,7 @@ const (
 	scopeName = "signozspanmetricsprocessor"
 	// collectorIDKey is the dimension that holds this collector's identity (apm-metrics §3.3).
 	collectorIDKey = "signoz.collector.id"
-	nanosPerMinute = int64(time.Minute)
+	nanosPerMinute = uint64(time.Minute)
 	// seriesOverhead covers a series' fixed fields and map entries.
 	seriesOverhead = 256
 )
@@ -56,7 +56,7 @@ type family struct {
 
 type series struct {
 	attrs   pcommon.Map
-	minute  int64
+	minute  uint64
 	count   uint64
 	sum     float64
 	buckets []uint64
@@ -202,7 +202,7 @@ func (c *spanMetricsConnector) ConsumeTraces(_ context.Context, td ptrace.Traces
 
 func (c *spanMetricsConnector) addSpan(service string, res pcommon.Map, span ptrace.Span) {
 	attrs := span.Attributes()
-	start, end := int64(span.StartTimestamp()), int64(span.EndTimestamp())
+	start, end := uint64(span.StartTimestamp()), uint64(span.EndTimestamp())
 	ms := 0.0
 	if end > start {
 		ms = float64(end-start) / float64(time.Millisecond)
@@ -298,11 +298,11 @@ func (c *spanMetricsConnector) dimensions(res, span pcommon.Map) []kv {
 
 // add returns the series of attrs in minute, creating it within MaxSeries, or
 // nil when the limit drops it.
-func (c *spanMetricsConnector) add(f *family, attrs []kv, minute int64) *series {
+func (c *spanMetricsConnector) add(f *family, attrs []kv, minute uint64) *series {
 	// Attributes come in a fixed order (configured dimensions, then the
 	// connector's own keys), so the key identifies a series without sorting.
 	// Lengths prefix keys and values, so no value can mimic a boundary.
-	b := binary.AppendVarint(c.key[:0], minute)
+	b := binary.AppendUvarint(c.key[:0], minute)
 	size := 0
 	for _, a := range attrs {
 		b = binary.AppendUvarint(b, uint64(len(a.key)))

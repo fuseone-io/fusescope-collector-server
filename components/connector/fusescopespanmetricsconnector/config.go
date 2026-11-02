@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -65,6 +66,8 @@ func (cfg *Config) Validate() error {
 			errs = append(errs, errors.New("dimension name must not be empty"))
 		case slices.Contains(reserved, d.Name):
 			errs = append(errs, fmt.Errorf("dimension %q is set by the connector itself", d.Name))
+		case strings.HasPrefix(d.Name, "resource_"):
+			errs = append(errs, fmt.Errorf("dimension %q uses the prefix of the connector's resource copies", d.Name))
 		case seen[d.Name]:
 			errs = append(errs, fmt.Errorf("dimension %q is listed twice", d.Name))
 		}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,7 @@ func TestConfigValidate(t *testing.T) {
 		{"reserved dimension", func(c *Config) { c.Dimensions = append(c.Dimensions, Dimension{Name: "operation"}) }, true},
 		{"duplicate dimension", func(c *Config) { c.Dimensions = append(c.Dimensions, Dimension{Name: "host.name"}) }, true},
 		{"empty dimension", func(c *Config) { c.Dimensions = append(c.Dimensions, Dimension{}) }, true},
+		{"generated resource_ prefix", func(c *Config) { c.Dimensions = append(c.Dimensions, Dimension{Name: "resource_host.name"}) }, true},
 		{"unordered buckets", func(c *Config) { c.LatencyHistogramBuckets = []time.Duration{time.Second, time.Millisecond} }, true},
 		{"no buckets", func(c *Config) { c.LatencyHistogramBuckets = nil }, true},
 		{"no flush interval", func(c *Config) { c.MetricsFlushInterval = 0 }, true},
@@ -510,5 +512,30 @@ func TestTypedValuesCountInBytes(t *testing.T) {
 	// Each series holds the array twice (host.name and resource_host.name).
 	if held := c.total * 2 * 2_000 * 16; held > 2*cfg.MaxSeriesBytes {
 		t.Errorf("%d series hold about %d bytes of array elements, far over %d", c.total, held, cfg.MaxSeriesBytes)
+	}
+}
+
+// Timestamps are unsigned: the upper range keeps its minute and duration.
+func TestUnsignedTimestamps(t *testing.T) {
+	c, sink, _ := newTestConnector(t, defaultConfig())
+	td := traceWith(1, "svc", func(_ int, s ptrace.Span) {
+		start := pcommon.Timestamp(math.MaxInt64 - uint64(time.Millisecond))
+		s.SetStartTimestamp(start)
+		s.SetEndTimestamp(start + pcommon.Timestamp(2*time.Millisecond)) // crosses MaxInt64
+	})
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.flush(context.Background())
+	m := sink.AllMetrics()[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
+	for _, metric := range m.All() {
+		if metric.Name() != "signoz_latency" {
+			continue
+		}
+		p := metric.Histogram().DataPoints().At(0)
+		wantMinute := uint64(math.MaxInt64-uint64(time.Millisecond)) / uint64(time.Minute) * uint64(time.Minute)
+		if uint64(p.Timestamp()) != wantMinute || p.Sum() != 2 {
+			t.Errorf("timestamp %d, sum %v; want %d and 2 ms", p.Timestamp(), p.Sum(), wantMinute)
+		}
 	}
 }
