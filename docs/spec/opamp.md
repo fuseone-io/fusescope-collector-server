@@ -76,10 +76,15 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 
 ## 6. Collector rules (ADR 0008)
 
-- The allow-list and the comparison with the base configuration of ADR 0008 §2 decide what
-  of a push is applied; a push is applied whole or not at all.
-- Since the base configuration wires `signozspanmapper` and `signozllmpricing`, it declares
-  them too; a push replaces their blocks.
+- A push is applied whole or not at all, under ADR 0008 §2: `signozlogspipeline/pipeline_*`
+  may be added, removed or moved only within `service.pipelines.logs`; `signozspanmapper` and
+  `signozllmpricing` may change only their blocks, in the position the base configuration
+  gives them; anything else rejects the push.
+- The base configuration wires and declares `signozspanmapper` and `signozllmpricing`, since
+  the backend never places them (§5).
+- `FAILED` lists the configuration paths that differed, never values.
+- `APPLIED` is reported, and the push cached, only once the collector runs it (ADR 0008 §6,
+  still open).
 
 ## 7. Backend behaviour the collector does not depend on
 

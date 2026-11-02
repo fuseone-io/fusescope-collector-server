@@ -1,6 +1,6 @@
 # 0008 · Remote configuration over OpAMP
 
-- Status: accepted
+- Status: proposed (accepted once the reload spike of §Open settles point 6)
 - Date: 2026-11-02
 - Amends: [ADR 0004](0004-security-baseline.md) (transport to the backend), `DESIGN.md` §3.2, §5.
 - Issue: [#6](https://github.com/fuseone-io/fusescope-collector-server/issues/6)
@@ -30,26 +30,59 @@ contrib OpAMP supervisor restarts the collector with whatever the server sends.
    - speaks OpAMP to the backend as an agent, reporting the configuration it returns as the
      effective one;
    - accepts from a pushed configuration only what the allow-list (point 2) permits, and
-     returns the merged result; on a change it asks the collector to reload in process.
+     returns the merged result; on a change it asks the collector to reload in process, under
+     the lifecycle of point 6.
 2. **Allow-list, enforced by comparison with the base:**
-   - processor blocks of type `signozlogspipeline`, `signozspanmapper` and `signozllmpricing`
-     come from the pushed configuration; allow-listed blocks it no longer has are removed;
-   - a pipeline's processor list comes from the pushed configuration only if it equals the
-     base list once allow-listed processors are left out of both, in order;
-   - anything else that differs from the base (a receiver, exporter, extension, connector,
-     telemetry setting, another processor's block, a pipeline's receivers or exporters, a
-     new pipeline) rejects the whole pushed configuration. The collector keeps running what
-     it ran, and reports `FAILED` with what differed.
+   - **Log pipelines.** `signozlogspipeline/pipeline_*` blocks come from the pushed
+     configuration, and blocks it no longer has are removed. They may be added, removed or
+     moved only within `service.pipelines.logs`: that list is taken from the push only if it
+     equals the base list once `signozlogspipeline/pipeline_*` entries are left out of both,
+     in order. No other pipeline may list them.
+   - **Span mapping and LLM pricing.** Only the `signozspanmapper` and `signozllmpricing`
+     blocks may change, and only if the base declares them; they keep exactly the position
+     the base gives them in every pipeline. A push without one keeps the base's block.
+   - **Everything else** that differs from the base (a receiver, exporter, extension,
+     connector, telemetry setting, any other processor's block, any other change to a
+     pipeline's processors, receivers or exporters, a new pipeline) rejects the whole push.
+   - **Failure report.** A rejected push is reported `FAILED` with the configuration paths
+     that differed (for example `exporters.otlp/engine.endpoint`), never their values, which
+     may hold endpoints or other configuration the backend should not see echoed.
 3. **Transport.** TLS by default, with a client certificate when one is configured. Plaintext
    only with an explicit `tls.insecure: true`, logged as a warning at start, for the
    in-cluster port the backend serves today, as ADR 0007 allows for ClickHouse. A backend
    issue asks for TLS on its OpAMP server ([fuseone-io/fusescope#261](https://github.com/fuseone-io/fusescope/issues/261)).
-4. **Restart and outage.** The last accepted pushed configuration is cached on disk, and used
-   at start until the backend answers, so a backend outage does not revert the managed
-   processing. The instance UID is stored there too, so the backend sees one agent across
-   restarts.
+4. **Restart and outage.** Only the last push that was effectively applied (point 6) is cached
+   on disk, written atomically (a temporary file renamed over the old one). At start it is
+   never applied as it is: it is compared and merged again with the current base under point 2,
+   so a newer local configuration (after an upgrade, say) is never reverted by an old push. A
+   cached push the current base rejects is discarded with a warning, and the base runs until
+   the backend pushes again. The instance UID is stored next to it, so the backend sees one
+   agent across restarts.
 5. **Library.** `github.com/open-telemetry/opamp-go` (Apache-2.0, OpenTelemetry) is the OpAMP
    client, the same library the backend's server uses.
+6. **Reload lifecycle (open, see below).** A push is reported `APPLIED`, cached and reported as
+   the effective configuration only once the collector runs it; until then it is pending.
+
+## Open: reload lifecycle
+
+The upstream collector does not reload atomically. On a configuration change that is not
+receivers-only, `otelcol` shuts the running service down and then builds the new graph; if
+that fails, `Run` returns the error and the process exits (`go.opentelemetry.io/collector/otelcol`
+v0.164.0, `Collector.reloadConfiguration`). A confmap provider is not told when, or whether, the
+reload finished. As it stands, the provider could neither keep the old configuration running
+after a bad push nor report `APPLIED` only after a real application.
+
+A spike, before the provider, has to settle:
+
+- **Preflight:** validate the merged configuration before triggering the reload, with the
+  same factories and validation the collector uses (unmarshal, `Validate`, and building the
+  allow-listed processors), so a push that would fail is rejected while the old graph runs.
+- **Confirmation:** how the provider learns that the new graph started, for example an
+  extension in the same binary that sees the pipelines come up and signals the provider.
+- **Rollback:** what happens when the new graph fails to start despite the preflight; at
+  least, the next start must not reuse that push, since only applied pushes are cached.
+
+This ADR stays `proposed` until the spike records its answers here.
 
 ## Consequences
 
