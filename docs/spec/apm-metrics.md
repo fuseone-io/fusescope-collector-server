@@ -165,7 +165,10 @@ Attributes that are not dimensions do not reach the points [obs `custom.res`, `c
   again with the next flush, as long as it holds at most `max_series` points and
   `max_series_bytes`; a permanent refusal is dropped with an error. A consumer that mutates
   data gets a copy, so the retry sends the batch as built. After a partial acceptance
-  (`consumererror.Metrics`), only the failed part is sent again. The spans were already acknowledged, so nothing upstream
+  (`consumererror.Metrics`), only the failed part is sent again; if that consumer mutates data,
+  the failed points can no longer be matched to their originals and are dropped with an error
+  rather than replayed changed. The limits apply to the points actually kept, and an idle
+  flush adds nothing. The spans were already acknowledged, so nothing upstream
   can resend them. Shutdown ends a periodic flush in progress and reports a failed last flush.
 
 ## 7. Still to observe

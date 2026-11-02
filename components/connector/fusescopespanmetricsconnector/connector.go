@@ -325,7 +325,7 @@ func (c *spanMetricsConnector) flush(ctx context.Context) error {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
 	c.mu.Lock()
-	md, dropped, size := c.build(), c.dropped, c.bytes
+	md, dropped := c.build(), c.dropped
 	c.reset()
 	c.mu.Unlock()
 	if dropped > 0 {
@@ -334,36 +334,48 @@ func (c *spanMetricsConnector) flush(ctx context.Context) error {
 	}
 	if c.pending.DataPointCount() > 0 {
 		// Deltas of one series in two batches add up downstream; keep the older first.
-		md.ResourceMetrics().MoveAndAppendTo(c.pending.ResourceMetrics())
-		md, c.pending = c.pending, pmetric.NewMetrics()
-		size += c.pendingBytes
-		c.pendingBytes = 0
+		if md.DataPointCount() > 0 {
+			md.ResourceMetrics().MoveAndAppendTo(c.pending.ResourceMetrics())
+		}
+		md, c.pending, c.pendingBytes = c.pending, pmetric.NewMetrics(), 0
 	}
 	if md.DataPointCount() == 0 {
 		return nil
 	}
 	// A consumer that mutates gets a copy, so a retry resends the batch as built.
+	mutates := c.next.Capabilities().MutatesData
 	sent := md
-	if c.next.Capabilities().MutatesData {
+	if mutates {
 		sent = pmetric.NewMetrics()
 		md.CopyTo(sent)
 	}
 	err := c.next.ConsumeMetrics(ctx, sent)
-	// After a partial acceptance only the failed part may be sent again.
+	if err == nil {
+		return nil
+	}
 	var partial consumererror.Metrics
-	if errors.As(err, &partial) {
+	switch {
+	case consumererror.IsPermanent(err):
+		c.logger.Error("span metrics dropped", zap.Error(err), zap.Int("points", md.DataPointCount()))
+		return err
+	case errors.As(err, &partial) && mutates:
+		// The failed points went through the consumer's mutation, and their
+		// originals cannot be told apart: dropping beats replaying them changed.
+		c.logger.Error("span metrics dropped after a partial refusal by a mutating consumer",
+			zap.Error(err), zap.Int("points", partial.Data().DataPointCount()))
+		return err
+	case errors.As(err, &partial):
 		md = partial.Data()
 	}
-	switch {
-	case err == nil:
-		return nil
-	case consumererror.IsPermanent(err) || md.DataPointCount() > c.cfg.MaxSeries || size > c.cfg.MaxSeriesBytes:
-		c.logger.Error("span metrics dropped", zap.Error(err), zap.Int("points", md.DataPointCount()), zap.Int("bytes", size))
-	default:
-		// Refused before acceptance: the spans are acknowledged, so only we can resend.
-		c.pending, c.pendingBytes = md, size
-		c.logger.Warn("span metrics refused; sending them again with the next flush", zap.Error(err))
+	// Refused before acceptance: the spans are acknowledged, so only we can resend.
+	size := metricsBytes(md)
+	if md.DataPointCount() > c.cfg.MaxSeries || size > c.cfg.MaxSeriesBytes {
+		c.logger.Error("span metrics dropped: too large to keep for a retry", zap.Error(err),
+			zap.Int("points", md.DataPointCount()), zap.Int("bytes", size))
+		return err
 	}
+	c.pending, c.pendingBytes = md, size
+	c.logger.Warn("span metrics refused; sending them again with the next flush", zap.Error(err))
 	return err
 }
 
@@ -419,6 +431,34 @@ func (c *spanMetricsConnector) build() pmetric.Metrics {
 	sum("signoz_external_call_latency_count", "1", &c.external, count)
 	sum("signoz_external_call_latency_sum", "1", &c.external, total)
 	return md
+}
+
+// metricsBytes estimates what md holds: its points' attributes and overhead.
+func metricsBytes(md pmetric.Metrics) int {
+	n := 0
+	add := func(m pcommon.Map) {
+		n += seriesOverhead
+		for k, v := range m.All() {
+			n += len(k) + len(v.AsString())
+		}
+	}
+	for _, rm := range md.ResourceMetrics().All() {
+		for _, sm := range rm.ScopeMetrics().All() {
+			for _, m := range sm.Metrics().All() {
+				switch m.Type() {
+				case pmetric.MetricTypeSum:
+					for _, p := range m.Sum().DataPoints().All() {
+						add(p.Attributes())
+					}
+				case pmetric.MetricTypeHistogram:
+					for _, p := range m.Histogram().DataPoints().All() {
+						add(p.Attributes())
+					}
+				}
+			}
+		}
+	}
+	return n
 }
 
 func point(m pcommon.Map, s *series) {

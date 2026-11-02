@@ -493,3 +493,58 @@ func TestRetryOnlyTheFailedPart(t *testing.T) {
 		t.Errorf("retry sent %d points, want the 1 that failed", got)
 	}
 }
+
+// Idle flushes after a refusal add nothing to the pending batch.
+func TestIdleFlushesAddNoBlocks(t *testing.T) {
+	sink := &flakySink{}
+	for range 5 {
+		sink.refuse = append(sink.refuse, errors.New("queue is full"))
+	}
+	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		_ = c.flush(context.Background())
+	}
+	if n := c.pending.ResourceMetrics().Len(); n != 1 {
+		t.Errorf("pending holds %d resource blocks after idle flushes, want 1", n)
+	}
+}
+
+// The pending charge is that of the points actually kept.
+func TestPartialRetryChargesTheFailedPart(t *testing.T) {
+	failed := pmetric.NewMetrics()
+	m := failed.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	m.SetName("signoz_calls_total")
+	m.SetEmptySum().DataPoints().AppendEmpty().Attributes().PutStr("k", "v")
+	sink := &flakySink{refuse: []error{consumererror.NewMetrics(errors.New("partly refused"), failed)}}
+	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+	td := traceWith(50, "svc", func(i int, s ptrace.Span) { s.SetName(fmt.Sprint("op", i)) })
+	td.ResourceSpans().At(0).Resource().Attributes().PutStr("host.name", strings.Repeat("h", 4<<10))
+	if err := c.ConsumeTraces(context.Background(), td); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.flush(context.Background())
+	if c.pendingBytes > 1<<10 {
+		t.Errorf("pending charged %d bytes for one small point", c.pendingBytes)
+	}
+}
+
+// A mutating consumer's partial refusal cannot be replayed unmutated, so the
+// failed part is dropped rather than sent through the mutation twice.
+func TestMutatedPartialRefusalIsDropped(t *testing.T) {
+	failed := pmetric.NewMetrics()
+	m := failed.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	m.SetName("x.signoz_calls_total")
+	m.SetEmptySum().DataPoints().AppendEmpty().SetDoubleValue(1)
+	sink := &renamingSink{flakySink{refuse: []error{consumererror.NewMetrics(errors.New("partly refused"), failed)}}}
+	c := newConnector(defaultConfig(), connectortest.NewNopSettings(metadata.Type), sink)
+	if err := c.ConsumeTraces(context.Background(), traceWith(1, "svc", nil)); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.flush(context.Background())
+	if c.pending.DataPointCount() != 0 {
+		t.Errorf("pending kept %d mutated points", c.pending.DataPointCount())
+	}
+}
