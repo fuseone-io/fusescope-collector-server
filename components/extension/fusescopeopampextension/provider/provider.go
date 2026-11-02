@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
+	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozllmpricingprocessor"
 )
 
 // Scheme is the provider's URI scheme.
@@ -64,7 +65,9 @@ const minTLSVersion = "1.3"
 
 // managedFactories are the allow-listed processors this build can preflight;
 // each processor's PR adds itself.
-var managedFactories = map[component.Type]processor.Factory{}
+var managedFactories = map[component.Type]processor.Factory{
+	signozllmpricingprocessor.NewFactory().Type(): signozllmpricingprocessor.NewFactory(),
+}
 
 // NewFactory returns the fusescopeopamp provider factory.
 func NewFactory() confmap.ProviderFactory {

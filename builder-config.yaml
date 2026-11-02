@@ -29,6 +29,8 @@ processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/filterprocessor v0.164.1
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.164.1
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor v0.164.1
+  - gomod: github.com/fuseone-io/fusescope-collector-server/components/processor/signozllmpricingprocessor v0.0.0
+    path: ./components/processor/signozllmpricingprocessor
 
 exporters:
   - gomod: go.opentelemetry.io/collector/exporter/otlpexporter v0.164.0
