@@ -63,9 +63,16 @@ CHECKS = {
           AND sm.unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 AND sm.unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000
         GROUP BY s ORDER BY s""",
     # Series identities, not fingerprints, which differ by design (metrics spec §4).
+    # Only series with samples in the window: series rows are hourly, and a
+    # series newer than the window may reach one database first.
     "metric series": f"""
         SELECT DISTINCT metric_name, labels, attrs, scope_attrs, resource_attrs FROM signoz_metrics.time_series_v4
-        WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000 AND {SELF_METRICS}""",
+        WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000
+          AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000
+          AND fingerprint IN (
+            SELECT fingerprint FROM signoz_metrics.samples_v4
+            WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000
+              AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000)""",
 }
 
 

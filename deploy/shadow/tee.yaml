@@ -1,12 +1,13 @@
 # Fan-out in front of the demo collector: every request goes to the demo
-# collector as before and, through a queue, to the shadow collector.
+# collector as before and, through a shadow-only pipeline, to the shadow
+# collector.
 #
-# The demo comes first. A request fails for its sender if any destination
-# refuses it, so the shadow path must never refuse: its queue is bounded in
-# bytes and shadow requests are dropped after 10 minutes of failed retries,
-# which keeps the queue from ever filling. A shadow outage then shows up as
-# differences in compare.py, never on the demo. The memory limiter keeps the
-# tee within its container limit.
+# The demo comes first. A request fails for its sender if any destination in
+# its pipeline refuses it, so the shadow side sits behind a forward connector
+# and a batch processor: the batch processor accepts the data and exports it
+# on its own, so a slow, full or failing shadow path drops shadow data and
+# never fails a request to the demo. A shadow outage shows up as differences
+# in compare.py. The memory limiter keeps the tee within its container limit.
 receivers:
   otlp:
     protocols:
@@ -20,6 +21,12 @@ processors:
     check_interval: 1s
     limit_mib: 300
     spike_limit_mib: 60
+  batch/shadow: {}
+
+connectors:
+  forward/traces:
+  forward/logs:
+  forward/metrics:
 
 exporters:
   otlp/demo:
@@ -44,12 +51,24 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter]
-      exporters: [otlp/demo, otlp/shadow]
+      exporters: [otlp/demo, forward/traces]
+    traces/shadow:
+      receivers: [forward/traces]
+      processors: [batch/shadow]
+      exporters: [otlp/shadow]
     logs:
       receivers: [otlp]
       processors: [memory_limiter]
-      exporters: [otlp/demo, otlp/shadow]
+      exporters: [otlp/demo, forward/logs]
+    logs/shadow:
+      receivers: [forward/logs]
+      processors: [batch/shadow]
+      exporters: [otlp/shadow]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter]
-      exporters: [otlp/demo, otlp/shadow]
+      exporters: [otlp/demo, forward/metrics]
+    metrics/shadow:
+      receivers: [forward/metrics]
+      processors: [batch/shadow]
+      exporters: [otlp/shadow]

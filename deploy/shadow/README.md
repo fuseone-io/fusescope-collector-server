@@ -13,7 +13,7 @@ hotrod, telemetrygen, RUM (via fusescope) ──► otel-tee ──► otel-coll
 | File | What |
 |---|---|
 | `compose.shadow.yaml` | override for the demo's `compose.yaml`: points the sources at `otel-tee`, adds the shadow services |
-| `tee.yaml` | upstream core collector: OTLP in, OTLP to the demo collector and, queued, to the shadow collector |
+| `tee.yaml` | upstream core collector: OTLP in, OTLP to the demo collector and, through a shadow-only pipeline, to the shadow collector |
 | `collector.yaml` | this collector's configuration in shadow |
 | `clickhouse/cluster.xml` | single-node `cluster` with an embedded keeper, named `clickhouse-shadow` |
 | `compare.py` | the comparison; exits 1 on a difference |
@@ -89,8 +89,9 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 ## Risks
 
 - The tee is a new hop on the demo's path. If it stops, the demo gets no data until rollback.
-- The shadow side never refuses a request: its queue is bounded (32 MiB per signal) and shadow requests are dropped
-  after 10 minutes of failed retries, so a shadow outage loses shadow data, seen as differences in `compare.py`, and
-  never fails a request to the demo. Only the tee's memory limiter (300 MiB) can refuse, and only under a load the
-  demo never sends.
+- The shadow side never fails a request to the demo: it sits behind a forward connector and a batch processor, which
+  accept the data and export it on their own. A slow, full (32 MiB per signal) or failing shadow path drops shadow
+  data, seen as differences in `compare.py`. Checked with the demo destination healthy and the shadow queue full:
+  the sender saw no error and the demo received everything. Only the tee's memory limiter (300 MiB) can refuse, under
+  a load the demo never sends.
 - The shadow collector shares the host's CPU and memory with the demo; the limits above bound it.
