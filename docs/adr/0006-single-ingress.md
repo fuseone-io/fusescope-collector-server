@@ -1,9 +1,8 @@
 # 0006 · Single ingress: RUM, ingestion keys and the OpAMP ingest policy
 
-- Status: proposed. It becomes accepted once
-  [fuseone-io/fusescope#303](https://github.com/fuseone-io/fusescope/pull/303), which accepts
-  FuseScope ADRs 0009 and 0010 with the amendments below, merges; this ADR will then cite its
-  merge commit.
+- Status: accepted (2026-11-03), with FuseScope ADRs 0009 and 0010 accepted by
+  [fuseone-io/fusescope#303](https://github.com/fuseone-io/fusescope/pull/303), merge commit
+  `4bee14144f2f0331e42c1ce0f672efa58aa19338`.
 - Date: 2026-10-31
 - Follows: FuseScope ADR 0009 ([fuseone-io/fusescope#222](https://github.com/fuseone-io/fusescope/pull/222),
   `docs/adr/0009-fusescope-collector.md`) and ADR 0010
@@ -75,7 +74,7 @@ Issue #13 listed three conflicts to settle first. This ADR resolves them:
 ## Security gates
 
 Decided by the maintainer and binding on `ingestauth`, `rumreceiver` and the ingest policy.
-FuseScope ADR 0010 §10 (fuseone-io/fusescope#303) records the differences from what 0010 first
+FuseScope ADR 0010 §10 (fuseone-io/fusescope#303, `4bee141`) records the differences from what 0010 first
 said; `docs/spec/rum.md` §12 lists each difference from the backend gateway.
 
 1. **Fail closed.** With no valid ingest policy, none received over OpAMP and none cached on

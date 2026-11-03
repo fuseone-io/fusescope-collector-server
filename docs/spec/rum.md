@@ -16,7 +16,7 @@ Every rule cites one of:
 - **[ADR3]**, **[ADR9]**, **[ADR10]**: FuseScope `docs/adr/0003-real-user-monitoring.md`,
   `0009-fusescope-collector.md`, `0010-single-ingress.md` at the same commit.
   **[ADR10 §10]**: the amendments on acceptance in
-  [fuseone-io/fusescope#303](https://github.com/fuseone-io/fusescope/pull/303).
+  [fuseone-io/fusescope#303](https://github.com/fuseone-io/fusescope/pull/303), merged as `4bee141`.
 - **[SDK]** `fuseone-io/fusescope-sdk` at `2e16765`: `packages/browser/README.md` and
   `packages/browser/src/`. **[OTel-JS]** `@opentelemetry/otlp-exporter-base` 0.223.0, the
   exporter version the SDK resolves (README "Compatibility": OpenTelemetry JS 0.223).
