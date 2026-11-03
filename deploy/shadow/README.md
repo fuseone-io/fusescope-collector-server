@@ -135,7 +135,8 @@ Check: the demo's UI keeps showing new data, and `docker logs fusescope-demo-ote
 `otlp/shadow` export errors.
 
 Upgrading the shadow collector (new image or configuration) needs nothing on the demo side: the demo collector's
-exporter reconnects. Resources: about 3 GiB and 1.1 CPU more (`clickhouse-shadow` 2.5 GiB, collector 384 MiB).
+exporter reconnects. Resources: about 4.8 GiB and 1.3 CPU more (`clickhouse-shadow` 4 GiB, as much as the demo's own ClickHouse needs for the
+same data; collector 384 MiB; the demo collector's extra 384 MiB).
 
 ## Compare
 

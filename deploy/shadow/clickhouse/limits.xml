@@ -2,7 +2,7 @@
      clickhouse/config.d/zz-limits.xml does for the demo's: small caches, no
      system logs but query_log. -->
 <clickhouse>
-    <max_server_memory_usage>2100000000</max_server_memory_usage>
+    <max_server_memory_usage>3400000000</max_server_memory_usage>
     <max_concurrent_queries>20</max_concurrent_queries>
     <mark_cache_size>134217728</mark_cache_size>
     <uncompressed_cache_size>67108864</uncompressed_cache_size>

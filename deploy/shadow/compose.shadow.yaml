@@ -41,7 +41,7 @@ services:
       retries: 12
     networks: [shadow]
     restart: unless-stopped
-    mem_limit: 2560m
+    mem_limit: 4096m
     cpus: 0.75
 
   # The reference image's migrator, run as a black box (ADR 0002), creates
