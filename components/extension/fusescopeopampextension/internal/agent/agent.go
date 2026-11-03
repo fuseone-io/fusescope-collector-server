@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
 
+	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/ingest"
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/merge"
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/preflight"
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/state"
@@ -59,6 +60,9 @@ type Agent struct {
 	logger    *zap.Logger
 	store     *state.Store
 	factories map[component.Type]processor.Factory
+	// ingest is the ingress side (ADR 0006), nil for other roles; set once
+	// before the agent is published.
+	ingest *ingest.Ingest
 
 	// lifecycle serializes the transitions of pending and applied pushes, on
 	// disk and in memory; mu guards the fields below and is taken inside it.
@@ -115,6 +119,9 @@ func New(logger *zap.Logger, dir string, factories map[component.Type]processor.
 // InstanceUID is the agent's persistent identity.
 func (a *Agent) InstanceUID() ([16]byte, error) { return a.store.InstanceUID() }
 
+// RenewInstanceUID replaces the identity, before the client starts.
+func (a *Agent) RenewInstanceUID() ([16]byte, error) { return a.store.RenewInstanceUID() }
+
 func (a *Agent) storeDir() string { return a.store.Dir() }
 
 // Load reads the persisted lifecycle and decides what the collector runs
@@ -163,6 +170,12 @@ func (a *Agent) FailedReported() {
 }
 
 // OnActivate sets what Activate runs once the start is recorded.
+// SetIngest sets the ingress side, before SetCurrent.
+func (a *Agent) SetIngest(i *ingest.Ingest) { a.ingest = i }
+
+// Ingest is the ingress side, nil unless the collector's role is ingress.
+func (a *Agent) Ingest() *ingest.Ingest { return a.ingest }
+
 func (a *Agent) OnActivate(fn func(context.Context) error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -84,6 +84,11 @@ type backend struct {
 	first     *protobufs.AgentToServer
 	effective []byte
 	statuses  []*protobufs.RemoteConfigStatus
+	// The ingest capability's traffic (ingest_test.go).
+	description  *protobufs.AgentDescription
+	describedUID []byte
+	capabilities *protobufs.CustomCapabilities
+	customs      []*protobufs.CustomMessage
 }
 
 func startBackend(t *testing.T) *backend {
@@ -110,6 +115,15 @@ func startBackend(t *testing.T) *backend {
 					}
 					if s := msg.GetRemoteConfigStatus(); s != nil {
 						b.statuses = append(b.statuses, s)
+					}
+					if d := msg.GetAgentDescription(); d != nil {
+						b.description, b.describedUID = d, msg.InstanceUid
+					}
+					if c := msg.GetCustomCapabilities(); c != nil {
+						b.capabilities = c
+					}
+					if c := msg.GetCustomMessage(); c != nil {
+						b.customs = append(b.customs, c)
 					}
 					return &protobufs.ServerToAgent{InstanceUid: msg.InstanceUid}
 				},

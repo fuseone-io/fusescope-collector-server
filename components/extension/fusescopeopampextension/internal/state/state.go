@@ -86,6 +86,13 @@ func (s *Store) InstanceUID() ([16]byte, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return uid, err
 	}
+	return s.RenewInstanceUID()
+}
+
+// RenewInstanceUID replaces the instance UID with a new random one: to the
+// backend, a new agent.
+func (s *Store) RenewInstanceUID() ([16]byte, error) {
+	var uid [16]byte
 	_, _ = rand.Read(uid[:])
 	uid[6], uid[8] = uid[6]&0x0f|0x40, uid[8]&0x3f|0x80 // UUIDv4, as the backend parses it
 	return uid, s.write(uidFile, []byte(hex.EncodeToString(uid[:])))

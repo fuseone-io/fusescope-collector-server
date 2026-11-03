@@ -27,6 +27,7 @@ Every rule cites one of:
 - **[OTLP]**: the OTLP specification, OTLP/HTTP (response codes, `Retry-After`).
 - **[M]**: a maintainer decision recorded in ADR 0006 or on PR #41, with no other source.
   **[M43]**: a maintainer decision in the review of PR #43 (step 2).
+  **[M44]**: a maintainer decision in the review of PR #44 (step 3).
 
 A rule marked **Differs** is a deliberate change from the backend, listed again in §12.
 
@@ -567,6 +568,34 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 - `reportSequence` is a uint64, strictly increasing per agent across restarts: the collector
   persists the next value in its storage directory, next to the OpAMP instance UID
   ([ADR 0008](../adr/0008-opamp-remote-config.md) point 4), before sending a report with it.
+  It is `<storage>/ingest/report-sequence`, mode `0600`, written atomically (temporary file,
+  fsync, rename, directory fsync), holding `<instance UID, 32 lowercase hex> <last sequence>`
+  and a newline, at most 64 bytes ([M44]). The sequence belongs to that UID: the backend keys
+  what it applied by `(agentID, reportSequence)`, so only the last sequence persisted for the
+  same UID proves a new one is above everything the backend may have applied. The clock proves
+  nothing and is not used.
+  - **Valid, same UID:** the next sequence is the last plus 1; at `2^64-1` no report is sent.
+  - **Absent, or valid for another UID:** nothing says which sequences the backend applied for
+    the current UID, so the collector renews its instance UID before the OpAMP client starts and
+    records `<new UID> 0` before any report: a new agent to the backend, a new sequence domain
+    starting at 1. Reusing a lower sequence instead would let the backend answer
+    `already_applied` and acknowledge values it never applied, which the collector would then
+    clear. The first start of an `ingress` collector, or a switch from `writer`, renews the UID
+    this way once.
+  - **Unreadable or corrupt** (over 64 bytes, not exactly that format, a number out of
+    range): fail closed. No report is sent, and an error is logged, until an operator removes
+    the file, after which the next start renews the UID as above.
+  - A sequence that cannot be persisted is not used and that report is not sent; it reached no
+    backend, so it may be reserved again.
+- **Collector, sending** ([M]; one receiver [M44]): `rumreceiver` builds a report every 60 s and right after each
+  OpAMP (re)connection, one at a time; handing its pages to the OpAMP client, in order, is
+  bounded by 30 s, after which the report is abandoned and its values stay pending. The report
+  is sent with no policy too, so `policy.status` reaches the backend. It reaches the extension
+  through the same `ingest_policy` extension ID as the policy. The extension hands the
+  transport to one receiver at a time, released at its shutdown: a second `rumreceiver` on the
+  same collector fails to start, since two would interleave the pages of different sequences,
+  which the backend's one assembly per agent invalidates, and take each other's
+  acknowledgements.
 - The backend acknowledges with a custom message of the same capability, type `reportAck`:
 
   ```json
@@ -661,11 +690,15 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 - **Backend, compare-and-apply answers** ([M43]): only "applied" and "already applied" let the
   backend acknowledge; "invalidated" refuses the sequence; any other answer, or none, fails
   closed like a store error: no ack, the sequence stays awaiting commit and is retried.
-- **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
+- **Collector, acknowledgements:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
   never sent, or already processed, is ignored. Handing a report to the OpAMP client clears
-  nothing.
+  nothing. A `reportAck` is parsed strictly: at most 1 KiB, one object with exactly the two
+  fields above, each once and spelled exactly (no case folding, no duplicate), `schemaVersion`
+  the number `1` and `reportSequence` an integer from 1 to `2^64-1`; anything else is dropped
+  with a log line of its size only ([M44]). At most 16 acks wait for the receiver; more are dropped, which only repeats their
+  values in the next report ([M]).
 
 ## 11. The ingest policy
 
@@ -677,6 +710,17 @@ declares the custom capability `io.fuseone.fusescope.ingest.v1`; the backend sen
 snapshot, never a delta, pushed on any change, when the collector's `policy.version` is behind,
 and every 5 minutes regardless ([ADR10] line 64). It is sent only to collectors of role `ingress`
 ([ADR10] line 62; [ADR9] line 79).
+
+**Collector side** ([M]): the role is the `fusescope_opamp` setting `role` (`writer`, the
+default, or `ingress`), reported as the non-identifying description attribute
+`fusescope.collector.role` ([opamp.md](opamp.md) §8). Only `ingress` declares the capability,
+holds the policy and sends reports; a `writer` ignores every message of the capability, and its
+`IngestPolicy()` never holds a policy, so a `rumreceiver` on it fails closed. Messages of other
+capabilities or types are ignored. The OpAMP client accepts messages up to `max_policy_size` plus
+1 MiB, so a policy over the cap still arrives and is rejected as `too_large` rather than dropping
+the connection. Received policies are applied by one worker, off the OpAMP callback; a newer
+`policy` message replaces one still waiting, so only the latest is applied. Nothing about a
+message's content is logged, only its size.
 
 The policy is the remote authority for ingest authentication and identity (ADR 0006 decision
 3): it can add keys, widen origins and signals, set the org and the stamped name and
@@ -744,8 +788,9 @@ that breaks a rule, a string with surrounding spaces included, is `invalid_value
   (it refreshes the policy's last-received time, for staleness). One with a higher version that
   passes §11.2 replaces the policy held.
 - **Cache** ([ADR10] line 74; order [M43]): a valid policy of a higher version first has its
-  floor written to `<storage>/ingest-policy.state` as `{version, sha256}`, the highest accepted
-  revision, then its data bytes to `<storage>/ingest-policy.json`. Both mode `0600`, each
+  floor written to `<storage>/ingest/ingest-policy.state` as `{version, sha256}`, the highest
+  accepted revision, then its data bytes to `<storage>/ingest/ingest-policy.json`, where
+  `<storage>` is the `fusescope_opamp` storage directory and `ingest/` is mode `0700`. Both mode `0600`, each
   written atomically (temporary file renamed over the old one, as
   [ADR 0008](../adr/0008-opamp-remote-config.md) point 4 does for pushes). They hold verifiers
   only, never a key, since the message carries none, and are never logged or reported.

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
+	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/ingest"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozllmpricingprocessor"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozspanmapperprocessor"
@@ -43,7 +45,17 @@ type Settings struct {
 	TLS      configtls.ClientConfig `mapstructure:"tls"`
 	// Storage is the directory of the persisted state (ADR 0008 §4).
 	Storage string `mapstructure:"storage"`
+	// Role is reported as fusescope.collector.role (FuseScope ADR 0009 line 79):
+	// writer, the default, or ingress, which alone takes the ingest policy
+	// and sends the ingest report (ADR 0006).
+	Role string `mapstructure:"role"`
 }
+
+// The collector roles of FuseScope ADR 0009 line 79.
+const (
+	RoleWriter  = "writer"
+	RoleIngress = "ingress"
+)
 
 func (s *Settings) validate() error {
 	u, err := url.Parse(s.Endpoint)
@@ -56,6 +68,8 @@ func (s *Settings) validate() error {
 		return errors.New("fusescope_opamp: wss:// with tls.insecure: true is contradictory")
 	case s.Storage == "":
 		return errors.New("fusescope_opamp.storage must name a directory")
+	case s.Role != "" && s.Role != RoleWriter && s.Role != RoleIngress:
+		return fmt.Errorf("fusescope_opamp.role must be %s or %s", RoleWriter, RoleIngress)
 	case !s.TLS.Insecure && s.TLS.MinVersion != "" && s.TLS.MinVersion < minTLSVersion:
 		return fmt.Errorf("fusescope_opamp.tls.min_version must be at least %s (ADR 0004)", minTLSVersion)
 	}
@@ -136,6 +150,10 @@ func (p *provider) start(base map[string]any, s *Settings) error {
 	if err != nil {
 		return fmt.Errorf("read OpAMP state: %w", err)
 	}
+	if s.Role == RoleIngress {
+		// Nothing on disk until the collector starts.
+		a.SetIngest(ingest.New(p.logger, filepath.Join(s.Storage, "ingest")))
+	}
 	p.agent = a
 	agent.SetCurrent(a)
 	// The client starts with the collector, not when the configuration is
@@ -144,6 +162,12 @@ func (p *provider) start(base map[string]any, s *Settings) error {
 		if s.TLS.Insecure {
 			p.logger.Warn("OpAMP to the backend is in plaintext; remote configuration travels unencrypted and unauthenticated",
 				zap.String("endpoint", redactURL(s.Endpoint)))
+		}
+		if ing := a.Ingest(); ing != nil {
+			// The cached policy is in force before any receiver starts.
+			if err := ing.Start(a); err != nil {
+				return err
+			}
 		}
 		c, err := startClient(ctx, p.logger, s, a, failed)
 		if err != nil {
@@ -171,10 +195,14 @@ func (p *provider) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	c := p.client
 	p.mu.Unlock()
+	var err error
 	if c != nil {
-		return c.stop(ctx)
+		err = c.stop(ctx)
 	}
-	return nil
+	if p.agent != nil && p.agent.Ingest() != nil {
+		p.agent.Ingest().Close()
+	}
+	return err
 }
 
 // split separates the provider's settings section from the base configuration.
