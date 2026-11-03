@@ -607,33 +607,44 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   committed, and while it does, a page of a lower sequence is refused and one of a higher
   sequence waits (no ack, the collector sends again). The commit is one compare-and-apply on
   the persisted record: the report is applied and its sequence recorded as applied in one
-  transaction, only if the sequence is above both the applied and the invalidated one. That
+  transaction, only if the sequence is above both the applied and the invalidated one, and the
+  transaction returns its one outcome: `applied`, `already_applied` (a sequence at least as
+  high was applied) or `invalidated`, so no second read is needed. That
   single atomic step, rather than a per-agent lock, is what orders applications, also across
   backend replicas: whichever finishes first, a lower sequence can never be applied after a
   higher one. The ack is sent, and the applying marker released, only after the commit
   succeeds; a commit that finds a higher sequence already applied is acknowledged again with no
   effect.
-- **Backend, memory while applying** ([M43]): a sequence awaiting commit keeps its page bytes,
-  not a decoded report; it is decoded again for each commit attempt only. One 128 MiB budget
+- **Backend, memory while applying** ([M43]): once a sequence completes, its entry keeps only
+  exact copies of its page bytes (each a slice of exactly its length, never the request's
+  buffer); the validator, its ID maps, the merged report and every decoded string are dropped,
+  and the pages are merged and decoded again, transiently, at each commit attempt. Measured:
+  16 sequences of 481 KiB each grow the heap in use by 8.0 MiB for 7.5 MiB of pages. One 128 MiB budget
   counts every page held, assembling or awaiting commit, and one count of 1 000 covers both.
   To make room the oldest assemblies of other agents are invalidated; a sequence awaiting
   commit never is. When the budget is full of those, the page is refused and nothing escapes
   the count.
 - **Backend, store failures** ([M43]): reading the record, the compare-and-apply and persisting
-  an invalidation all return errors, and every failure fails closed. A page whose agent record
+  an invalidation all take a context with a per-call deadline of 5 s and return errors, and
+  every failure fails closed; a call past its deadline is a failure, retried with backoff. The
+  backend's database must have a statement timeout no longer than that deadline, so a call
+  cannot outlive it. A page whose agent record
   cannot be read is refused. A failed commit sends no ack and keeps the sequence awaiting
   commit, still refusing lower sequences. A failed invalidation keeps an in-memory marker (an
   agent ID and a sequence) refusing that sequence and holding back higher ones until it is
   persisted. No new assembly starts while 1 000 such markers wait; with those of assemblies
   already held, at most 2 000 exist.
 - **Backend, retries** ([M43]): store calls are made outside the assembler's lock: a page costs
-  one record read and one retry pass of at most 8 store calls, whatever is pending, so other
+  one record read plus one retry pass of at most 8 store calls (one per commit or invalidation
+  retried), whatever is pending, so other
   agents' pages wait for no one else's I/O. Each failed commit or invalidation is retried with
   exponential backoff (100 ms doubling to 30 s) and jitter. **Who retries a failed commit:**
   the retrier, run in each page's pass and from a backend ticker; it returns the sequences it
   committed, which the backend then acknowledges. A resent page of a sequence awaiting commit
   answers "applying" and attempts nothing itself. A commit still failing 120 s after its
-  sequence completed is given up: the sequence is invalidated instead, so it can never be
+  sequence completed is given up: every pass checks that deadline without any store call, so a
+  call in flight cannot delay it, and the sequence is invalidated instead (the store's atomic
+  compare-and-apply decides if the call in flight landed first), so it can never be
   applied out of order, and the collector's next report carries the same pending values.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer

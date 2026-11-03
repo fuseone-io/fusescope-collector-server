@@ -5,6 +5,7 @@ package report
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -373,8 +374,137 @@ func TestAssemblerApplyingWithinBudget(t *testing.T) {
 	b, _, _ = a.Buffered()
 	assert.LessOrEqual(t, b, a.maxBytes)
 	for _, e := range a.agents {
-		assert.NotNil(t, e.pages, "applying entries hold their counted pages, not a decoded report")
+		assertOnlyBytes(t, e)
 	}
+}
+
+// assertOnlyBytes checks what an entry awaiting commit holds: exact copies
+// of its pages, and no validator, maps or decoded strings.
+func assertOnlyBytes(t *testing.T, e *entry) {
+	t.Helper()
+	require.Equal(t, applying, e.state)
+	assert.Nil(t, e.pages, "no validator, maps or decoded report")
+	require.NotEmpty(t, e.raw)
+	size := 0
+	for _, p := range e.raw {
+		assert.Equal(t, len(p), cap(p), "an exact copy, no larger backing array")
+		size += len(p)
+	}
+	assert.Equal(t, size, e.size, "what is held is what is counted")
+}
+
+// Maintainer review of #43: a sequence awaiting commit retains its page
+// bytes and nothing else; measured on the heap.
+func TestAssemblerApplyingRetainedHeap(t *testing.T) {
+	seqs := sequences(t, 1)
+	pages := seqs[1]
+	pageBytes := 0
+	for _, p := range pages {
+		pageBytes += len(p)
+	}
+	const n = 16
+	store := NewMemoryAgentStore()
+	a := NewAssembler(store)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for i := range n {
+		agent := fmt.Sprintf("agent-%d", i)
+		for _, p := range pages {
+			_, _, err := a.Add(agent, p, t0)
+			require.NoError(t, err)
+		}
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	growth := int64(after.HeapInuse) - int64(before.HeapInuse)
+	t.Logf("%d sequences of %d page bytes awaiting commit: heap in use grew %.1f MiB, pages %.1f MiB",
+		n, pageBytes, float64(growth)/(1<<20), float64(n*pageBytes)/(1<<20))
+	assert.Less(t, growth, int64(n*pageBytes+(4<<20)), "the pages and a small overhead, nothing decoded")
+	b, held, _ := a.Buffered()
+	assert.Equal(t, n*pageBytes, b)
+	assert.Equal(t, n, held)
+	for _, e := range a.agents {
+		assertOnlyBytes(t, e)
+	}
+	// A commit decodes again, from the bytes alone.
+	require.NoError(t, a.Commit("agent-0", 1, t0))
+	assert.Equal(t, []uint64{1}, store.AppliedOf("agent-0"))
+	runtime.KeepAlive(a)
+}
+
+// Maintainer review of #43: a store call that never returns on its own is
+// cut at StoreCallTimeout and counted as a failure; the commit deadline is
+// enforced without waiting for it, and other agents keep progressing.
+func TestAssemblerStuckStoreCall(t *testing.T) {
+	small := smallSequence(t, 1)
+	store := NewMemoryAgentStore()
+	a := NewAssembler(store)
+	a.callTimeout = 100 * time.Millisecond
+	complete(t, a, "stuck", small, t0)
+	store.SetBlock("apply", true)
+
+	start := time.Now()
+	var wg sync.WaitGroup
+	var commitErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		commitErr = a.Commit("stuck", 1, t0)
+	}()
+	time.Sleep(20 * time.Millisecond) // the commit is in its store call
+	other := time.Now()
+	complete(t, a, "other", small, t0)
+	assert.Less(t, time.Since(other), a.callTimeout, "another agent is not held up by the stuck call")
+	wg.Wait()
+	require.Error(t, commitErr, "the stuck call ends at its deadline, as a failure")
+	assert.Less(t, time.Since(start), 2*time.Second)
+
+	// The retrier is not stuck either: each attempt ends at the deadline.
+	start = time.Now()
+	a.Retry(t0.Add(time.Minute))
+	assert.Less(t, time.Since(start), time.Duration(RetryBatch+1)*a.callTimeout+time.Second)
+
+	// Past the commit deadline (injected clock) the sequence is invalidated
+	// whatever the store does with commits.
+	late := t0.Add(CommitDeadline + time.Second)
+	a.Retry(late)
+	a.Retry(late.Add(time.Minute))
+	assert.Equal(t, uint64(1), store.RecordOf("stuck").Invalidated)
+	assert.Empty(t, store.AppliedOf("stuck"))
+	_, _, err := a.Add("stuck", small[0], late.Add(2*time.Minute))
+	assert.ErrorIs(t, err, ErrInvalidSequence)
+}
+
+// Maintainer review of #43: one pass makes at most RetryBatch store calls,
+// negative commit results included: the compare-and-apply returns its
+// outcome atomically, with no second read.
+func TestAssemblerRetryBatchCountsStoreCalls(t *testing.T) {
+	store := NewMemoryAgentStore()
+	a := NewAssembler(store)
+	for i := range 2 * RetryBatch {
+		agent := fmt.Sprintf("agent-%d", i)
+		complete(t, a, agent, smallSequence(t, 1), t0)
+		store.SetFail("apply", true)
+		require.Error(t, a.Commit(agent, 1, t0))
+		store.SetFail("apply", false)
+		if i%2 == 0 {
+			store.SetRecord(agent, AgentRecord{Applied: 1}) // another replica applied it
+		} else {
+			store.SetRecord(agent, AgentRecord{Invalidated: 1})
+		}
+	}
+	store.Calls("apply")
+	store.Calls("record")
+	done := a.Retry(t0.Add(time.Minute)) // past the backoff, within the commit deadline
+	assert.Equal(t, RetryBatch, store.Calls("apply"), "one call per job")
+	assert.Zero(t, store.Calls("record"), "no second read")
+	assert.Zero(t, store.Calls("invalidate"))
+	for _, c := range done {
+		assert.Equal(t, AgentRecord{Applied: 1}, store.RecordOf(c.Agent), "already applied: acknowledged again")
+	}
+	_, held, _ := a.Buffered()
+	assert.Equal(t, RetryBatch, held, "the rest waits for the next pass")
 }
 
 // Maintainer review of #43: with the store down and 1 000 invalidations

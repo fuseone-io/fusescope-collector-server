@@ -314,7 +314,7 @@ func (m *merger) add(data []byte) (repeat bool, err error) {
 		}
 		m.keys[k.ID] = true
 	}
-	m.byPage[r.Page] = data
+	m.byPage[r.Page] = exactCopy(data) // never the caller's backing array
 	m.size += len(data)
 	m.merged.Applications = append(m.merged.Applications, r.Applications...)
 	m.merged.Keys = append(m.merged.Keys, r.Keys...)

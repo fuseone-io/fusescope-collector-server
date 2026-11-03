@@ -4,6 +4,7 @@
 package report // import "github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/report"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -25,14 +26,20 @@ const (
 	// held, at most MaxPendingInvalidations + MaxAssemblies markers of an
 	// agent ID and a sequence each.
 	MaxPendingInvalidations = 1000
-	// RetryBatch is the most store calls one retry pass makes.
+	// RetryBatch is the most store calls one retry pass makes; a page also
+	// reads its agent's record once.
 	RetryBatch = 8
-	// CommitDeadline is how long a failing commit is retried before its
-	// sequence is invalidated instead.
+	// StoreCallTimeout is the deadline of every store call; a call past it
+	// counts as a failure and is retried with backoff. The backend's
+	// database statement timeout must not exceed it.
+	StoreCallTimeout = 5 * time.Second
+	// CommitDeadline is how long after completion a failing commit is
+	// retried before its sequence is invalidated instead; it is checked
+	// on every pass, whether or not a call is in flight.
 	CommitDeadline = AssemblyTTL
 	retryBase      = 100 * time.Millisecond
-	commitGrace    = time.Second
 	retryMax       = 30 * time.Second
+	commitGrace    = time.Second
 )
 
 // Errors of Assembler.Add and Commit. A page refused with any of them
@@ -58,15 +65,28 @@ type AgentRecord struct {
 	Invalidated uint64
 }
 
+// ApplyResult is the one atomic outcome of a compare-and-apply.
+type ApplyResult uint8
+
+const (
+	// Applied: the report was applied and its sequence recorded.
+	Applied ApplyResult = iota + 1
+	// AlreadyApplied: a sequence at least as high was applied; nothing changed.
+	AlreadyApplied
+	// Invalidated: the sequence is not above the invalidated one; nothing changed.
+	Invalidated
+)
+
 // AgentStore is the backend's persistence of AgentRecord, its database.
+// Every call gets a context with a StoreCallTimeout deadline.
 type AgentStore interface {
-	Record(agent string) (AgentRecord, error)
+	Record(ctx context.Context, agent string) (AgentRecord, error)
 	// ApplyIfGreater applies the report and records its sequence as applied,
-	// atomically, only if the sequence is above both the applied and the
-	// invalidated one; applied is false otherwise, with nothing changed.
-	ApplyIfGreater(agent string, r *Report) (applied bool, err error)
+	// in one transaction, only if the sequence is above both the applied
+	// and the invalidated one.
+	ApplyIfGreater(ctx context.Context, agent string, r *Report) (ApplyResult, error)
 	// Invalidate raises the invalidated sequence to seq, if higher.
-	Invalidate(agent string, seq uint64) error
+	Invalidate(ctx context.Context, agent string, seq uint64) error
 }
 
 // Committed is a sequence the retrier committed: the backend acknowledges it.
@@ -76,12 +96,13 @@ type Committed struct {
 }
 
 // Assembler is the reference model of the backend's page assembly (§10.4).
-// Memory holds, per agent, at most one entry: an assembly, or a complete
-// sequence awaiting commit (both with their pages, counted in one byte
-// budget and one count), or an invalidation awaiting persistence (counted
-// in its own bound). Store calls are made outside the lock, at most one
-// record read per page and RetryBatch retries per pass, each failure backed
-// off exponentially with jitter.
+// Memory holds, per agent, at most one entry: an assembly (its validator
+// and pages), a complete sequence awaiting commit (exact copies of its page
+// bytes and nothing decoded), or an invalidation awaiting persistence (an
+// agent ID and a sequence). Pages count in one byte budget and one entry
+// count; markers in their own bound. Store calls are made outside the lock,
+// each with a deadline: a page makes one record read and one retry pass of
+// at most RetryBatch store calls.
 type Assembler struct {
 	store AgentStore
 
@@ -93,13 +114,14 @@ type Assembler struct {
 
 	// Bounds, overridable in tests.
 	maxBytes, maxHeld, maxPending, batch int
+	callTimeout                          time.Duration
 }
 
 type entryState uint8
 
 const (
 	assembling   entryState = iota
-	applying                // complete, its pages held until the commit
+	applying                // complete: only raw, until the commit
 	invalidating            // invalidated, until the store records it
 )
 
@@ -107,7 +129,12 @@ type entry struct {
 	state   entryState
 	seq     uint64
 	started time.Time
-	pages   *merger
+	// pages validates an assembly; nil once complete.
+	pages *merger
+	// raw holds exact copies of a complete sequence's pages, decoded again
+	// by Merge at each commit attempt.
+	raw  [][]byte
+	size int
 	// Retry state of a commit or an invalidation.
 	attempts int
 	next     time.Time
@@ -118,15 +145,20 @@ type entry struct {
 func NewAssembler(store AgentStore) *Assembler {
 	return &Assembler{
 		store: store, agents: map[string]*entry{},
-		maxBytes: MaxAssemblyBytes, maxHeld: MaxAssemblies, maxPending: MaxPendingInvalidations, batch: RetryBatch,
+		maxBytes: MaxAssemblyBytes, maxHeld: MaxAssemblies, maxPending: MaxPendingInvalidations,
+		batch: RetryBatch, callTimeout: StoreCallTimeout,
 	}
 }
 
+func (a *Assembler) callCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), a.callTimeout)
+}
+
 // Add takes one page from agent. When the page completes a valid sequence
-// it returns the merged report, decoded for the caller only; the sequence
-// stays applying, with its pages, until Commit. Nothing is acknowledged
-// before a commit. Each call also runs one bounded retry pass, whose
-// commits are returned for acknowledgement.
+// it returns the merged report, the caller's own copy; the sequence keeps
+// only its page bytes until Commit. Nothing is acknowledged before a
+// commit. Each call also runs one bounded retry pass, whose commits are
+// returned for acknowledgement.
 func (a *Assembler) Add(agent string, page []byte, now time.Time) (*Report, []Committed, error) {
 	r, perr := a.add(agent, page, now)
 	return r, a.Retry(now), perr
@@ -136,7 +168,6 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 	a.mu.Lock()
 	a.expire(now)
 	a.mu.Unlock()
-
 	if len(page) > MaxPageBytes {
 		return nil, a.invalidateHeld(agent, now, fmt.Errorf("a page of %d bytes", len(page)))
 	}
@@ -145,7 +176,9 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 		return nil, a.invalidateHeld(agent, now, err)
 	}
 	seq := r.ReportSequence
-	rec, err := a.store.Record(agent) // outside the lock
+	ctx, cancel := a.callCtx()
+	rec, err := a.store.Record(ctx, agent) // outside the lock
+	cancel()
 	if err != nil {
 		return nil, fmt.Errorf("agent record: %w", err)
 	}
@@ -168,8 +201,7 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 		case cur.state == invalidating && seq == cur.seq:
 			return nil, ErrInvalidSequence
 		case cur.state == invalidating:
-			// A higher sequence waits until the invalidation is durable.
-			return nil, ErrBusy
+			return nil, ErrBusy // a higher sequence waits until the invalidation is durable
 		case cur.state == applying:
 			return nil, ErrApplying
 		case seq > cur.seq:
@@ -178,9 +210,7 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 		}
 	}
 	if cur == nil {
-		// New entries wait while invalidations are not persisted: each could
-		// need one more. Markers only ever come from entries with pages, so
-		// pending stays within maxPending + maxHeld.
+		// New entries wait while invalidations are not persisted.
 		if a.pending >= a.maxPending || !a.makeRoom(agent, len(page), true, now) {
 			return nil, ErrBusy
 		}
@@ -190,7 +220,6 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 	} else if !a.makeRoom(agent, len(page), false, now) {
 		return nil, ErrBusy
 	}
-	before := cur.pages.size
 	repeat, err := cur.pages.add(page)
 	if err != nil {
 		a.markInvalid(agent, cur, now)
@@ -199,7 +228,8 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 	if repeat {
 		return nil, nil
 	}
-	a.bytes += cur.pages.size - before
+	a.bytes += cur.pages.size - cur.size
+	cur.size = cur.pages.size
 	if !cur.pages.complete() {
 		return nil, nil
 	}
@@ -208,17 +238,29 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 		a.markInvalid(agent, cur, now)
 		return nil, err
 	}
-	// The pages stay, counted, until the commit; the decoded report is the
-	// caller's and is not kept.
-	// The caller commits at once; the retrier steps in after commitGrace.
+	// Keep only exact copies of the page bytes; the validator, its maps and
+	// every decoded string go.
+	raw := make([][]byte, 0, len(cur.pages.byPage))
+	for i := 1; i <= len(cur.pages.byPage); i++ {
+		raw = append(raw, exactCopy(cur.pages.byPage[i]))
+	}
+	cur.pages, cur.raw = nil, raw
 	cur.state, cur.deadline, cur.next = applying, now.Add(CommitDeadline), now.Add(commitGrace)
 	return &merged, nil
 }
 
+// exactCopy copies b into a slice of exactly its length, so nothing larger
+// is retained.
+func exactCopy(b []byte) []byte {
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
+}
+
 // Commit commits the completed sequence seq of agent through the store's
 // compare-and-apply. Only a nil error lets the backend acknowledge. On a
-// store error the sequence stays applying, with its pages, and the
-// retrier tries again with backoff until CommitDeadline.
+// failure the sequence stays awaiting commit and the retrier tries again
+// with backoff, until CommitDeadline.
 func (a *Assembler) Commit(agent string, seq uint64, now time.Time) error {
 	a.mu.Lock()
 	cur := a.agents[agent]
@@ -227,50 +269,56 @@ func (a *Assembler) Commit(agent string, seq uint64, now time.Time) error {
 		return fmt.Errorf("sequence %d of %s is not awaiting commit", seq, agent)
 	}
 	cur.inFlight = true
+	raw := cur.raw
 	a.mu.Unlock()
-	return a.commit(agent, cur, now)
+	return a.commit(agent, cur, raw, now)
 }
 
 // commit runs one attempt, outside the lock, for an entry marked in flight.
-func (a *Assembler) commit(agent string, cur *entry, now time.Time) error {
-	report, err := cur.pages.result() // decoded for this attempt only
-	var applied bool
+func (a *Assembler) commit(agent string, cur *entry, raw [][]byte, now time.Time) error {
+	var result ApplyResult
+	report, err := Merge(raw) // decoded again for this attempt only
 	if err == nil {
-		applied, err = a.store.ApplyIfGreater(agent, &report)
-	}
-	var rec AgentRecord
-	if err == nil && !applied {
-		rec, err = a.store.Record(agent)
+		ctx, cancel := a.callCtx()
+		result, err = a.store.ApplyIfGreater(ctx, agent, &report)
+		cancel()
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	cur.inFlight = false
+	if cur.state != applying {
+		// The deadline passed meanwhile and the sequence was invalidated;
+		// the store's atomic result is what happened.
+		if err == nil && result != Invalidated {
+			return nil
+		}
+		return ErrInvalidSequence
+	}
 	if err != nil {
 		a.backoff(cur, now)
-		if now.After(cur.deadline) {
-			// Give up committing; protect the sequence by invalidating it.
-			a.markInvalid(agent, cur, now)
-		}
 		return fmt.Errorf("commit: %w", err)
 	}
 	a.drop(agent, cur)
-	if !applied && cur.seq > rec.Applied {
-		return ErrInvalidSequence // invalidated meanwhile
+	if result == Invalidated {
+		return ErrInvalidSequence
 	}
-	return nil // applied now, or a higher sequence was already: acknowledge
+	return nil // applied now, or already: acknowledge
 }
 
-// Retry runs one pass over due commits and invalidations: at most the
-// batch, each outside the lock. The backend also calls it from a ticker,
-// so a failed commit is retried without waiting for the agent's next page.
-// It returns the sequences it committed, which the backend acknowledges.
+// Retry runs one pass: it invalidates sequences past their commit deadline
+// and assemblies past their TTL (no store call), then retries due commits
+// and invalidations, at most the batch, each one store call outside the
+// lock. The backend also calls it from a ticker. It returns the sequences
+// it committed, which the backend acknowledges.
 func (a *Assembler) Retry(now time.Time) []Committed {
 	type job struct {
 		agent string
 		e     *entry
+		raw   [][]byte
 	}
 	a.mu.Lock()
+	a.expire(now)
 	var jobs []job
 	for agent, cur := range a.agents {
 		if len(jobs) == a.batch {
@@ -280,19 +328,21 @@ func (a *Assembler) Retry(now time.Time) []Committed {
 			continue
 		}
 		cur.inFlight = true
-		jobs = append(jobs, job{agent, cur})
+		jobs = append(jobs, job{agent, cur, cur.raw})
 	}
 	a.mu.Unlock()
 
 	var done []Committed
 	for _, j := range jobs {
-		switch j.e.state {
-		case applying:
-			if a.commit(j.agent, j.e, now) == nil {
+		switch {
+		case j.raw != nil:
+			if a.commit(j.agent, j.e, j.raw, now) == nil {
 				done = append(done, Committed{j.agent, j.e.seq})
 			}
-		case invalidating:
-			err := a.store.Invalidate(j.agent, j.e.seq)
+		default:
+			ctx, cancel := a.callCtx()
+			err := a.store.Invalidate(ctx, j.agent, j.e.seq)
+			cancel()
 			a.mu.Lock()
 			j.e.inFlight = false
 			if err == nil {
@@ -344,10 +394,14 @@ func (a *Assembler) shedOldest(keep string, now time.Time) bool {
 	return true
 }
 
-// expire marks assemblies older than the TTL invalid; no store call.
+// expire marks assemblies past their TTL and sequences past their commit
+// deadline invalid; no store call, so a stuck call cannot delay it.
 func (a *Assembler) expire(now time.Time) {
 	for agent, cur := range a.agents {
-		if cur.state == assembling && now.Sub(cur.started) > AssemblyTTL {
+		switch {
+		case cur.state == assembling && now.Sub(cur.started) > AssemblyTTL:
+			a.markInvalid(agent, cur, now)
+		case cur.state == applying && now.After(cur.deadline):
 			a.markInvalid(agent, cur, now)
 		}
 	}
@@ -364,13 +418,9 @@ func (a *Assembler) invalidateHeld(agent string, now time.Time, err error) error
 }
 
 // markInvalid frees the entry's pages and leaves an invalidation marker,
-// due at once; the retry pass persists it.
+// due at once; a retry pass persists it.
 func (a *Assembler) markInvalid(agent string, cur *entry, now time.Time) {
-	if cur.pages != nil {
-		a.bytes -= cur.pages.size
-		a.held--
-		cur.pages = nil
-	}
+	a.free(cur)
 	if cur.state != invalidating {
 		a.pending++
 	}
@@ -378,14 +428,19 @@ func (a *Assembler) markInvalid(agent string, cur *entry, now time.Time) {
 	a.agents[agent] = cur
 }
 
+func (a *Assembler) free(cur *entry) {
+	if cur.pages != nil || cur.raw != nil {
+		a.bytes -= cur.size
+		a.held--
+	}
+	cur.pages, cur.raw, cur.size = nil, nil, 0
+}
+
 func (a *Assembler) drop(agent string, cur *entry) {
 	if a.agents[agent] != cur {
 		return
 	}
-	if cur.pages != nil {
-		a.bytes -= cur.pages.size
-		a.held--
-	}
+	a.free(cur)
 	if cur.state == invalidating {
 		a.pending--
 	}
@@ -407,23 +462,35 @@ type MemoryAgentStore struct {
 	records map[string]AgentRecord
 	applied map[string][]uint64
 	fail    map[string]bool
+	block   map[string]bool
 	calls   map[string]int
 	delay   time.Duration
 }
 
 func NewMemoryAgentStore() *MemoryAgentStore {
-	return &MemoryAgentStore{records: map[string]AgentRecord{}, applied: map[string][]uint64{}, fail: map[string]bool{}, calls: map[string]int{}}
+	return &MemoryAgentStore{
+		records: map[string]AgentRecord{}, applied: map[string][]uint64{},
+		fail: map[string]bool{}, block: map[string]bool{}, calls: map[string]int{},
+	}
 }
 
 var errStoreDown = errors.New("store unavailable")
 
-func (m *MemoryAgentStore) op(name string) error {
+func (m *MemoryAgentStore) op(ctx context.Context, name string) error {
 	m.mu.Lock()
 	m.calls[name]++
-	fail, delay := m.fail[name], m.delay
+	fail, block, delay := m.fail[name], m.block[name], m.delay
 	m.mu.Unlock()
+	if block {
+		<-ctx.Done() // a call that never returns on its own
+		return ctx.Err()
+	}
 	if delay > 0 {
-		time.Sleep(delay)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	if fail {
 		return errStoreDown
@@ -431,8 +498,8 @@ func (m *MemoryAgentStore) op(name string) error {
 	return nil
 }
 
-func (m *MemoryAgentStore) Record(agent string) (AgentRecord, error) {
-	if err := m.op("record"); err != nil {
+func (m *MemoryAgentStore) Record(ctx context.Context, agent string) (AgentRecord, error) {
+	if err := m.op(ctx, "record"); err != nil {
 		return AgentRecord{}, err
 	}
 	m.mu.Lock()
@@ -440,24 +507,27 @@ func (m *MemoryAgentStore) Record(agent string) (AgentRecord, error) {
 	return m.records[agent], nil
 }
 
-func (m *MemoryAgentStore) ApplyIfGreater(agent string, r *Report) (bool, error) {
-	if err := m.op("apply"); err != nil {
-		return false, err
+func (m *MemoryAgentStore) ApplyIfGreater(ctx context.Context, agent string, r *Report) (ApplyResult, error) {
+	if err := m.op(ctx, "apply"); err != nil {
+		return 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec := m.records[agent]
-	if r.ReportSequence <= rec.Applied || r.ReportSequence <= rec.Invalidated {
-		return false, nil
+	switch {
+	case r.ReportSequence <= rec.Applied:
+		return AlreadyApplied, nil
+	case r.ReportSequence <= rec.Invalidated:
+		return Invalidated, nil
 	}
 	rec.Applied = r.ReportSequence
 	m.records[agent] = rec
 	m.applied[agent] = append(m.applied[agent], r.ReportSequence)
-	return true, nil
+	return Applied, nil
 }
 
-func (m *MemoryAgentStore) Invalidate(agent string, seq uint64) error {
-	if err := m.op("invalidate"); err != nil {
+func (m *MemoryAgentStore) Invalidate(ctx context.Context, agent string, seq uint64) error {
+	if err := m.op(ctx, "invalidate"); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -477,11 +547,25 @@ func (m *MemoryAgentStore) SetFail(op string, fail bool) {
 	m.fail[op] = fail
 }
 
+// SetBlock makes an operation block until its context ends.
+func (m *MemoryAgentStore) SetBlock(op string, block bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.block[op] = block
+}
+
 // SetDelay makes every operation take d.
 func (m *MemoryAgentStore) SetDelay(d time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.delay = d
+}
+
+// SetRecord writes a record directly, as another replica would.
+func (m *MemoryAgentStore) SetRecord(agent string, r AgentRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records[agent] = r
 }
 
 // Calls returns and resets the count of calls of an operation.
