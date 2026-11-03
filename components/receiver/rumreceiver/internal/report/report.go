@@ -252,10 +252,19 @@ func paginate(header Report, applications []ApplicationReport, keys []KeyReport)
 // twice, and a page received twice only with identical bytes. Any other
 // input invalidates the whole sequence.
 func Merge(pages [][]byte) (Report, error) {
+	return mergeWith(merger{}, pages)
+}
+
+// mergePages is Merge over pages the caller owns and keeps: they are
+// validated in place, not copied again.
+func mergePages(pages [][]byte) (Report, error) {
+	return mergeWith(merger{borrow: true}, pages)
+}
+
+func mergeWith(m merger, pages [][]byte) (Report, error) {
 	if len(pages) == 0 {
 		return Report{}, errors.New("no page")
 	}
-	var m merger
 	for _, data := range pages {
 		if _, err := m.add(data); err != nil {
 			return Report{}, err
@@ -266,6 +275,9 @@ func Merge(pages [][]byte) (Report, error) {
 
 // merger validates the pages of one sequence as they come.
 type merger struct {
+	// borrow keeps the caller's page slices instead of copying them, for a
+	// merger that does not outlive the pages.
+	borrow bool
 	header Report
 	byPage map[int][]byte
 	apps   map[string]bool
@@ -314,7 +326,11 @@ func (m *merger) add(data []byte) (repeat bool, err error) {
 		}
 		m.keys[k.ID] = true
 	}
-	m.byPage[r.Page] = exactCopy(data) // never the caller's backing array
+	if m.borrow {
+		m.byPage[r.Page] = data
+	} else {
+		m.byPage[r.Page] = exactCopy(data) // never the caller's backing array
+	}
 	m.size += len(data)
 	m.merged.Applications = append(m.merged.Applications, r.Applications...)
 	m.merged.Keys = append(m.merged.Keys, r.Keys...)

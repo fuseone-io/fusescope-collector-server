@@ -4,6 +4,7 @@
 package report
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -650,4 +651,175 @@ func firstKeyOf(t *testing.T, page []byte) string {
 	require.NoError(t, err)
 	require.NotEmpty(t, r.Keys)
 	return r.Keys[0].ID
+}
+
+// gatedStore holds every ApplyIfGreater until release is closed, and can
+// answer with a fixed result instead of applying.
+type gatedStore struct {
+	*MemoryAgentStore
+	gate    chan struct{}
+	started chan string
+	answer  ApplyResult // non-zero: returned as is, nothing applied
+}
+
+func newGatedStore() *gatedStore {
+	return &gatedStore{MemoryAgentStore: NewMemoryAgentStore(), gate: make(chan struct{}), started: make(chan string, 64)}
+}
+
+func (g *gatedStore) ApplyIfGreater(ctx context.Context, agent string, r *Report) (ApplyResult, error) {
+	g.started <- agent
+	select {
+	case <-g.gate:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	if g.answer != 0 {
+		return g.answer, nil
+	}
+	return g.MemoryAgentStore.ApplyIfGreater(ctx, agent, r)
+}
+
+// Maintainer review of #43 (reproduced 20 times): a pass claimed eight
+// commits at once and ran them one after another, so commits queued behind
+// a blocked one were applied after the deadline had invalidated them. Each
+// job is now claimed immediately before it runs; only the attempt already
+// in flight may finish after the deadline, its pages still counted.
+func TestAssemblerQueuedCommitsNeverOutliveDeadline(t *testing.T) {
+	for range 20 {
+		store := newGatedStore()
+		a := NewAssembler(store)
+		a.callTimeout = 10 * time.Second
+		agents := make([]string, RetryBatch)
+		for i := range agents {
+			agents[i] = fmt.Sprintf("agent-%d", i)
+			complete(t, a, agents[i], smallSequence(t, 1), t0)
+		}
+		pass := make(chan []Committed)
+		go func() { pass <- a.Retry(t0.Add(time.Minute)) }()
+		first := <-store.started // one commit is in its store call, blocked
+		bytes, held, _ := a.Buffered()
+
+		late := t0.Add(CommitDeadline + time.Second)
+		a.Retry(late) // invalidates every sequence not in flight, persists the invalidations
+		b, h, _ := a.Buffered()
+		assert.Equal(t, held-(RetryBatch-1), h, "only the attempt in flight keeps its entry")
+		assert.Less(t, b, bytes)
+		assert.Positive(t, b, "the attempt in flight keeps its pages counted")
+
+		close(store.gate)
+		done := <-pass
+		for _, agent := range agents {
+			applied := store.AppliedOf(agent)
+			if agent == first {
+				assert.LessOrEqual(t, len(applied), 1, "started before the deadline: the store's answer decides")
+				continue
+			}
+			assert.Empty(t, applied, "queued behind the blocked commit, invalidated: never applied")
+			assert.Equal(t, uint64(1), store.RecordOf(agent).Invalidated)
+		}
+		assert.LessOrEqual(t, len(done), 1)
+		select {
+		case agent := <-store.started:
+			t.Fatalf("%s started a commit after the deadline", agent)
+		default:
+		}
+	}
+}
+
+// Maintainer review of #43: commit attempts in flight, Commit and Retry
+// together, are bounded in number and in page bytes; past the bound a
+// Commit is refused with ErrBusy and the retrier commits it later.
+func TestAssemblerCommitBudget(t *testing.T) {
+	small := smallSequence(t, 1)
+	t.Run("Concurrency", func(t *testing.T) {
+		store := newGatedStore()
+		a := NewAssembler(store)
+		a.maxCommits = 2
+		for i := range 3 {
+			complete(t, a, fmt.Sprintf("agent-%d", i), small, t0)
+		}
+		errs := make(chan error, 2)
+		for i := range 2 {
+			go func() { errs <- a.Commit(fmt.Sprintf("agent-%d", i), 1, t0) }()
+		}
+		<-store.started
+		<-store.started
+		assert.ErrorIs(t, a.Commit("agent-2", 1, t0), ErrBusy, "two attempts in flight: the third waits")
+		assert.Empty(t, a.Retry(t0.Add(time.Minute)), "the retrier respects the same budget")
+		close(store.gate)
+		require.NoError(t, <-errs)
+		require.NoError(t, <-errs)
+		assert.Equal(t, []Committed{{"agent-2", 1}}, a.Retry(t0.Add(time.Minute)))
+	})
+	t.Run("DecodeBytes", func(t *testing.T) {
+		store := NewMemoryAgentStore()
+		a := NewAssembler(store)
+		complete(t, a, "agent", small, t0)
+		b, _, _ := a.Buffered()
+		a.maxDecoding = b - 1
+		assert.ErrorIs(t, a.Commit("agent", 1, t0), ErrBusy, "its pages exceed the decode budget")
+		a.maxDecoding = b
+		require.NoError(t, a.Commit("agent", 1, t0))
+	})
+	t.Run("InvalidationsStillRun", func(t *testing.T) {
+		store := newGatedStore()
+		a := NewAssembler(store)
+		a.maxCommits = 1
+		complete(t, a, "applying", small, t0)
+		go func() { _ = a.Commit("applying", 1, t0) }()
+		<-store.started
+		_, _, err := a.Add("other", []byte(`{}`), t0) // a malformed page: nothing held, no marker
+		require.Error(t, err)
+		complete(t, a, "doomed", small, t0)
+		a.Retry(t0.Add(CommitDeadline + time.Second)) // invalidated and persisted despite the full commit budget
+		assert.Equal(t, uint64(1), store.RecordOf("doomed").Invalidated)
+		close(store.gate)
+	})
+}
+
+// Maintainer review of #43: only Applied and AlreadyApplied acknowledge; a
+// store answer outside the three outcomes, zero included, fails closed.
+func TestAssemblerUnknownApplyResultFailsClosed(t *testing.T) {
+	for _, answer := range []ApplyResult{ApplyResult(0xff), ApplyResult(42)} {
+		store := newGatedStore()
+		close(store.gate)
+		store.answer = answer
+		a := NewAssembler(store)
+		complete(t, a, "agent", smallSequence(t, 1), t0)
+		require.ErrorIs(t, a.Commit("agent", 1, t0), errUnknownResult)
+		assert.Empty(t, a.Retry(t0.Add(time.Minute)), "nothing acknowledged on a retry either")
+		_, held, _ := a.Buffered()
+		assert.Equal(t, 1, held, "the sequence stays awaiting commit")
+		_, _, err := a.Add("agent", smallSequence(t, 2)[0], t0.Add(time.Minute))
+		assert.ErrorIs(t, err, ErrApplying, "a higher sequence still waits behind it")
+	}
+	// A zero answer from a real call is also unknown.
+	store := newGatedStore()
+	close(store.gate)
+	store.answer = 0
+	zero := &zeroStore{store.MemoryAgentStore}
+	a := NewAssembler(zero)
+	complete(t, a, "agent", smallSequence(t, 1), t0)
+	require.ErrorIs(t, a.Commit("agent", 1, t0), errUnknownResult)
+}
+
+type zeroStore struct{ *MemoryAgentStore }
+
+func (zeroStore) ApplyIfGreater(context.Context, string, *Report) (ApplyResult, error) {
+	return 0, nil
+}
+
+// Maintainer review of #43: completing a sequence moves the pages it
+// already holds as exact copies, without copying them again.
+func TestAssemblerCompletionMovesPages(t *testing.T) {
+	small := smallSequence(t, 1)
+	a := NewAssembler(NewMemoryAgentStore())
+	_, _, err := a.Add("agent", small[0], t0)
+	require.NoError(t, err)
+	held := a.agents["agent"].pages.byPage[1]
+	_, _, err = a.Add("agent", small[1], t0)
+	require.NoError(t, err)
+	e := a.agents["agent"]
+	assertOnlyBytes(t, e)
+	assert.Same(t, &held[0], &e.raw[0][0], "the same bytes, not a second copy")
 }

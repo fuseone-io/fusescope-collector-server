@@ -37,9 +37,17 @@ const (
 	// retried before its sequence is invalidated instead; it is checked
 	// on every pass, whether or not a call is in flight.
 	CommitDeadline = AssemblyTTL
-	retryBase      = 100 * time.Millisecond
-	retryMax       = 30 * time.Second
-	commitGrace    = time.Second
+	// MaxCommitDecodeBytes bounds the page bytes of commit attempts in
+	// flight, Commit and Retry together; each attempt decodes its pages
+	// again, transiently, so the decoded copies are bounded by this times
+	// the decode overhead.
+	MaxCommitDecodeBytes = 32 << 20
+	// MaxCommitsInFlight bounds commit attempts in flight, Commit and Retry
+	// together.
+	MaxCommitsInFlight = 4
+	retryBase          = 100 * time.Millisecond
+	retryMax           = 30 * time.Second
+	commitGrace        = time.Second
 )
 
 // Errors of Assembler.Add and Commit. A page refused with any of them
@@ -54,8 +62,12 @@ var (
 	// commit: no acknowledgement yet; the retrier commits it.
 	ErrApplying = errors.New("a sequence of this agent is being applied")
 	// ErrBusy refuses a page when the bounds are full of what may not be
-	// shed without losing protection.
+	// shed without losing protection, or a Commit when the commit budget is
+	// full; the retrier commits it later.
 	ErrBusy = errors.New("assembly bounds reached")
+	// errUnknownResult is a store answer outside the three outcomes: the
+	// commit fails closed, nothing is acknowledged.
+	errUnknownResult = errors.New("unknown compare-and-apply result")
 )
 
 // AgentRecord is the backend's persisted per-agent record (§10.4): the last
@@ -106,14 +118,17 @@ type Committed struct {
 type Assembler struct {
 	store AgentStore
 
-	mu      sync.Mutex
-	agents  map[string]*entry
-	bytes   int
-	held    int // entries with pages
-	pending int // invalidations awaiting persistence
+	mu       sync.Mutex
+	agents   map[string]*entry
+	bytes    int
+	held     int // entries with pages
+	pending  int // invalidations awaiting persistence
+	decoding int // page bytes of commit attempts in flight
+	commits  int // commit attempts in flight
 
 	// Bounds, overridable in tests.
 	maxBytes, maxHeld, maxPending, batch int
+	maxDecoding, maxCommits              int
 	callTimeout                          time.Duration
 }
 
@@ -135,7 +150,9 @@ type entry struct {
 	// by Merge at each commit attempt.
 	raw  [][]byte
 	size int
-	// Retry state of a commit or an invalidation.
+	// Retry state of a commit or an invalidation. An entry in flight keeps
+	// its pages counted until its attempt ends; only an attempt started
+	// before the deadline may finish after it.
 	attempts int
 	next     time.Time
 	deadline time.Time
@@ -146,7 +163,8 @@ func NewAssembler(store AgentStore) *Assembler {
 	return &Assembler{
 		store: store, agents: map[string]*entry{},
 		maxBytes: MaxAssemblyBytes, maxHeld: MaxAssemblies, maxPending: MaxPendingInvalidations,
-		batch: RetryBatch, callTimeout: StoreCallTimeout,
+		batch: RetryBatch, maxDecoding: MaxCommitDecodeBytes, maxCommits: MaxCommitsInFlight,
+		callTimeout: StoreCallTimeout,
 	}
 }
 
@@ -238,11 +256,11 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 		a.markInvalid(agent, cur, now)
 		return nil, err
 	}
-	// Keep only exact copies of the page bytes; the validator, its maps and
-	// every decoded string go.
+	// Keep only the page bytes, already exact copies, moved and not copied
+	// again; the validator, its maps and every decoded string go.
 	raw := make([][]byte, 0, len(cur.pages.byPage))
 	for i := 1; i <= len(cur.pages.byPage); i++ {
-		raw = append(raw, exactCopy(cur.pages.byPage[i]))
+		raw = append(raw, cur.pages.byPage[i])
 	}
 	cur.pages, cur.raw = nil, raw
 	cur.state, cur.deadline, cur.next = applying, now.Add(CommitDeadline), now.Add(commitGrace)
@@ -268,35 +286,53 @@ func (a *Assembler) Commit(agent string, seq uint64, now time.Time) error {
 		a.mu.Unlock()
 		return fmt.Errorf("sequence %d of %s is not awaiting commit", seq, agent)
 	}
-	cur.inFlight = true
-	raw := cur.raw
+	if err := a.claimCommit(agent, cur, now); err != nil {
+		a.mu.Unlock()
+		return err
+	}
 	a.mu.Unlock()
-	return a.commit(agent, cur, raw, now)
+	return a.commit(agent, cur, now)
 }
 
-// commit runs one attempt, outside the lock, for an entry marked in flight.
-func (a *Assembler) commit(agent string, cur *entry, raw [][]byte, now time.Time) error {
+// claimCommit starts a commit attempt of cur, under the lock, immediately
+// before it runs: never past the commit deadline, and only within the
+// commit budget. The entry keeps its pages counted until the attempt ends.
+func (a *Assembler) claimCommit(agent string, cur *entry, now time.Time) error {
+	if now.After(cur.deadline) {
+		a.markInvalid(agent, cur, now)
+		return ErrInvalidSequence
+	}
+	if a.commits >= a.maxCommits || a.decoding+cur.size > a.maxDecoding {
+		return ErrBusy
+	}
+	cur.inFlight = true
+	a.commits++
+	a.decoding += cur.size
+	return nil
+}
+
+// commit runs one claimed attempt, outside the lock. Only Applied and
+// AlreadyApplied let the backend acknowledge; any other answer, or an
+// error, fails closed and keeps the entry for a retry, until the deadline.
+func (a *Assembler) commit(agent string, cur *entry, now time.Time) error {
 	var result ApplyResult
-	report, err := Merge(raw) // decoded again for this attempt only
+	report, err := mergePages(cur.raw) // decoded again for this attempt only
 	if err == nil {
 		ctx, cancel := a.callCtx()
 		result, err = a.store.ApplyIfGreater(ctx, agent, &report)
 		cancel()
 	}
+	if err == nil && result != Applied && result != AlreadyApplied && result != Invalidated {
+		err = fmt.Errorf("%w %d", errUnknownResult, result)
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	cur.inFlight = false
-	if cur.state != applying {
-		// The deadline passed meanwhile and the sequence was invalidated;
-		// the store's atomic result is what happened.
-		if err == nil && result != Invalidated {
-			return nil
-		}
-		return ErrInvalidSequence
-	}
+	a.commits--
+	a.decoding -= cur.size
 	if err != nil {
-		a.backoff(cur, now)
+		a.backoff(cur, now) // past the deadline, the next pass invalidates it
 		return fmt.Errorf("commit: %w", err)
 	}
 	a.drop(agent, cur)
@@ -312,48 +348,59 @@ func (a *Assembler) commit(agent string, cur *entry, raw [][]byte, now time.Time
 // lock. The backend also calls it from a ticker. It returns the sequences
 // it committed, which the backend acknowledges.
 func (a *Assembler) Retry(now time.Time) []Committed {
-	type job struct {
-		agent string
-		e     *entry
-		raw   [][]byte
-	}
+	var done []Committed
 	a.mu.Lock()
 	a.expire(now)
-	var jobs []job
-	for agent, cur := range a.agents {
-		if len(jobs) == a.batch {
+	a.mu.Unlock()
+	// One job at a time: each is chosen, revalidated and claimed under the
+	// lock immediately before it runs, so a job never outlives a deadline
+	// or an invalidation that came while an earlier one was running.
+	for range a.batch {
+		a.mu.Lock()
+		agent, cur := a.nextJob(now)
+		a.mu.Unlock()
+		if cur == nil {
 			break
 		}
-		if cur.inFlight || now.Before(cur.next) || cur.state == assembling {
+		if cur.state == applying {
+			if a.commit(agent, cur, now) == nil {
+				done = append(done, Committed{agent, cur.seq})
+			}
 			continue
 		}
-		cur.inFlight = true
-		jobs = append(jobs, job{agent, cur, cur.raw})
-	}
-	a.mu.Unlock()
-
-	var done []Committed
-	for _, j := range jobs {
-		switch {
-		case j.raw != nil:
-			if a.commit(j.agent, j.e, j.raw, now) == nil {
-				done = append(done, Committed{j.agent, j.e.seq})
-			}
-		default:
-			ctx, cancel := a.callCtx()
-			err := a.store.Invalidate(ctx, j.agent, j.e.seq)
-			cancel()
-			a.mu.Lock()
-			j.e.inFlight = false
-			if err == nil {
-				a.drop(j.agent, j.e)
-			} else {
-				a.backoff(j.e, now)
-			}
-			a.mu.Unlock()
+		ctx, cancel := a.callCtx()
+		err := a.store.Invalidate(ctx, agent, cur.seq)
+		cancel()
+		a.mu.Lock()
+		cur.inFlight = false
+		if err == nil {
+			a.drop(agent, cur)
+		} else {
+			a.backoff(cur, now)
 		}
+		a.mu.Unlock()
 	}
 	return done
+}
+
+// nextJob claims the next due commit or invalidation, under the lock: a
+// commit only within the commit budget and its deadline.
+func (a *Assembler) nextJob(now time.Time) (string, *entry) {
+	for agent, cur := range a.agents {
+		if cur.inFlight || now.Before(cur.next) {
+			continue
+		}
+		switch cur.state {
+		case applying:
+			if a.claimCommit(agent, cur, now) == nil {
+				return agent, cur
+			}
+		case invalidating:
+			cur.inFlight = true
+			return agent, cur
+		}
+	}
+	return "", nil
 }
 
 // backoff schedules the next attempt: exponential, capped, with jitter.
@@ -395,13 +442,16 @@ func (a *Assembler) shedOldest(keep string, now time.Time) bool {
 }
 
 // expire marks assemblies past their TTL and sequences past their commit
-// deadline invalid; no store call, so a stuck call cannot delay it.
+// deadline invalid; no store call, so a stuck call cannot delay it. A
+// sequence whose commit attempt started before the deadline is left to
+// that attempt, bounded by StoreCallTimeout, which keeps its pages counted;
+// if the attempt fails, the next pass invalidates it.
 func (a *Assembler) expire(now time.Time) {
 	for agent, cur := range a.agents {
 		switch {
 		case cur.state == assembling && now.Sub(cur.started) > AssemblyTTL:
 			a.markInvalid(agent, cur, now)
-		case cur.state == applying && now.After(cur.deadline):
+		case cur.state == applying && !cur.inFlight && now.After(cur.deadline):
 			a.markInvalid(agent, cur, now)
 		}
 	}
@@ -448,7 +498,8 @@ func (a *Assembler) drop(agent string, cur *entry) {
 }
 
 // Buffered is the bytes of pages held, the entries with pages and the
-// invalidations awaiting persistence: all the memory the assembler keeps.
+// invalidations awaiting persistence: all the memory the assembler keeps,
+// pages of commit attempts in flight included.
 func (a *Assembler) Buffered() (bytes, held, pending int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

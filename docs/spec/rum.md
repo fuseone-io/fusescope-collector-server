@@ -617,8 +617,9 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   effect.
 - **Backend, memory while applying** ([M43]): once a sequence completes, its entry keeps only
   exact copies of its page bytes (each a slice of exactly its length, never the request's
-  buffer); the validator, its ID maps, the merged report and every decoded string are dropped,
-  and the pages are merged and decoded again, transiently, at each commit attempt. Measured:
+  buffer; on completion they are moved, not copied again); the validator, its ID maps, the merged
+  report and every decoded string are dropped, and the pages are merged and decoded again,
+  transiently and in place, at each commit attempt. Measured:
   16 sequences of 481 KiB each grow the heap in use by 8.0 MiB for 7.5 MiB of pages. One 128 MiB budget
   counts every page held, assembling or awaiting commit, and one count of 1 000 covers both.
   To make room the oldest assemblies of other agents are invalidated; a sequence awaiting
@@ -634,18 +635,29 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   agent ID and a sequence) refusing that sequence and holding back higher ones until it is
   persisted. No new assembly starts while 1 000 such markers wait; with those of assemblies
   already held, at most 2 000 exist.
+- **Backend, commit budget** ([M43]): commit attempts in flight, by the caller's own commit and
+  by the retrier together, are at most 4, holding at most 32 MiB of page bytes; each decodes its
+  pages transiently, so the decoded copies in flight are bounded by that budget times the decode
+  overhead. Past it a commit is refused as busy (no ack) and the retrier commits it later. A
+  sequence keeps its pages counted in the 128 MiB budget while an attempt is in flight.
 - **Backend, retries** ([M43]): store calls are made outside the assembler's lock: a page costs
   one record read plus one retry pass of at most 8 store calls (one per commit or invalidation
-  retried), whatever is pending, so other
-  agents' pages wait for no one else's I/O. Each failed commit or invalidation is retried with
+  retried), whatever is pending, so other agents' pages wait for no one else's I/O. A pass takes
+  its jobs one at a time, each chosen, revalidated and claimed immediately before it runs: a job
+  is never started past its commit deadline or after its sequence was invalidated, and none
+  waits claimed behind another's call. Each failed commit or invalidation is retried with
   exponential backoff (100 ms doubling to 30 s) and jitter. **Who retries a failed commit:**
   the retrier, run in each page's pass and from a backend ticker; it returns the sequences it
   committed, which the backend then acknowledges. A resent page of a sequence awaiting commit
   answers "applying" and attempts nothing itself. A commit still failing 120 s after its
-  sequence completed is given up: every pass checks that deadline without any store call, so a
-  call in flight cannot delay it, and the sequence is invalidated instead (the store's atomic
-  compare-and-apply decides if the call in flight landed first), so it can never be
-  applied out of order, and the collector's next report carries the same pending values.
+  sequence completed is given up: every pass checks that deadline without any store call, and
+  no attempt starts past it. Only an attempt already in flight when the deadline passes may
+  finish after it, within its 5 s call deadline, and its store's atomic answer decides; if it
+  fails, the next pass invalidates the sequence. So a sequence can never be applied out of
+  order, and the collector's next report carries the same pending values.
+- **Backend, compare-and-apply answers** ([M43]): only "applied" and "already applied" let the
+  backend acknowledge; "invalidated" refuses the sequence; any other answer, or none, fails
+  closed like a store error: no ack, the sequence stays awaiting commit and is retried.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
