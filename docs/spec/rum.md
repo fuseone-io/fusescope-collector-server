@@ -248,11 +248,11 @@ configuration ([M]):
 |---|---|---|
 | Per-key-and-client buckets | 100 000 identities, global | least recently used evicted; idle ones still dropped after 10 min |
 | Per-key buckets | one per key of the policy (≤ 50 000, §11.2) | none created for unknown keys |
-| Session IDs per application per minute bucket | 10 000 ([B] `impl/monitor.go:14,58-62`), stored as 64-bit hashes (`hash/maphash`, per-process seed) | further sessions not counted |
+| Session IDs per application per minute bucket | 10 000, a maximum ([B] `impl/monitor.go:14,58-62`), stored as 64-bit hashes (`hash/maphash`, per-process seed) | further sessions not counted |
 | Per-application monitors | one per RUM application of the current policy (≤ 10 000), dropped when it leaves the policy | none for applications outside the policy |
 | Unknown keys | one global counter and last-seen time; no per-key or per-origin state | — |
 | Rejections per application | one entry per reason, seven reasons (§10.1) | — |
-| Pending key usage for the report | 10 000 keys ([B] `impl/monitor.go:15`) | oldest use evicted, counted in `dropped.keys` |
+| Pending key usage for the report | 10 000 keys, a maximum the report's page bound relies on (§10.3) ([B] `impl/monitor.go:15`) | oldest use evicted, counted in `dropped.keys` |
 | `Origin` | 256 bytes, checked before matching or storing | matches nothing; observed as empty |
 | `app.package.name` | 256 bytes, checked before matching or storing | refused; observed as empty |
 | SDK name / version | 64 / 32 bytes, checked before storing | stored as empty |
@@ -263,7 +263,22 @@ configuration ([M]):
 | Write timeout | 30 s | connection closed |
 | Idle keep-alive timeout | 120 s | connection closed |
 | Request header bytes | 64 KiB | 431 |
-| Resource groups per request | 1 000, after empty ones are dropped | 413 `too_large`; checked before any attribute is stamped |
+| Resource groups per request | 1 000, empty ones included | 413 `too_large` |
+| Scopes per resource | 100 | 413 `too_large` |
+| Spans or log records per request | 10 000 | 413 `too_large` |
+| Events per span, links per span | 128 each | 413 `too_large` |
+| Attributes per resource, scope, span, log record, event or link, and entries per array or map value | 128 | 413 `too_large` |
+| Nesting of array and map attribute values | 8 | 413 `too_large` |
+| Repeated entries of a request, all kinds together | 100 000 | 413 `too_large` |
+
+The structural budget (the last seven rows) is checked on the encoded body, **before** pdata
+decodes it ([M43]): a protobuf wire-format scan (`protowire`) and a streaming JSON scan, both
+without allocation, count every repeated message pdata would build, under both the
+lowerCamelCase and snake_case JSON names pdata accepts and the deprecated scope lists. A few
+bytes of OTLP can name millions of empty messages, which a check after decoding would already
+have allocated. Over any bound the request is refused, counted `too_large`; a body the scan
+cannot parse is 400 `invalid_payload`. The structural budget, the session bucket and the pending
+key bound are maxima: configuration (`limits.*`) may lower them, never raise them ([M43]).
 
 Strings longer than their bound are never truncated into a stored value: a truncated origin or
 package name could match or name something else.
@@ -285,7 +300,9 @@ For every resource ([B] `impl/otlp.go:90-113`; tests `impl/otlp_test.go:47-68`):
    empty value present is kept);
 5. **new, from [ADR10] §4 (line 72):** `fusescope.ingest.key_id` is overwritten with the key's
    ID, and the key's org goes in the request's auth data (`client.Info`), never taken from the
-   payload.
+   payload. The auth data names are exactly `fusescope.org.id` (the org) and
+   `fusescope.ingest.key_id` (the key ID), exported by `ingestpolicy` as `AuthOrgID` and
+   `AuthKeyID` so `ingestauth` uses the same ([M43]). The client address is not passed on.
 
 Attribute names: [B] `rumtypes/attributes.go:3-19`. Name and environment come from the policy
 ([M], resolved 3; [ADR10 §10]).
@@ -506,7 +523,7 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 | `applications[].firstSeenAt` | timestamp |
 | `applications[].counts.{sessions,views,errors,vitals}` | integers; sessions from hashes, never IDs |
 | `applications[].sdk.name`, `.version` | 64 and 32 bytes (§7.1), else empty |
-| `applications[].rejections[]` | at most 6, one per reason |
+| `applications[].rejections[]` | at most 7, one per reason |
 | `rejections[].reason`, `.count`, `.lastSeenAt` | enum, integer, timestamp |
 | `rejections[].lastOrigin` | `origin_not_allowed`: the `Origin` when it parses as an `http`/`https` `scheme://host[:port]` origin of at most 256 bytes, lower-cased; `package_not_allowed`: the `app.package.name` when it matches the pattern of §5 and is at most 256 bytes; empty in every other case |
 | `keys[]` | every pending key (at most 10 000, §7.1), most recent use first, across pages; `id` (UUID from the policy) and `lastUsedAt` |
@@ -537,10 +554,26 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   { "schemaVersion": 1, "reportSequence": 1874 }
   ```
 
-- **Backend, before acknowledging** ([M]; pages [M43]): once it holds every page of the
-  sequence, it applies the report idempotently (§10.2), then persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only then
-  sends the ack. A report whose sequence is not above the persisted one for that agent changes
-  nothing and is acknowledged again. Acknowledging the same sequence twice changes nothing.
+- **Backend, assembling pages** ([M43]), so incomplete reports cannot fill its memory or disk:
+  - at most one incomplete sequence per agent; a page of a newer sequence discards the
+    incomplete one;
+  - an incomplete assembly expires 120 s after its first page (two report intervals);
+  - at most 256 MiB of buffered pages and 1 000 incomplete assemblies in total; over either,
+    the oldest incomplete assembly is discarded first; pages are buffered in memory only;
+  - a page received again is ignored if its bytes (SHA-256) equal the first copy's; any other
+    repeat is a conflict;
+  - the sequence is invalidated, never acknowledged, on a conflict, a page over 256 KiB or not
+    strict JSON of §10.3, a `page`/`pages` out of range or above 128, a header field that
+    differs between pages, or an application or key ID in two pages; a page still missing at
+    expiry discards it likewise. The collector's next report, with a new sequence, carries the
+    same pending values.
+- **Backend, before acknowledging** ([M]; pages [M43]): only once every page of the sequence
+  is held and the assembly validated, it applies the report idempotently (§10.2), then
+  persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only
+  then sends the ack. No ack for a partial, invalid or unpersisted sequence. A report whose
+  sequence is not above the persisted one for that agent changes nothing and is acknowledged
+  again. Acknowledging the same sequence twice changes nothing. `report.Merge` in
+  `rumreceiver` implements these validation rules, as a reference and for tests.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
@@ -597,7 +630,9 @@ Encoding: JSON, schema v1, typed and strict ([M], resolved 1). Fields, from [ADR
 
 A snapshot is accepted whole or rejected whole; nothing is applied from a rejected one, and the
 policy held, if any, stays in force ([M]). It is rejected, with the `policy.error` code
-reported (§10.2) and a log line without content, when:
+reported (§10.2) and a log line without content, when the conditions below hold. A missing
+required field or a value of the wrong JSON type is `parse_error`; a value of the right type
+that breaks a rule, a string with surrounding spaces included, is `invalid_value` ([M43]).
 
 | Code | Condition |
 |---|---|
@@ -687,7 +722,7 @@ Resolved by the maintainer on PR #41:
 
 | # | Question | Decision |
 |---|---|---|
-| 1 | Policy encoding and limits | JSON schema v1, typed and strict, with `schemaVersion` and a monotonic revision, 16 MiB cap (§11), raised to 24 MiB in the review of PR #43. **Requirement for step 2:** an integration test that sends a policy at the maximum size through OpAMP end to end and checks it is accepted, cached and applied. |
+| 1 | Policy encoding and limits | JSON schema v1, typed and strict, with `schemaVersion` and a monotonic revision, 16 MiB cap (§11), raised to 24 MiB in the review of PR #43. **Requirement:** an integration test with a policy at the maximum size, checking it is accepted, cached and applied. Step 2 covers it without OpAMP, including a restart from the cache; the OpAMP end-to-end leg is step 3. |
 | 2 | Who validates RUM keys | `rumreceiver`, against the same immutable policy store as `ingestauth` (§2) |
 | 3 | `name` and `environment` in the policy | included, sizes validated; ADR 0010 amended (§11.1) |
 | 4 | Upgrade order | backend first; a collector without a policy is not ready; the chart routes `/rum/v1` only after a valid policy (§11.4) |
