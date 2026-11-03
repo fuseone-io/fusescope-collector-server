@@ -91,24 +91,31 @@ exporters:
       enabled: true
       max_elapsed_time: 30s
 
-# The batch processor accepts the copy and exports it on its own, so a full or
-# failing shadow queue drops shadow copies and never fails a demo request.
+# The memory limiter refuses with the same thresholds as the demo pipelines'
+# (raised in README, Install), so a request refused there is refused here too
+# and a sender's retry does not reach the shadow twice. The batch processor
+# accepts the copy and exports it on its own, so a full or failing shadow queue
+# drops shadow copies and never fails a demo request.
 processors:
+  memory_limiter/shadow:
+    check_interval: 2s
+    limit_mib: 640
+    spike_limit_mib: 128
   batch/shadow: {}
 
 service:
   pipelines:
     traces/shadow:
       receivers: [otlp]
-      processors: [batch/shadow]
+      processors: [memory_limiter/shadow, batch/shadow]
       exporters: [otlp/shadow]
     logs/shadow:
       receivers: [otlp]
-      processors: [batch/shadow]
+      processors: [memory_limiter/shadow, batch/shadow]
       exporters: [otlp/shadow]
     metrics/shadow:
       receivers: [otlp]
-      processors: [batch/shadow]
+      processors: [memory_limiter/shadow, batch/shadow]
       exporters: [otlp/shadow]
 ```
 
