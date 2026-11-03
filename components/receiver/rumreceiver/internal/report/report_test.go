@@ -232,6 +232,59 @@ func TestReportBounds(t *testing.T) {
 	})
 }
 
+// Codex review on #43: client-controlled strings and session maps of an
+// application that goes quiet are released after the status window, while
+// its pending first-seen time is kept (§10.3 retention, G5, G6).
+func TestExpireReleasesWindowState(t *testing.T) {
+	for _, viaBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("viaBuild=%v", viaBuild), func(t *testing.T) {
+			m, snap := newTestMonitor(t, 1)
+			b := batch("s1")
+			b.SetSDK("@fusescope/browser", "0.2.0")
+			m.Ingest(snap.Application(appA), keyOne, b, t0)
+			m.Reject(appA, OriginNotAllowed, "https://staging.example.com", t0)
+			m.UnknownKey(t0)
+
+			later := t0.Add(Window + time.Minute)
+			if viaBuild {
+				_, err := m.Build(1, later, ingestpolicy.Status{})
+				require.NoError(t, err)
+			} else {
+				m.Expire(later)
+			}
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			app := m.applications[appA]
+			require.NotNil(t, app)
+			for i := range app.buckets {
+				assert.False(t, app.buckets[i].used)
+				assert.Nil(t, app.buckets[i].sessions)
+				for _, r := range app.buckets[i].rejections {
+					assert.Empty(t, r.observed)
+				}
+			}
+			assert.Empty(t, app.sdkName)
+			assert.Empty(t, app.sdkVersion)
+			assert.Equal(t, t0, app.firstSeen, "durable values stay pending")
+			for _, u := range m.unknown {
+				assert.Zero(t, u.count)
+			}
+		})
+	}
+}
+
+func TestExpireKeepsWindow(t *testing.T) {
+	m, snap := newTestMonitor(t, 1)
+	b := batch("s1")
+	b.SetSDK("@fusescope/browser", "0.2.0")
+	m.Ingest(snap.Application(appA), keyOne, b, t0)
+	m.Expire(t0.Add(4 * time.Minute))
+	a := appReport(build(t, m, t0.Add(4*time.Minute)), appA)
+	require.NotNil(t, a)
+	assert.Equal(t, int64(1), a.Counts.Sessions)
+	assert.Equal(t, "@fusescope/browser", a.SDK.Name)
+}
+
 func TestParseAck(t *testing.T) {
 	testCases := []struct {
 		data string

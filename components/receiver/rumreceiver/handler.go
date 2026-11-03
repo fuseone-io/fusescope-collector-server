@@ -140,6 +140,9 @@ func releaseWork(wk *work) {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Before any refusal: net/http drains an unread body after the handler
+	// returns, which without a deadline a client could stall forever.
+	_ = http.NewResponseController(w).SetReadDeadline(h.now().Add(h.bodyTimeout))
 	var traces bool
 	switch r.URL.Path {
 	case tracesPath:
@@ -269,8 +272,6 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 
 	wk := workPool.Get().(*work)
 	defer releaseWork(wk)
-	rc := http.NewResponseController(w)
-	_ = rc.SetReadDeadline(now.Add(h.bodyTimeout))
 	if refused := wk.readBody(r, h.maxBody); refused != refusalNone {
 		reason := report.InvalidPayload
 		if refused == refusalTooLarge {
@@ -282,7 +283,7 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 		h.refuse(w, r, refused)
 		return
 	}
-	_ = rc.SetWriteDeadline(h.now().Add(h.writeTimeout))
+	_ = http.NewResponseController(w).SetWriteDeadline(h.now().Add(h.writeTimeout))
 
 	wk.batch.Reset()
 	ctx := client.NewContext(r.Context(), client.Info{Auth: authData{orgID: k.OrgID, keyID: k.ID}})

@@ -105,6 +105,7 @@ func (m *Monitor) Build(seq uint64, now time.Time, policy ingestpolicy.Status) (
 	if seq <= m.lastSequence {
 		return nil, ErrSequence
 	}
+	m.expire(now)
 
 	r := Report{
 		SchemaVersion:  1,

@@ -168,6 +168,35 @@ func (m *Monitor) UnknownKey(now time.Time) {
 	m.unknownLast = now
 }
 
+// Expire releases window values older than the status window: session
+// maps, rejection origins and package names, SDK strings and unknown-key
+// counts. Pending durable values are kept. The receiver calls it every
+// minute; Build calls it too.
+func (m *Monitor) Expire(now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.expire(now)
+}
+
+func (m *Monitor) expire(now time.Time) {
+	oldest := oldestMinute(now)
+	for _, app := range m.applications {
+		for i := range app.buckets {
+			if b := &app.buckets[i]; b.used && b.minute < oldest {
+				*b = monitorBucket{}
+			}
+		}
+		if !app.sdkSeen.IsZero() && minuteOf(app.sdkSeen) < oldest {
+			app.sdkName, app.sdkVersion, app.sdkSeen = "", "", time.Time{}
+		}
+	}
+	for i := range m.unknown {
+		if m.unknown[i].minute < oldest {
+			m.unknown[i] = countBucket{}
+		}
+	}
+}
+
 // application returns the monitor of an application of the current policy,
 // creating it; nil for any other.
 func (m *Monitor) application(id string) *applicationMonitor {

@@ -38,6 +38,9 @@ var (
 // a new snapshot.
 const stalenessPoll = time.Second
 
+// expireEvery is a variable for tests.
+var expireEvery = time.Minute
+
 type rumReceiver struct {
 	cfg       *Config
 	set       receiver.Settings
@@ -170,6 +173,8 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 		Handler:           r.handler,
 		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: r.cfg.Limits.HeaderReadTimeout,
+		// An outer bound; the handler sets the body deadline per request.
+		ReadTimeout: r.cfg.Limits.HeaderReadTimeout + r.cfg.Limits.BodyReadTimeout,
 		// The body read and the write have per-request deadlines (handler.go).
 		WriteTimeout:   r.cfg.Limits.BodyReadTimeout + r.cfg.Limits.WriteTimeout,
 		IdleTimeout:    r.cfg.Limits.IdleTimeout,
@@ -203,6 +208,9 @@ func (r *rumReceiver) watch(source ingestpolicy.Source) {
 		defer t.Stop()
 		poll = t.C
 	}
+	// Window values are released on time even if no report is built (§10.3).
+	expire := time.NewTicker(expireEvery)
+	defer expire.Stop()
 	var held *ingestpolicy.Snapshot
 	for {
 		changed := source.Changed()
@@ -215,6 +223,8 @@ func (r *rumReceiver) watch(source ingestpolicy.Source) {
 		select {
 		case <-changed:
 		case <-poll:
+		case <-expire.C:
+			r.monitor.Expire(r.handler.now())
 		case <-r.done:
 			return
 		}

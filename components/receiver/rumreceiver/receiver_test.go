@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
 	"github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/metadata"
+	"github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/report"
 )
 
 var policyExtension = component.MustNewID("fusescope_opamp")
@@ -307,6 +309,25 @@ func TestReceiverTimeoutsCloseConnections(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.True(t, resp.Close, "the connection is closed after a body timeout")
 	})
+	// Codex review on #43: a request refused before the body is read (here,
+	// no key) must not leave the server draining an unsent body forever.
+	for _, path := range []string{tracesPath, "/elsewhere"} {
+		t.Run("BodyNeverSentAfterEarlyRefusal"+path, func(t *testing.T) {
+			conn, err := tls.Dial("tcp", s.r.addr.String(), &tls.Config{RootCAs: pool, ServerName: "localhost", NextProtos: []string{"http/1.1"}})
+			require.NoError(t, err)
+			defer conn.Close()
+			_, _ = conn.Write([]byte("POST " + path + " HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 1\r\n\r\n"))
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			br := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(br, nil)
+			require.NoError(t, err)
+			resp.Body.Close()
+			assert.Contains(t, []int{http.StatusUnauthorized, http.StatusNotFound}, resp.StatusCode)
+			_, err = io.Copy(io.Discard, br)
+			var ne net.Error
+			require.False(t, asNetError(err, &ne) && ne.Timeout(), "the server must close the connection, not wait for the body: %v", err)
+		})
+	}
 	t.Run("Idle", func(t *testing.T) {
 		conn, err := tls.Dial("tcp", s.r.addr.String(), &tls.Config{RootCAs: pool, ServerName: "localhost", NextProtos: []string{"http/1.1"}})
 		require.NoError(t, err)
@@ -346,6 +367,28 @@ func TestReceiverConnectionLimit(t *testing.T) {
 		}
 		return err == nil
 	}, 5*time.Second, 50*time.Millisecond, "a slot frees when a connection closes")
+}
+
+// Codex review on #43: the receiver releases expired window state without
+// waiting for a report to be built.
+func TestReceiverExpiresWindowState(t *testing.T) {
+	// Restored after the receiver's own cleanup has stopped it.
+	saved := expireEvery
+	t.Cleanup(func() { expireEvery = saved })
+	expireEvery = 20 * time.Millisecond
+	store := newStore(t, testPolicy(1))
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
+	s := startReceiver(t, nil, host)
+	host.waitFor(t, componentstatus.StatusOK)
+
+	s.r.monitor.Reject(testWebApp, report.OriginNotAllowed, "https://evil.example.org", time.Now().Add(-time.Hour))
+	before, err := s.r.monitor.Build(1, time.Now().Add(-time.Hour), store.Status())
+	require.NoError(t, err)
+	require.Contains(t, string(before), "evil.example.org")
+	assert.Eventually(t, func() bool {
+		data, err := s.r.monitor.Build(uint64(time.Now().UnixNano()), time.Now().Add(-time.Hour), store.Status())
+		return err == nil && !strings.Contains(string(data), "evil.example.org")
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func assertClosed(t *testing.T, conn *tls.Conn) {
