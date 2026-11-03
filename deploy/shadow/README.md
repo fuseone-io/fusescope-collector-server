@@ -91,12 +91,12 @@ exporters:
       enabled: true
       max_elapsed_time: 30s
 
-# The shadow pipelines start with the demo pipelines' own memory_limiter
-# (that is its ID in the demo collector; the install checks it exists). The
-# processor is one shared instance per ID, so a request is refused or accepted
-# for both sides at once, and a sender's retry does not reach the shadow twice.
-# The batch processor accepts the copy and exports it on its own, so a full or
-# failing shadow queue drops shadow copies and never fails a demo request.
+# The shadow pipelines start with the demo pipelines' own memory_limiter (that
+# is its ID in the demo collector; the install checks it exists). Its state is
+# shared, but each pipeline asks it separately, so admission is not atomic
+# across the two branches (README, Risks). The batch processor accepts the copy
+# and exports it on its own, so a full or failing shadow queue drops shadow
+# copies and never fails a demo request.
 processors:
   batch/shadow: {}
 
@@ -122,15 +122,19 @@ go-ahead (an exception to ADR 0002 for this deployment file, which is merged wit
 ```sh
 set -e
 cd /opt/fusescope/otel-collector
-# The backup is the configuration before any shadow change; every run starts from it.
+# The first run keeps the configuration as it was before the shadow, for the
+# rollback's memory limiter values. Every run starts from the current file.
 [ -e config.yaml.bak-pre-shadow ] || cp -p config.yaml config.yaml.bak-pre-shadow
-yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro mikefarah/yq:4.44.3 "$@"; }
+yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro \
+  mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025 "$@"; }
+# Only the keys the shadow manages are removed; anything else in the file stays.
+strip='del(.exporters."otlp/shadow") | del(.processors."batch/shadow") | del(.service.pipelines."traces/shadow") | del(.service.pipelines."logs/shadow") | del(.service.pipelines."metrics/shadow")'
 # Headroom: its memory limiter refused at 256 MiB (limit_mib 320, spike 64, from its own logs).
-yq '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)' /w/config.yaml.bak-pre-shadow > limited.yaml
-yq eval-all '. as $i ireduce ({}; . * $i)' /w/limited.yaml /s/demo-collector-shadow.yaml > merged.yaml
+yq "$strip | (.processors[] | select(has(\"limit_mib\"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)" /w/config.yaml > base.yaml
+yq eval-all '. as $i ireduce ({}; . * $i)' /w/base.yaml /s/demo-collector-shadow.yaml > merged.yaml
 [ "$(yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml)" = dns:///fusescope-collector-shadow:4317 ]
 [ "$(yq '.processors | has("memory_limiter")' /w/merged.yaml)" = true ]   # the demo pipelines' limiter the block reuses
-mv merged.yaml config.yaml && rm limited.yaml
+mv merged.yaml config.yaml && rm base.yaml
 # Recreated, as compose does not see changes inside a mounted file; 768 MiB, 0.5 CPU.
 cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps --force-recreate otel-collector
 ```
@@ -174,12 +178,20 @@ docker rm -f fusescope-demo-otel-tee-1
 
 ## Rollback
 
-Restore `otel-collector/config.yaml.bak-pre-shadow`, restart the demo collector with the demo's compose alone, then stop
-the shadow:
+Remove the shadow's keys from the current demo collector configuration, put its memory limiter back to the values
+it had before the shadow, recreate it with the demo's compose alone (384 MiB), then stop the shadow:
 
 ```sh
-cp -p otel-collector/config.yaml.bak-pre-shadow otel-collector/config.yaml
-docker compose -f compose.yaml up -d --no-deps otel-collector
+set -e
+cd /opt/fusescope/otel-collector
+yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w \
+  mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025 "$@"; }
+strip='del(.exporters."otlp/shadow") | del(.processors."batch/shadow") | del(.service.pipelines."traces/shadow") | del(.service.pipelines."logs/shadow") | del(.service.pipelines."metrics/shadow")'
+lim=$(yq '[.processors[] | select(has("limit_mib")) | .limit_mib][0]' /w/config.yaml.bak-pre-shadow)
+spike=$(yq '[.processors[] | select(has("limit_mib")) | .spike_limit_mib][0]' /w/config.yaml.bak-pre-shadow)
+yq "$strip | (.processors[] | select(has(\"limit_mib\"))) |= (.limit_mib = $lim | .spike_limit_mib = $spike)" /w/config.yaml > restored.yaml
+mv restored.yaml config.yaml
+cd .. && docker compose -f compose.yaml up -d --no-deps --force-recreate otel-collector
 docker compose -f compose.yaml -f shadow/compose.shadow.yaml rm -sf fusescope-collector-shadow migrator-shadow clickhouse-shadow
 docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's data
 ```

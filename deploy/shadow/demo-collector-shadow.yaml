@@ -17,12 +17,12 @@ exporters:
       enabled: true
       max_elapsed_time: 30s
 
-# The shadow pipelines start with the demo pipelines' own memory_limiter
-# (that is its ID in the demo collector; the install checks it exists). The
-# processor is one shared instance per ID, so a request is refused or accepted
-# for both sides at once, and a sender's retry does not reach the shadow twice.
-# The batch processor accepts the copy and exports it on its own, so a full or
-# failing shadow queue drops shadow copies and never fails a demo request.
+# The shadow pipelines start with the demo pipelines' own memory_limiter (that
+# is its ID in the demo collector; the install checks it exists). Its state is
+# shared, but each pipeline asks it separately, so admission is not atomic
+# across the two branches (README, Risks). The batch processor accepts the copy
+# and exports it on its own, so a full or failing shadow queue drops shadow
+# copies and never fails a demo request.
 processors:
   batch/shadow: {}
 
