@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
 	"strings"
@@ -244,46 +245,144 @@ func paginate(header Report, applications []ApplicationReport, keys []KeyReport)
 	return out, nil
 }
 
-// Merge reassembles the pages of one sequence, as the backend does before
-// it applies a report: every page present once, with the same header.
+// Merge reassembles the pages of one sequence under the backend's contract
+// (§10.4): 1 to MaxPages pages, each at most MaxPageBytes of strict JSON
+// (only the report's fields, each once, nothing after it), identical
+// headers, every page from 1 to pages present, no application or key ID
+// twice, and a page received twice only with identical bytes. Any other
+// input invalidates the whole sequence.
 func Merge(pages [][]byte) (Report, error) {
-	var merged Report
-	seen := map[int]bool{}
+	if len(pages) == 0 {
+		return Report{}, errors.New("no page")
+	}
+	var merged, header Report
+	byPage := map[int][]byte{}
+	apps, keys := map[string]bool{}, map[string]bool{}
 	for i, data := range pages {
-		var r Report
-		dec := json.NewDecoder(bytes.NewReader(data))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&r); err != nil {
+		if len(data) > MaxPageBytes {
+			return Report{}, fmt.Errorf("page %d is %d bytes", i+1, len(data))
+		}
+		r, err := decodePage(data)
+		if err != nil {
 			return Report{}, err
 		}
-		if i == 0 {
-			merged = r
-			merged.Applications, merged.Keys = nil, nil
+		if r.Pages < 1 || r.Pages > MaxPages || r.Page < 1 || r.Page > r.Pages {
+			return Report{}, fmt.Errorf("page %d of %d is out of range", r.Page, r.Pages)
 		}
-		head, first := r, merged
+		if prev, ok := byPage[r.Page]; ok {
+			if !bytes.Equal(prev, data) {
+				return Report{}, fmt.Errorf("page %d received twice with different content", r.Page)
+			}
+			continue
+		}
+		byPage[r.Page] = data
+		head := r
 		head.Applications, head.Keys, head.Page = nil, nil, 0
-		first.Applications, first.Keys, first.Page = nil, nil, 0
-		if !reflect.DeepEqual(head, first) {
+		if len(byPage) == 1 {
+			header = head
+		} else if !reflect.DeepEqual(head, header) {
 			return Report{}, fmt.Errorf("page %d header differs", r.Page)
 		}
-		if r.Page < 1 || r.Page > r.Pages || seen[r.Page] {
-			return Report{}, fmt.Errorf("page %d of %d is out of range or repeated", r.Page, r.Pages)
+		for _, a := range r.Applications {
+			if apps[a.ID] {
+				return Report{}, fmt.Errorf("application %s in two pages", a.ID)
+			}
+			apps[a.ID] = true
 		}
-		seen[r.Page] = true
+		for _, k := range r.Keys {
+			if keys[k.ID] {
+				return Report{}, fmt.Errorf("key %s in two pages", k.ID)
+			}
+			keys[k.ID] = true
+		}
 		merged.Applications = append(merged.Applications, r.Applications...)
 		merged.Keys = append(merged.Keys, r.Keys...)
 	}
-	if len(seen) != merged.Pages {
-		return Report{}, fmt.Errorf("%d of %d pages", len(seen), merged.Pages)
+	if len(byPage) != header.Pages {
+		return Report{}, fmt.Errorf("%d of %d pages", len(byPage), header.Pages)
 	}
+	apps1, keys1 := merged.Applications, merged.Keys
+	merged = header
+	merged.Applications, merged.Keys = apps1, keys1
 	if merged.Applications == nil {
 		merged.Applications = []ApplicationReport{}
 	}
 	if merged.Keys == nil {
 		merged.Keys = []KeyReport{}
 	}
-	merged.Page = 0
 	return merged, nil
+}
+
+// decodePage decodes one page strictly. encoding/json matches field names
+// case-insensitively and keeps the last of duplicate keys, so the page must
+// also re-encode to the same JSON value, and no object may repeat a key.
+func decodePage(data []byte) (Report, error) {
+	var r Report
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return Report{}, fmt.Errorf("page: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return Report{}, errors.New("page: trailing data")
+	}
+	if r.SchemaVersion != 1 {
+		return Report{}, fmt.Errorf("page: schemaVersion %d", r.SchemaVersion)
+	}
+	if err := noDuplicateKeys(data); err != nil {
+		return Report{}, err
+	}
+	canonical, err := json.Marshal(r)
+	if err != nil {
+		return Report{}, err
+	}
+	var a, b any
+	if json.Unmarshal(data, &a) != nil || json.Unmarshal(canonical, &b) != nil || !reflect.DeepEqual(a, b) {
+		return Report{}, errors.New("page: not in the report schema (field names, types or missing fields)")
+	}
+	return r, nil
+}
+
+func noDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		d, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch d {
+		case '{':
+			seen := map[string]bool{}
+			for dec.More() {
+				k, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, _ := k.(string)
+				if seen[key] {
+					return fmt.Errorf("page: duplicate field %q", key)
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for dec.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		}
+		_, err = dec.Token()
+		return err
+	}
+	return walk()
 }
 
 // encodedSize is the size of one entry in the array, its comma included.
