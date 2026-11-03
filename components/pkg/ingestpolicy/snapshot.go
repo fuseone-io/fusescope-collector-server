@@ -27,7 +27,8 @@ type SnapshotKey struct {
 	OrgID   string
 	Kind    string
 	Signals Signal
-	// ExpiresAt is zero for a key without expiry.
+	// Expires is false for a key without expiry; ExpiresAt is then unset.
+	Expires   bool
 	ExpiresAt time.Time
 	// Limit is nil when the policy gives none.
 	Limit *Limit
@@ -38,7 +39,7 @@ type SnapshotKey struct {
 // UsableAt reports whether the key has not expired at now: a key whose
 // expiresAt is not after now is refused ([B] rumtypes/key.go:151-167).
 func (k *SnapshotKey) UsableAt(now time.Time) bool {
-	return k.ExpiresAt.IsZero() || now.Before(k.ExpiresAt)
+	return !k.Expires || now.Before(k.ExpiresAt)
 }
 
 // Application is one RUM application of a snapshot.
@@ -109,6 +110,7 @@ func compile(p *Policy, sum [32]byte) *Snapshot {
 		signals, _ := signalSet(pk)
 		k := &SnapshotKey{ID: pk.ID, OrgID: pk.OrgID, Kind: pk.Kind, Signals: signals, Limit: pk.Limit}
 		if pk.ExpiresAt != nil {
+			k.Expires = true
 			k.ExpiresAt, _ = time.Parse(time.RFC3339, *pk.ExpiresAt)
 		}
 		if pk.ApplicationID != nil {

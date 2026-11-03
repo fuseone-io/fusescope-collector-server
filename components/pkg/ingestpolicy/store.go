@@ -62,6 +62,9 @@ type Store struct {
 
 	mu    sync.Mutex
 	floor *Floor
+	// unsaved is the accepted policy whose caching failed, retried on the
+	// next identical push so a restart cannot load an older revision.
+	unsaved []byte
 
 	current  atomic.Pointer[Snapshot]
 	received atomic.Int64
@@ -191,6 +194,7 @@ func (s *Store) apply(data []byte, now time.Time) error {
 		case p.Version == s.floor.Version && s.current.Load() != nil:
 			// The same revision again: only its freshness changes.
 			s.received.Store(now.UnixNano())
+			s.save(data, *s.floor)
 			return nil
 		}
 	}
@@ -198,16 +202,25 @@ func (s *Store) apply(data []byte, now time.Time) error {
 		return err
 	}
 	floor := Floor{Version: p.Version, SHA256: sum}
-	if s.cache != nil {
-		if err := s.cache.Save(data, floor); err != nil {
-			s.logger.Error("Ingest policy applied but not cached", zap.Uint64("version", p.Version), zap.Error(err))
-		}
-	}
+	s.unsaved = data
+	s.save(data, floor)
 	s.floor = &floor
 	s.publish(compile(p, sum), now)
 	s.logger.Info("Ingest policy applied", zap.Uint64("version", p.Version),
 		zap.Int("keys", len(p.Keys)), zap.Int("rum_applications", len(p.RUMApplications)))
 	return nil
+}
+
+// save caches data if it is the accepted policy not cached yet.
+func (s *Store) save(data []byte, floor Floor) {
+	if s.cache == nil || s.unsaved == nil {
+		return
+	}
+	if err := s.cache.Save(data, floor); err != nil {
+		s.logger.Error("Ingest policy applied but not cached", zap.Uint64("version", floor.Version), zap.Error(err))
+		return
+	}
+	s.unsaved = nil
 }
 
 func (s *Store) publish(snap *Snapshot, received time.Time) {

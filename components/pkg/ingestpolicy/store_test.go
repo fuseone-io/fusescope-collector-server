@@ -301,6 +301,58 @@ func writeFile(t *testing.T, dir, name, content string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 }
 
+// Codex review on #43: an explicit expiresAt at Go's zero time is an
+// expired key, not a key without expiry.
+func TestZeroTimeExpiryIsExpired(t *testing.T) {
+	p := testPolicy(1)
+	p.Keys[0].ExpiresAt = ptr("0001-01-01T00:00:00Z")
+	s := NewStore(zap.NewNop(), nil)
+	require.NoError(t, s.Apply(encode(t, p), t0))
+	k := s.Current().Key(sha256.Sum256([]byte(webKey)))
+	require.NotNil(t, k)
+	assert.False(t, k.UsableAt(t0))
+
+	p.Version, p.Keys[0].ExpiresAt = 2, nil
+	require.NoError(t, s.Apply(encode(t, p), t0))
+	assert.True(t, s.Current().Key(sha256.Sum256([]byte(webKey))).UsableAt(t0), "absent expiresAt never expires")
+}
+
+// Codex review on #43: a policy applied but not cached is cached again on
+// the next identical push, so a restart cannot bring back an older one.
+func TestStoreRetriesFailedCache(t *testing.T) {
+	cache := &flakyCache{FileCache: NewFileCache(t.TempDir()), fail: true}
+	s := NewStore(zap.NewNop(), cache)
+	require.NoError(t, s.Apply(encode(t, testPolicy(1)), t0))
+	v2 := encode(t, testPolicy(2))
+	require.NoError(t, s.Apply(v2, t0))
+	assert.Equal(t, uint64(2), s.Current().Version)
+
+	cache.fail = false
+	require.NoError(t, s.Apply(v2, t0.Add(time.Minute)))
+	assert.Equal(t, 1, cache.saves, "the identical push saves what failed")
+	require.NoError(t, s.Apply(v2, t0.Add(2*time.Minute)))
+	assert.Equal(t, 1, cache.saves, "once saved, identical pushes write nothing")
+
+	restarted := NewStore(zap.NewNop(), cache.FileCache)
+	restarted.Start()
+	require.NotNil(t, restarted.Current())
+	assert.Equal(t, uint64(2), restarted.Current().Version)
+}
+
+type flakyCache struct {
+	*FileCache
+	fail  bool
+	saves int
+}
+
+func (c *flakyCache) Save(data []byte, floor Floor) error {
+	if c.fail {
+		return errors.New("disk full")
+	}
+	c.saves++
+	return c.FileCache.Save(data, floor)
+}
+
 func hexSum(b []byte) string {
 	sum := sha256.Sum256(b)
 	return verifierHex(sum)
