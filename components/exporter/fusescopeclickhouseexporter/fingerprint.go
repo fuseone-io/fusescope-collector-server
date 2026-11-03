@@ -102,17 +102,28 @@ func newResourceInfo(res pcommon.Resource, buf []byte) (resourceInfo, []byte) {
 // shadowed reports whether another key of sorted extends key with a ".", which
 // the resource JSON column would nest under it (docs/spec/clickhouse-traces.md §2.2).
 func shadowed(sorted []keyValue, key string) bool {
-	i, _ := slices.BinarySearchFunc(sorted, key, func(kv keyValue, k string) int { return cmp.Compare(kv.key, k) })
-	// Keys that extend key follow it, those extending it with a byte below "." first.
-	for _, kv := range sorted[i:] {
-		if !strings.HasPrefix(kv.key, key) {
-			return false
-		}
-		if len(kv.key) > len(key) && kv.key[len(key)] == '.' {
-			return true
-		}
+	// The first key not below key+"." starts with it when any does.
+	i, _ := slices.BinarySearchFunc(sorted, key, func(kv keyValue, k string) int { return compareDotted(kv.key, k) })
+	return i < len(sorted) && len(sorted[i].key) > len(key) && sorted[i].key[len(key)] == '.' &&
+		strings.HasPrefix(sorted[i].key, key)
+}
+
+// compareDotted compares s with key+".", without building it.
+func compareDotted(s, key string) int {
+	n := min(len(s), len(key))
+	if c := strings.Compare(s[:n], key[:n]); c != 0 {
+		return c
 	}
-	return false
+	if len(s) <= len(key) {
+		return -1
+	}
+	if c := cmp.Compare(s[len(key)], '.'); c != 0 {
+		return c
+	}
+	if len(s) == len(key)+1 {
+		return 0
+	}
+	return 1
 }
 
 // sortedStrings appends m's attributes stringified and sorted by key.

@@ -4,6 +4,7 @@
 package fusescopeclickhouseexporter
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ClickHouse/ch-go/proto"
@@ -30,6 +31,8 @@ func TestResourceJSONLeavesOutShadowedKeys(t *testing.T) {
 		{"leaf last", [][2]string{{"a.b.c", "1"}, {"a-b", "2"}, {"a", "3"}},
 			`{"a":"3","a-b":"2","a.b.c":"1"}`, `{"a-b":"2","a.b.c":"1"}`},
 		{"not a dotted prefix", [][2]string{{"ab", "1"}, {"a", "2"}}, `{"a":"2","ab":"1"}`, `{"a":"2","ab":"1"}`},
+		{"prefix ladder", [][2]string{{"a", "1"}, {"aa", "2"}, {"a-", "3"}, {"a/b", "4"}, {"aa.b", "5"}, {"a.", "6"}},
+			`{"a":"1","a-":"3","a.":"6","a/b":"4","aa":"2","aa.b":"5"}`, `{"a-":"3","a.":"6","a/b":"4","aa.b":"5"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,15 +77,35 @@ func TestResourceJSONLeavesOutShadowedKeys(t *testing.T) {
 	}
 }
 
+func TestCompareDotted(t *testing.T) {
+	tests := []struct {
+		s, key string
+		want   int
+	}{
+		{"a.", "a", 0}, {"a", "a", -1}, {"a.b", "a", 1}, {"a-b", "a", -1}, {"a/", "a", 1},
+		{"", "a", -1}, {"b", "a", 1}, {"aa", "ab", -1}, {"a.", "", 1}, {".", "", 0},
+	}
+	for _, tt := range tests {
+		if got := compareDotted(tt.s, tt.key); got != tt.want {
+			t.Errorf("compareDotted(%q, %q) = %d, want %d", tt.s, tt.key, got, tt.want)
+		}
+	}
+}
+
 func BenchmarkResourceInfo(b *testing.B) {
-	for _, name := range []string{"plain", "shadowed"} {
+	for _, name := range []string{"plain", "shadowed", "prefix ladder"} {
 		res := pcommon.NewResource()
 		for _, k := range []string{"service.name", "service.namespace", "deployment.environment", "host.name",
 			"k8s.pod.name", "k8s.namespace.name", "telemetry.sdk.language", "process.pid"} {
 			res.Attributes().PutStr(k, "value")
 		}
-		if name == "shadowed" {
+		switch name {
+		case "shadowed":
 			res.Attributes().PutStr("deployment.environment.name", "value")
+		case "prefix ladder": // a, aa, aaa, …: every key a prefix of the later ones, none dotted
+			for i := 1; i <= 2048; i++ {
+				res.Attributes().PutStr(strings.Repeat("a", i), "v")
+			}
 		}
 		b.Run(name, func(b *testing.B) {
 			var buf []byte
