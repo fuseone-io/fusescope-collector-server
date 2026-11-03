@@ -25,7 +25,7 @@ by ClickHouse and are not sent. The key tables' local `timestamp` defaults to th
 
 ## 2. Shared with traces
 
-- **Resource fingerprint, `labels`, `resources_string`, `resource`**: exactly as traces §2.1 and §5.
+- **Resource fingerprint, `labels`, `resources_string`, `resource`**: exactly as traces §2.1, §2.2 and §5.
   The same resource gets the same fingerprint in both signals [obs `logs_v2_resource` vs
   `traces_v3_resource`].
 - **`ts_bucket_start`**: `floor(timestamp_seconds / 1800) * 1800`, from the record's `timestamp`

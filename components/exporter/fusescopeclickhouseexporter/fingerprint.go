@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"slices"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
@@ -39,6 +40,7 @@ type resourceInfo struct {
 	attrs       []keyValue // sorted by key, values stringified
 	fingerprint string
 	labels      string // compact JSON object of attrs
+	json        string // labels without keys a longer key extends, for the resource JSON column
 	serviceName string
 }
 
@@ -75,8 +77,42 @@ func newResourceInfo(res pcommon.Resource, buf []byte) (resourceInfo, []byte) {
 	}
 	buf = append(buf, '}')
 	info.labels = string(buf)
+	info.json = info.labels
+	if slices.ContainsFunc(attrs, func(kv keyValue) bool { return shadowed(attrs, kv.key) }) {
+		buf = buf[:0]
+		buf = append(buf, '{')
+		for _, kv := range attrs {
+			if shadowed(attrs, kv.key) {
+				continue
+			}
+			if len(buf) > 1 {
+				buf = append(buf, ',')
+			}
+			buf = appendJSONString(buf, kv.key)
+			buf = append(buf, ':')
+			buf = appendJSONString(buf, kv.value)
+		}
+		buf = append(buf, '}')
+		info.json = string(buf)
+	}
 	info.serviceName, _ = info.get("service.name")
 	return info, buf
+}
+
+// shadowed reports whether another key of sorted extends key with a ".", which
+// the resource JSON column would nest under it (docs/spec/clickhouse-traces.md §2.2).
+func shadowed(sorted []keyValue, key string) bool {
+	i, _ := slices.BinarySearchFunc(sorted, key, func(kv keyValue, k string) int { return cmp.Compare(kv.key, k) })
+	// Keys that extend key follow it, those extending it with a byte below "." first.
+	for _, kv := range sorted[i:] {
+		if !strings.HasPrefix(kv.key, key) {
+			return false
+		}
+		if len(kv.key) > len(key) && kv.key[len(key)] == '.' {
+			return true
+		}
+	}
+	return false
 }
 
 // sortedStrings appends m's attributes stringified and sorted by key.

@@ -149,7 +149,7 @@ func (e *tracesEncoder) appendIndexRow(res *resourceInfo, scopeJSON string, span
 		c.resourcesString.Values.Append(kv.value)
 	}
 	endRow(c.resourcesString)
-	c.resource.Append(res.labels)
+	c.resource.Append(res.json)
 	c.scope.Append(scopeJSON)
 
 	for _, ev := range span.Events().All() {

@@ -98,7 +98,10 @@ attributes are dropped everywhere: map columns, JSON column, tags and keys [obs 
 `special-floats`]. `attributes_promoted` is always
 `{}` [obs].
 
-`resource` is the nested form of `resources_string`. `scope` is
+`resource` is the nested form of `resources_string`, and leaves out a key that is also the
+prefix of another key the same way; `resources_string` and `labels` keep both [obs parity run,
+`test/parity/managed_corpus.py`: `deployment.environment` beside the `deployment.environment.name`
+that span mapping and log pipelines add; ClickHouse refuses the insert with both]. `scope` is
 `{"name", "version", "attributes": <nested>}` [obs].
 
 ## 3. `signoz_index_v3`
