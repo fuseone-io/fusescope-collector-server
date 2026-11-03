@@ -189,6 +189,11 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 - The shadow pipelines sit behind a `batch/shadow` processor, which accepts the copy and exports it on its own: a
   full or failing `otlp/shadow` queue (32 MiB per signal) drops shadow copies and never fails a demo request. The
   keepalive, the 5 s timeout and the 30 s retry limit keep that queue draining while the shadow collector is away.
+- Admission is not atomic across the receiver's two branches: if memory crosses the shared limiter's threshold
+  between its calls to the demo and the shadow pipelines (microseconds apart), one side accepts and the other refuses,
+  and the sender's retry duplicates on one side. At the demo's volume the collector stays far below the limit; a
+  duplicate would show in `compare.py`. Limiting once before the branch would mean rewriting the demo collector's
+  existing pipelines.
 - The demo collector holds the queued copies in its own memory (768 MiB, limiter at 640 MiB); at the demo's volume
   that is a few MiB at most.
 - The shadow collector shares the host's CPU and memory with the demo; the limits above bound it.
