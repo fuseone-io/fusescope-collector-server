@@ -7,6 +7,7 @@
 package rumreceiver
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +86,27 @@ func TestPIIPolicyScrubSpanName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, scrubSpanName(&tc.policy, tc.input))
 		})
+	}
+}
+
+// Codex review on #43: a span name of spaces costs one buffer of its own
+// size, not a slice of millions of strings.
+func TestScrubSpanNameSpaceDense(t *testing.T) {
+	policy := defaultPII()
+	name := strings.Repeat(" ", 1<<20) + "/a?b=c"
+	var out string
+	allocs := testing.AllocsPerRun(5, func() { out = scrubSpanName(&policy, name) })
+	assert.Equal(t, strings.Repeat(" ", 1<<20)+"/a", out)
+	assert.LessOrEqual(t, allocs, float64(3))
+}
+
+func BenchmarkScrubSpanNameSpaceDense(b *testing.B) {
+	policy := defaultPII()
+	name := strings.Repeat(" ", 4<<20-6) + "/a?b=c"
+	b.ReportAllocs()
+	b.SetBytes(int64(len(name)))
+	for b.Loop() {
+		_ = scrubSpanName(&policy, name)
 	}
 }
 

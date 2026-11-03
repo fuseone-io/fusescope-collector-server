@@ -126,10 +126,17 @@ func scrubSpanName(policy *ingestpolicy.PIIPolicy, name string) string {
 		return name
 	}
 
-	tokens := strings.Split(name, " ")
-	for i, token := range tokens {
-		tokens[i] = scrubURL(policy, token)
+	// Tokens are scrubbed as they are scanned, into one buffer: splitting a
+	// name of spaces into a slice would cost far more than its size.
+	var b strings.Builder
+	b.Grow(len(name))
+	for {
+		token, rest, more := strings.Cut(name, " ")
+		b.WriteString(scrubURL(policy, token))
+		if !more {
+			return b.String()
+		}
+		b.WriteByte(' ')
+		name = rest
 	}
-
-	return strings.Join(tokens, " ")
 }
