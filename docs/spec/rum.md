@@ -613,13 +613,28 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   higher one. The ack is sent, and the applying marker released, only after the commit
   succeeds; a commit that finds a higher sequence already applied is acknowledged again with no
   effect.
+- **Backend, memory while applying** ([M43]): a sequence awaiting commit keeps its page bytes,
+  not a decoded report; it is decoded again for each commit attempt only. One 128 MiB budget
+  counts every page held, assembling or awaiting commit, and one count of 1 000 covers both.
+  To make room the oldest assemblies of other agents are invalidated; a sequence awaiting
+  commit never is. When the budget is full of those, the page is refused and nothing escapes
+  the count.
 - **Backend, store failures** ([M43]): reading the record, the compare-and-apply and persisting
   an invalidation all return errors, and every failure fails closed. A page whose agent record
-  cannot be read is refused. A failed commit sends no ack and keeps the applying marker, which
-  still refuses lower sequences, until a retry succeeds. A failed invalidation keeps an
-  in-memory marker refusing that sequence (and holding back higher ones) until it is persisted.
-  Applying and invalidation markers count toward the 1 000 entries and are never shed; when the
-  bound is full of them, new assemblies are refused.
+  cannot be read is refused. A failed commit sends no ack and keeps the sequence awaiting
+  commit, still refusing lower sequences. A failed invalidation keeps an in-memory marker (an
+  agent ID and a sequence) refusing that sequence and holding back higher ones until it is
+  persisted. No new assembly starts while 1 000 such markers wait; with those of assemblies
+  already held, at most 2 000 exist.
+- **Backend, retries** ([M43]): store calls are made outside the assembler's lock: a page costs
+  one record read and one retry pass of at most 8 store calls, whatever is pending, so other
+  agents' pages wait for no one else's I/O. Each failed commit or invalidation is retried with
+  exponential backoff (100 ms doubling to 30 s) and jitter. **Who retries a failed commit:**
+  the retrier, run in each page's pass and from a backend ticker; it returns the sequences it
+  committed, which the backend then acknowledges. A resent page of a sequence awaiting commit
+  answers "applying" and attempts nothing itself. A commit still failing 120 s after its
+  sequence completed is given up: the sequence is invalidated instead, so it can never be
+  applied out of order, and the collector's next report carries the same pending values.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
