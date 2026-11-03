@@ -1,10 +1,10 @@
 # RUM receiver · contract with browsers, apps and the FuseScope backend
 
-What `rumreceiver` must do to replace the FuseScope backend's RUM gateway unchanged for the SDKs
-and the setup screen ([ADR 0006](../adr/0006-single-ingress.md), FuseScope ADR 0010 §6), and the
-shape of the OpAMP ingest policy and ingest report it depends on. Status: specification only;
-no code yet (issue [#13](https://github.com/fuseone-io/fusescope-collector-server/issues/13),
-step 1).
+What `rumreceiver` must do to replace the FuseScope backend's RUM gateway for the SDKs and the
+setup screen ([ADR 0006](../adr/0006-single-ingress.md), FuseScope ADR 0010 §6 and §10), and the
+shape of the OpAMP ingest policy, ingest report and acknowledgement it depends on. Status:
+specification only; no code yet (issue
+[#13](https://github.com/fuseone-io/fusescope-collector-server/issues/13), step 1).
 
 ## 0. Sources
 
@@ -15,10 +15,16 @@ Every rule cites one of:
   `pkg/modules/rumapplication/implrumapplication/` and `rumtypes/` is `pkg/types/rumtypes/`.
 - **[ADR3]**, **[ADR9]**, **[ADR10]**: FuseScope `docs/adr/0003-real-user-monitoring.md`,
   `0009-fusescope-collector.md`, `0010-single-ingress.md` at the same commit.
-- **[SDK]** `fuseone-io/fusescope-sdk` at `2e16765`, `packages/browser/README.md`;
+  **[ADR10 §10]**: the amendments on acceptance in
+  [fuseone-io/fusescope#303](https://github.com/fuseone-io/fusescope/pull/303).
+- **[SDK]** `fuseone-io/fusescope-sdk` at `2e16765`: `packages/browser/README.md` and
+  `packages/browser/src/`. **[OTel-JS]** `@opentelemetry/otlp-exporter-base` 0.223.0, the
+  exporter version the SDK resolves (README "Compatibility": OpenTelemetry JS 0.223).
   **[SDK-A]** `fuseone-io/fusescope-sdk-android` at `5296f46`, `README.md`.
-- **[G1]**–**[G5]**: the security gates of [ADR 0006](../adr/0006-single-ingress.md#security-gates).
+- **[Fetch]** the WHATWG Fetch standard, CORS protocol (CORS-preflight request).
+- **[G1]**–**[G6]**: the security gates of [ADR 0006](../adr/0006-single-ingress.md#security-gates).
 - **[OTLP]**: the OTLP specification, OTLP/HTTP (response codes, `Retry-After`).
+- **[M]**: a maintainer decision recorded in ADR 0006 or on PR #41, with no other source.
 
 A rule marked **Differs** is a deliberate change from the backend, listed again in §12.
 
@@ -47,36 +53,41 @@ allowed (ADR 0005), but nothing needs them.
 ## 1. Routes and methods
 
 - `POST` and `OPTIONS` on `/rum/v1/traces` and `/rum/v1/logs` ([B]
-  `pkg/apiserver/signozapiserver/rum.go:58-65`; [SDK] lines 181–194; [SDK-A] lines 234–238).
-  Other methods on these paths: 405.
+  `pkg/apiserver/signozapiserver/rum.go:58-65`; [SDK] `README.md:181-194`; [SDK-A] lines
+  234–238). Other methods on these paths: 405.
 - Traces carry an OTLP `ExportTraceServiceRequest`, logs an `ExportLogsServiceRequest`
   ([B] `impl/gateway_otlp.go:30-80`).
 - Every response carries `Vary: Origin` ([B] `impl/gateway.go:76`).
-- The order of checks is the backend's ([B] `impl/gateway.go:75-177`): preflight; policy
-  present (§11.3); key; origin; rate limits; content type; body; decoding; package names;
-  processing; pipeline. A request refused at one step is not examined further.
-- **Optional, open (§13):** `GET`/`HEAD` `/rum/v1/sdk/browser/{version}/fusescope.min.js` and
-  `.map` serve the embedded browser bundle ([ADR10] line 99). Only the embedded version is
-  served, anything else is 404; headers `Content-Type` (`application/javascript` or
-  `application/json`), `Cache-Control: public, max-age=31536000, immutable`,
-  `Access-Control-Allow-Origin: *`, `X-Content-Type-Options: nosniff`, `ETag` = the SRI value
-  ([B] `pkg/modules/rumapplication/browsersdk/browsersdk.go:62-76`). No key is required.
+- The order of checks is the backend's ([B] `impl/gateway.go:75-177`), after the connection
+  and concurrency limits of §7.1: preflight; policy present (§11.4); key; origin; rate limits;
+  content type; body; decoding; package names; processing; pipeline. A request refused at one
+  step is not examined further.
+- The browser bundle route of the backend (`/rum/v1/sdk/browser/{version}/…`) is not served:
+  the CDN serves it in this phase, with no new build dependency ([M], resolved 11; [ADR10 §10]).
 
 ## 2. Key transport and validation
 
-- The key is read from the `FuseScope-RUM-Key` header, else from the `fusescope_rum_key` query
-  parameter, which exists because `navigator.sendBeacon` cannot set headers ([B]
-  `impl/gateway.go:17-22,207-212`).
+- **Differs [G4].** The key is read only from the `FuseScope-RUM-Key` request header. The
+  backend also reads a `fusescope_rum_key` query parameter, for `navigator.sendBeacon`, which
+  cannot set headers ([B] `impl/gateway.go:17-22,207-212`). It is removed ([M], resolved 13;
+  [ADR10 §10]): there are no users yet, and the browser SDK does not use `sendBeacon`. It sets
+  the header on its OTLP exporters ([SDK] `src/config.ts:4,109-111`, `src/sdk.ts:41-42`), whose
+  browser transport is `fetch` with the configured headers and `keepalive` when the browser's
+  keepalive budget allows ([OTel-JS] `build/esm/configuration/create-legacy-browser-delegate.js:44-47`,
+  `build/esm/transport/fetch-transport.js:52-72`). The Android SDK sends the header too ([SDK-A]
+  line 238). A query parameter of that name is ignored, never read or logged; a request with no
+  header has no key.
 - A well-formed key starts with `rum_pub_`, is longer than the prefix and at most 128 bytes
   ([B] `rumtypes/key.go:18-25,147-149`). Anything else is refused as invalid without a lookup
   ([B] `impl/module_keys.go:111-114`).
 - The verifier is the lowercase hex SHA-256 of the key as sent ([B]
   `rumtypes/key.go:142-145`), looked up in the ingest policy (§11). No per-request call to the
-  backend ([ADR10] §4, line 71).
+  backend ([ADR10] §4, line 71). `rumreceiver` does this lookup itself, against the same
+  immutable policy store `ingestauth` uses ([M], resolved 2).
 - A key absent from the policy is unknown. A key whose `expiresAt` is not after now is
   refused, attributed to its application ([B] `rumtypes/key.go:151-167`,
-  `impl/module_keys.go:128-133`). Revoked keys are not in the policy (it lists usable keys
-  only, [ADR10] line 62), so they are unknown.
+  `impl/module_keys.go:128-133`). Revoked keys are not published in the policy, so they are
+  unknown ([M], resolved 7).
 - Missing, malformed, unknown or expired: **401** ([B] `impl/gateway.go:89-94`,
   `pkg/http/render/render.go:103`; test `impl/gateway_test.go:108-109`).
 - Only keys of kind `public` are accepted on these routes; secret and runner keys are refused
@@ -85,43 +96,41 @@ allowed (ADR 0005), but nothing needs them.
 - Keys are always enforced here: `rumreceiver` has no `permissive` or `warn` mode, as the
   backend gateway has none ([B] `impl/gateway.go:89-94`; [ADR10] §5 modes apply to
   `ingestauth`).
-- **[G4]** The key, the full request URL (its query may hold the key) and the
-  `FuseScope-RUM-Key` header are never logged, never recorded in the collector's own spans,
-  metrics or logs, and never reported. The backend already keeps the RUM routes out of its
-  request logs ([B] `pkg/apiserver/config.go:51-60`). Only the key ID and its verifier may
-  appear anywhere.
+- **[G4]** The key, the `FuseScope-RUM-Key` header and the request URL are never logged, never
+  recorded in the collector's own spans, metrics or logs, and never reported. The backend keeps
+  the RUM routes out of its request logs ([B] `pkg/apiserver/config.go:51-60`). Only the key ID
+  and its verifier may appear anywhere.
 
 ## 3. Application lookup
 
 - A key belongs to exactly one RUM application ([B] `rumtypes/key.go:55-67`; [ADR3] lines
   112–113). The application, with its org, name, environment, platform, origins, package names
   and PII policy, comes from the ingest policy (§11.1).
-- Platforms are `web` and `android`; `ios` is reserved and refused at creation ([B]
-  `rumtypes/application.go:30-40,344-352`). A policy entry with another platform is dropped
-  (§11.2), so its keys are refused.
+- Platforms are `web` and `android`; `ios` is reserved ([B]
+  `rumtypes/application.go:30-40,344-352`). A policy with another platform is rejected (§11.2).
 
 ## 4. CORS and preflight
 
-- **Preflight** (`OPTIONS`) is allowed only with a non-empty `Origin` and
-  `Access-Control-Request-Method: POST` ([B] `impl/gateway.go:182-192`):
-  - with `fusescope_rum_key` in the query, when that key is valid and its application allows
-    the origin;
-  - without it, when any application in the policy allows the origin. The preflight carries no
-    header key, so the POST is checked again against the key's application ([B]
-    `impl/gateway.go:179-181`).
+- **Preflight. Differs.** A CORS-preflight request carries the names of the request's
+  non-safelisted headers in `Access-Control-Request-Headers`, never their values, and no
+  credentials ([Fetch], CORS-preflight request), so it cannot carry the key. A preflight is
+  allowed when it has a non-empty `Origin`, `Access-Control-Request-Method: POST`, and at least
+  one RUM application in the policy allows the origin ([B] `impl/gateway.go:179-192`, minus the
+  query-key branch removed in §2). The POST is then checked against its key's application.
 - An allowed preflight answers **204** with `Access-Control-Allow-Origin: <origin>`,
   `Access-Control-Allow-Methods: POST`,
   `Access-Control-Allow-Headers: content-type, content-encoding, fusescope-rum-key` and
-  `Access-Control-Max-Age: 86400` ([B] `impl/gateway.go:24-27,199-204`; [SDK] lines 190–193).
-  Any other preflight: **403** ([B] `impl/gateway.go:194-197`; tests
-  `impl/gateway_test.go:190-194`).
+  `Access-Control-Max-Age: 86400` ([B] `impl/gateway.go:24-27,199-204`; [SDK]
+  `README.md:190-193`). Any other preflight: **403** ([B] `impl/gateway.go:194-197`; tests
+  `impl/gateway_test.go:190-193`).
 - **POST with an `Origin`:** the key's application must allow it, else **403**, reason
   `origin_not_allowed` ([B] `impl/gateway.go:96-100`). When allowed,
   `Access-Control-Allow-Origin` echoes the origin ([B] `impl/gateway.go:102`). Responses
-  refused before this check (key errors) carry no `Access-Control-Allow-Origin`.
+  refused before this check (key errors) carry no `Access-Control-Allow-Origin`. An `Origin`
+  longer than 256 bytes matches nothing (§7.1).
 - **POST without an `Origin`** skips the origin check ([B] `impl/gateway.go:96`; test
-  `HeaderKeyNoOrigin_Accepted`, `impl/gateway_test.go:110`). This is how mobile apps send
-  ([SDK-A] line 239). See §13.
+  `HeaderKeyNoOrigin_Accepted`, `impl/gateway_test.go:110`), for parity: `Origin` is a browser
+  control, not authentication ([M], resolved 8). Mobile apps send this way ([SDK-A] line 239).
 - **Origin matching** ([B] `rumtypes/application.go:172-203`): both sides lower-cased and parsed
   as URLs; a candidate without scheme or host never matches (so `Origin: null` is refused);
   `*` matches any origin; otherwise scheme and port must be equal, and the host must equal the
@@ -131,9 +140,9 @@ allowed (ADR 0005), but nothing needs them.
 - Allowed origins are `*` or `scheme://host[:port]` with `http` or `https`, no path, query,
   fragment or user info, and `*` only as a leading `*.` label ([B]
   `rumtypes/application.go:418-434`); at most 50 entries ([B]
-  `rumtypes/application.go:19,395-399`). Entries that fail these rules are dropped from the
-  policy (§11.2).
-- No credentials are involved: `Access-Control-Allow-Credentials` is never sent ([SDK] line 194).
+  `rumtypes/application.go:19,395-399`). A policy with any other entry is rejected (§11.2).
+- No credentials are involved: `Access-Control-Allow-Credentials` is never sent ([SDK]
+  `README.md:194`).
 
 ## 5. Android package names
 
@@ -159,9 +168,9 @@ allowed (ADR 0005), but nothing needs them.
 - `Content-Type` is parsed as a media type, falling back to the trimmed, lower-cased raw value
   ([B] `impl/gateway_otlp.go:128-141`):
   - `application/x-protobuf`, `application/protobuf`: OTLP protobuf;
-  - `application/json`, `text/plain`: OTLP JSON. `text/plain` exists because `sendBeacon` sends
-    only CORS-safelisted types ([B] `impl/gateway_otlp.go:126-127`; test
-    `QueryKeyForBeacon_Accepted`, `impl/gateway_test.go:111`);
+  - `application/json`, `text/plain`: OTLP JSON. `text/plain` existed for `sendBeacon` ([B]
+    `impl/gateway_otlp.go:126-127`); it stays for parity, though no SDK needs it any more
+    (follow-up, §13);
   - anything else, missing included: **400**, reason `invalid_payload`.
 - `Content-Encoding` (trimmed, case-insensitive): empty or `identity` as is, `gzip` decoded;
   anything else **400** `invalid_payload`; an invalid gzip stream **400** ([B]
@@ -184,12 +193,12 @@ allowed (ADR 0005), but nothing needs them.
   ([B] `impl/gateway.go:118-120`, `impl/gateway_otlp.go:47-53,73-79,143-148`; tests
   `impl/gateway_test.go:259-261`).
 
-## 7. Rate limits
+## 7. Rate limits and bounded state
 
 - Two token buckets, checked after the key and origin and before the body is read ([B]
   `impl/gateway.go:139-145`):
   - per key: every client of one key;
-  - per key and client IP: identity `<key id>|<client ip>`.
+  - per key and client: identity `<key id>|<client group>` (below).
 - Bucket semantics ([B] `pkg/ratelimit/limiter.go:10-65`): a new identity starts with a full
   bucket of `burst` tokens; tokens refill at `rate` per second up to `burst`; a request takes
   one token or is refused; buckets idle for more than 10 minutes are dropped.
@@ -197,10 +206,11 @@ allowed (ADR 0005), but nothing needs them.
   `impl/gateway.go:143-144`, `pkg/http/render/render.go:117-118,130-135`; test
   `impl/gateway_test.go:216`).
 - **Differs (per-replica share).** The per-key limit is the key's `limit` in the ingest policy,
-  which is already this replica's share of the key's limit ([ADR10] §4, line 73). When the
-  policy gives none, the backend's default applies unshared: 500/s, burst 1000 ([B]
-  `pkg/modules/rumapplication/config.go:86`). The per-key-and-IP limit is local configuration,
-  default 20/s, burst 60 ([B] `config.go:87`), and is enforced per replica (§13).
+  already this replica's share of the key's limit ([ADR10] §4, line 73). When the policy gives
+  none, the backend's default applies unshared: 500/s, burst 1000 ([B]
+  `pkg/modules/rumapplication/config.go:86`). The per-client limit is local configuration,
+  default 20/s, burst 60 ([B] `config.go:87`), enforced per replica with no sharing for now
+  ([M], resolved 5).
 - **Client IP. Differs [G2].** The backend takes the first `X-Forwarded-For` address from any
   peer when `trust_forwarded_for` is set ([B] `pkg/ratelimit/ratelimit.go:16-31`,
   `pkg/modules/rumapplication/config.go:67-68`). Here:
@@ -212,8 +222,38 @@ allowed (ADR 0005), but nothing needs them.
     client IP. An entry that does not parse as an IP address ends the walk, and the last
     trusted address seen (or the peer) is used. The leftmost entry is never trusted on its own,
     since a client can write it.
+- **Client group. Differs [G6].** An IPv4 address (IPv4-mapped IPv6 included) is its own group;
+  an IPv6 address is grouped by its /64 prefix ([M], resolved 5).
 - The client IP is held in memory for the bucket only, never stored, logged or reported ([B]
   `config.go:64`; [ADR3] line 148; [G5]).
+
+### 7.1 Bounds **[G6]**
+
+All state indexed by external input is bounded. Defaults, each overridable in local
+configuration ([M]):
+
+| State or limit | Default | Over the bound |
+|---|---|---|
+| Per-key-and-client buckets | 100 000 identities, global | least recently used evicted; idle ones still dropped after 10 min |
+| Per-key buckets | one per key of the policy (≤ 50 000, §11.2) | none created for unknown keys |
+| Session IDs per application per minute bucket | 10 000 ([B] `impl/monitor.go:14,58-62`), stored as 64-bit hashes (`hash/maphash`, per-process seed) | further sessions not counted |
+| Per-application monitors | one per RUM application of the current policy (≤ 10 000), dropped when it leaves the policy | none for applications outside the policy |
+| Unknown keys | one global counter and last-seen time; no per-key or per-origin state | — |
+| Rejections per application | one entry per reason, six reasons (§10.1) | — |
+| Pending key usage for the report | 10 000 keys ([B] `impl/monitor.go:15`) | oldest use evicted, counted in `dropped` |
+| `Origin` | 256 bytes, checked before matching or storing | matches nothing; observed as empty |
+| `app.package.name` | 256 bytes, checked before matching or storing | refused; observed as empty |
+| SDK name / version | 64 / 32 bytes, checked before storing | stored as empty |
+| Concurrent connections per listener | 4 096 | new connections wait in the accept backlog, then are refused |
+| Concurrent requests per listener | 512 | 503 with `Retry-After: 1` |
+| Header read timeout | 10 s | connection closed |
+| Body read timeout | 30 s | connection closed |
+| Write timeout | 30 s | connection closed |
+| Idle keep-alive timeout | 120 s | connection closed |
+| Request header bytes | 64 KiB | 431 |
+
+Strings longer than their bound are never truncated into a stored value: a truncated origin or
+package name could match or name something else.
 
 ## 8. Processing
 
@@ -234,7 +274,8 @@ For every resource ([B] `impl/otlp.go:90-113`; tests `impl/otlp_test.go:47-68`):
    ID, and the key's org goes in the request's auth data (`client.Info`), never taken from the
    payload.
 
-Attribute names: [B] `rumtypes/attributes.go:3-19`.
+Attribute names: [B] `rumtypes/attributes.go:3-19`. Name and environment come from the policy
+([M], resolved 3; [ADR10 §10]).
 
 ### 8.2 PII scrubbing
 
@@ -261,12 +302,12 @@ The application's PII policy ([B] `rumtypes/pii.go:17-30`): `dropQuery`, `queryA
   is split on single spaces and every token goes through *scrub URL* (for example
   `Navigation: /customers/392#tab?email=a@b.c`).
 - Tests: `rumtypes/pii_test.go`, `impl/otlp_test.go:39`.
-- Not scrubbed by the backend, kept as is here (§13): log bodies, scope attributes, non-string
-  values, other attributes.
-- `geoLookup`, `requireConsent` and `hashUserId` are part of the policy ([B]
-  `rumtypes/pii.go:23-25`) but are not applied by the gateway: consent and user-ID hashing are
-  SDK-side, and no geo lookup exists in the backend at this commit (`git grep GeoLookup` finds
-  only the type). The receiver does no geo lookup (§13).
+- Not scrubbed, for parity: log bodies, scope attributes, non-string values, other attributes
+  ([M], resolved 9; follow-up in §13).
+- `geoLookup`, `requireConsent` and `hashUserId` are in the backend's policy type ([B]
+  `rumtypes/pii.go:23-25`) but not applied by its gateway: consent and user-ID hashing are
+  SDK-side, and no geo lookup exists in the backend (`git grep GeoLookup` finds only the type).
+  None is in policy schema v1, and the receiver does no geo lookup ([M], resolved 10).
 
 ### 8.3 Logs: `event.name`
 
@@ -300,13 +341,14 @@ into `fusescope.rum.view.route` when that is missing or empty ([B]
 
 ([B] `impl/otlp.go:10-88`, `rumtypes/status.go:37-42,61-68`)
 
-- sessions: distinct non-empty `session.id` attribute values of spans and log records;
+- sessions: distinct non-empty `session.id` attribute values of spans and log records, kept as
+  fixed-size hashes (§7.1), counted exactly per replica ([M], resolved 6);
 - views: spans named `view`;
 - errors: log records whose `event.name` is `exception` (after §8.4);
 - vitals: log records whose `event.name` is `browser.web_vital` or `rum.vital`;
 - SDK: per resource, `telemetry.distro.name`/`telemetry.distro.version` when the name is set,
   else `telemetry.sdk.name`/`telemetry.sdk.version`; the last resource with one wins ([B]
-  `impl/otlp.go:106-112`).
+  `impl/otlp.go:106-112`); bounded as in §7.1.
 
 ## 9. Into the pipeline and status codes
 
@@ -315,10 +357,13 @@ OTLP/HTTP receiver ([B] `impl/gateway_otlp.go:199-223`). Here it goes to the nex
 receiver's pipeline, with no extra hop ([ADR10] §6, line 94). The data is counted in the report
 (§10) only once the consumer accepted it ([B] `impl/gateway.go:166-170`).
 
-| Condition | Status | Reason counted | Source |
+| Condition | Status | Counted as | Source |
 |---|---|---|---|
-| No ingest policy (fail closed) | 503, `Retry-After: 5`; preflight 403 | none | [G1], §11.3 |
-| Key missing, malformed, unknown, expired, wrong kind | 401 | `bad_key` / `unknown_key` (§10.1) | §2 |
+| Too many concurrent requests | 503, `Retry-After: 1` | none | [G6], §7.1 |
+| No valid ingest policy (fail closed) | 503, `Retry-After: 5`; preflight 403 | none | [G1], §11.4 |
+| Key missing or malformed | 401 | none | §2 |
+| Key unknown or of a wrong kind | 401 | global `unknownKeys` | §2, §10.1 |
+| Key expired | 401 | `bad_key` on its application | §2 |
 | Origin not allowed (incl. any `Origin` on Android) | 403 | `origin_not_allowed` | §4, §5 |
 | Package name missing or not allowed | 403 | `package_not_allowed` | §5 |
 | Rate limited | 429, `Retry-After: 1` | `rate_limited` | §7 |
@@ -326,7 +371,7 @@ receiver's pipeline, with no extra hop ([ADR10] §6, line 94). The data is count
 | Body over the limit | 413 | `too_large` | §6 |
 | Consumer error, permanent | 400 | none | **Differs**, below |
 | Consumer error, not permanent (memory limiter, full queue, exporter backpressure) | 503, `Retry-After: 5` | none | **Differs**, below |
-| Accepted | 200, empty export response | (counted as ingest) | §6 |
+| Accepted | 200, empty export response | ingest | §6 |
 
 - The backend maps its forward: unreachable collector 503, collector 429 or 503 kept, other
   4xx 400, 5xx 502; each retryable one with `Retry-After: 5` ([B]
@@ -337,7 +382,7 @@ receiver's pipeline, with no extra hop ([ADR10] §6, line 94). The data is count
 - Error bodies are JSON with the error code (for example `rum_origin_not_allowed`), as today
   ([B] `impl/gateway.go:29-37`, `pkg/http/render/render.go:91-140`). They never echo the key.
 
-## 10. Setup status and the OpAMP ingest report
+## 10. Setup status, the ingest report and its acknowledgement
 
 ### 10.1 What the backend's setup screen needs
 
@@ -359,29 +404,36 @@ and one line per rejection; it shows `lastOrigin` only for `origin_not_allowed`,
 shows each key's `lastUsedAt` (`KeyRow.tsx:19-20`), which the gateway feeds ([B]
 `impl/monitor.go:72-74`, `impl/module_keys.go:145-172`).
 
-Rejection attribution ([B] `impl/gateway.go:105-136`, `rumtypes/status.go:50-52`; tests
-`impl/gateway_test.go:144-149`):
+Rejection attribution in the backend ([B] `impl/gateway.go:105-136`, `rumtypes/status.go:50-52`;
+tests `impl/gateway_test.go:144-149`): an expired key counts `bad_key` on its application; an
+unknown or malformed key with an `Origin` counts `unknown_key` on every application, of any org,
+that allows that origin ([B] `impl/module.go:186-213`); every other refusal counts its reason on
+the key's application.
 
-- a refused key that names an application (expired): `bad_key` on it;
-- an unknown or malformed key with an `Origin`: `unknown_key` on every application, of any org,
-  that allows that origin ([B] `impl/module.go:186-213`); not counted when none does, when the
-  key is missing, or when there is no `Origin`;
-- every other refusal: its reason on the key's application.
+**Differs.** Unknown keys are never attributed to applications: they increment one bounded
+global counter, with no origin, which avoids one tenant's traffic showing up on another
+tenant's setup screen ([M], resolved 12). The six per-application reasons are `bad_key`,
+`origin_not_allowed`, `package_not_allowed`, `rate_limited`, `too_large`, `invalid_payload`
+([B] `rumtypes/status.go:12-20`, less `unknown_key`). The UI's unknown-key line needs a backend
+follow-up to show the global counter instead.
 
 Today each backend replica keeps this in memory and answers only for itself ([B]
 `rumtypes/status.go:24-26`). [ADR10] §6 (line 98) replaces that with a report from each
 collector, aggregated by the backend across replicas.
 
-### 10.2 Report content
+### 10.2 Report
 
-Every 60 seconds ([ADR10] line 98) the receiver sends one custom message, capability
-`io.fuseone.fusescope.ingest.v1`, type `report` (§11.1), JSON:
+Every 60 seconds ([ADR10] line 98), and at once after an OpAMP reconnect, the receiver sends a
+custom message, capability `io.fuseone.fusescope.ingest.v1`, type `report`, strict JSON
+(§11.2 rules apply to its shape):
 
 ```json
 {
-  "policyVersion": 42,
+  "schemaVersion": 1,
+  "reportSequence": 1874,
   "generatedAt": "2026-11-03T12:01:00Z",
   "windowSeconds": 300,
+  "policy": { "version": 42, "status": "ok" },
   "applications": [
     {
       "id": "0191c5e2-7f0a-7c3e-9a51-3c2b1d4e5f60",
@@ -394,121 +446,175 @@ Every 60 seconds ([ADR10] line 98) the receiver sends one custom message, capabi
     }
   ],
   "keys": [ { "id": "0191c5e2-8a1b-7d2e-b0c4-5e6f7a8b9c0d", "lastUsedAt": "2026-11-03T12:00:59Z" } ],
+  "unknownKeys": { "count": 7, "lastSeenAt": "2026-11-03T12:00:12Z" },
   "dropped": { "applications": 0, "keys": 0 }
 }
 ```
 
-- `counts`, `sdk` and `rejections` are this replica's view of the last `windowSeconds`, kept in
-  one-minute buckets as the backend does ([B] `impl/monitor.go:12-17,98-144,179-192`). The
-  backend sums counts and rejection counts over the latest report of each replica and keeps the
-  newest `lastOrigin`/`lastSeenAt` and SDK. Field names are the backend's
-  (`rumtypes/status.go:37-59`) so it can reuse its types.
-- `firstSeenAt` is sent for an application the first time this process accepts data for it,
-  and again in every report until one carrying it was handed to the OpAMP client; the backend
-  keeps the earliest ([B] `impl/monitor.go:76-80,146-168`).
-- `keys` lists keys used since the last report sent, with the latest use; the same
-  hand-over-or-keep rule applies ([B] `impl/monitor.go:72-74,146-158`).
-- `policyVersion` is the version of the policy the receiver holds, which the backend compares
-  to decide whether to push again ([ADR10] line 64). It is not in the agent description,
-  whose changes make the backend recompute the configuration ([`opamp.md`](opamp.md) §3).
+- **Window values** (`counts`, `sdk`, `rejections`, `unknownKeys`) are this replica's view of
+  the last `windowSeconds`, in one-minute buckets as the backend keeps them ([B]
+  `impl/monitor.go:12-17,98-144,179-192`). Each report replaces the previous one from the same
+  agent; the backend sums the latest report of every agent, keeping the newest
+  `lastOrigin`/`lastSeenAt` and SDK. Field names are the backend's (`rumtypes/status.go:37-59`).
+- **Durable values** (`firstSeenAt` per application, `lastUsedAt` per key) are pending until
+  acknowledged (§10.4). Every report carries all pending values, so a report is an idempotent
+  snapshot: the backend keeps the earliest `firstSeenAt` and the latest `lastUsedAt`, and
+  applying the same report twice changes nothing ([B] `impl/monitor.go:72-80,146-168` keep and
+  restore pending values the same way).
+- **`policy`** is the revision held and whether the last policy received was accepted:
+  `status` `ok` or `rejected`, with `error` set to one code of §11.2 when rejected. The backend
+  compares `version` to decide whether to push again ([ADR10] line 64). It is not in the agent
+  description, whose changes make the backend recompute the configuration
+  ([`opamp.md`](opamp.md) §3).
 
-### 10.3 Bounds and PII **[G5]**
+### 10.3 Allowed fields and bounds **[G5]**
 
-- **No PII.** No IP address, user agent, URL, session ID, user ID, attribute value or payload
-  content. `sessions` is a count; session IDs never leave the process. **Differs:** the backend
-  counts distinct sessions in one process; summing replicas over-counts a session whose requests
-  reached several replicas (§13).
-- **SDK:** name at most 64 bytes, version at most 32; longer values are reported empty, and the
-  backend then shows `unknown`.
-- **`lastOrigin`, Differs.** Set only for the three reasons the setup screen shows it for:
-  - `origin_not_allowed`, `unknown_key`: the request's `Origin`, only when it parses as an
-    `http`/`https` `scheme://host[:port]` origin of at most 256 bytes, lower-cased; otherwise
-    empty;
-  - `package_not_allowed`: the refused `app.package.name`, only when it matches the package
-    name pattern of §5 and is at most 256 bytes; otherwise empty.
+The report is minimised, not anonymous: origin, package and SDK strings come from clients and
+can carry identifiers. Only these fields exist; anything else is a schema violation:
 
-  For every other reason it is empty. The backend stores the origin for all reasons ([B]
-  `impl/gateway.go:107-112`) and returns it through the API.
-- **Counts:** at most 10 000 distinct sessions per application per minute bucket ([B]
-  `impl/monitor.go:14,58-62`); rejections at most one entry per reason, seven reasons ([B]
-  `rumtypes/status.go:12-20`).
-- **Entries:** at most 1 000 applications and 10 000 keys per report ([B]
-  `impl/monitor.go:15` bounds pending key usage at 10 000). Applications are kept by most recent
-  activity, keys by most recent use; the rest are counted in `dropped` and, for `keys` and
-  `firstSeenAt`, kept for the next report.
-- **Size:** the encoded report is at most 256 KiB; when over, keys are dropped first, then the
-  least recently active applications, until it fits.
-- **[G4]:** keys appear only by ID; no verifier is reported either.
+| Field | Bound |
+|---|---|
+| `schemaVersion`, `reportSequence`, `generatedAt`, `windowSeconds` | fixed types |
+| `policy.version`, `policy.status`, `policy.error` | `error` one of the codes of §11.2 |
+| `applications[]` | at most 1 000 per report, most recently active first |
+| `applications[].id` | UUID from the policy |
+| `applications[].firstSeenAt` | timestamp |
+| `applications[].counts.{sessions,views,errors,vitals}` | integers; sessions from hashes, never IDs |
+| `applications[].sdk.name`, `.version` | 64 and 32 bytes (§7.1), else empty |
+| `applications[].rejections[]` | at most 6, one per reason |
+| `rejections[].reason`, `.count`, `.lastSeenAt` | enum, integer, timestamp |
+| `rejections[].lastOrigin` | `origin_not_allowed`: the `Origin` when it parses as an `http`/`https` `scheme://host[:port]` origin of at most 256 bytes, lower-cased; `package_not_allowed`: the `app.package.name` when it matches the pattern of §5 and is at most 256 bytes; empty in every other case |
+| `keys[]` | at most 10 000, most recent use first; `id` (UUID from the policy) and `lastUsedAt` |
+| `unknownKeys.count`, `.lastSeenAt` | integer, timestamp; no key, verifier or origin |
+| `dropped.applications`, `.keys` | integers |
+
+- Never present: IP addresses, user agents, URL paths or queries, session or user IDs, attribute
+  values, payload content, keys or verifiers ([G4], [G5]).
+- The encoded report is at most 256 KiB; when over, keys are dropped first, then the least
+  recently active applications, until it fits; dropped durable values stay pending.
+- **Differs.** The backend stores `lastOrigin` for every reason ([B] `impl/gateway.go:107-112`)
+  and for unknown keys; here it is set for two reasons only, validated and bounded.
+- **Retention.** The collector holds window values in memory for the status window (5 min) and
+  durable values until acknowledged; nothing is written to disk. The backend keeps
+  `lastOrigin` and the SDK strings no longer than the status window; `firstSeenAt` and
+  `lastUsedAt` are persisted on the application and the key, as today.
+
+### 10.4 Acknowledgement
+
+- `reportSequence` is a uint64, strictly increasing per agent across restarts: the collector
+  persists the next value in its storage directory, next to the OpAMP instance UID
+  ([ADR 0008](../adr/0008-opamp-remote-config.md) point 4), before sending a report with it.
+- The backend acknowledges with a custom message of the same capability, type `reportAck`:
+
+  ```json
+  { "schemaVersion": 1, "reportSequence": 1874 }
+  ```
+
+- **Backend, before acknowledging** ([M]): it applies the report idempotently (§10.2), then
+  persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only then
+  sends the ack. A report whose sequence is not above the persisted one for that agent changes
+  nothing and is acknowledged again. Acknowledging the same sequence twice changes nothing.
+- **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
+  whose report carried it arrives, and only if the value has not changed since (a newer
+  `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
+  never sent, or already processed, is ignored. Handing a report to the OpAMP client clears
+  nothing.
 
 ## 11. The ingest policy
 
 ### 11.1 Message
 
-An OpAMP custom message ([ADR10] §3, lines 62–65; [ADR9] line 80): the collector declares the
-custom capability `io.fuseone.fusescope.ingest.v1`; the backend sends messages of type `policy`
-(server to agent); the collector sends type `report` (§10). The `policy` data is a full
-snapshot, never a delta, pushed on any change, when the collector's `policyVersion` is behind,
+An OpAMP custom message ([ADR10] §3, lines 62–65; [ADR9] line 80; [ADR10 §10]): the collector
+declares the custom capability `io.fuseone.fusescope.ingest.v1`; the backend sends type
+`policy` and `reportAck`, the collector sends type `report`. The `policy` data is a full
+snapshot, never a delta, pushed on any change, when the collector's `policy.version` is behind,
 and every 5 minutes regardless ([ADR10] line 64). It is sent only to collectors of role `ingress`
 ([ADR10] line 62; [ADR9] line 79).
 
-Encoding: JSON (§13). Fields, from [ADR10] line 62 and what §§2–8 need:
+The policy is the remote authority for ingest authentication and identity (ADR 0006 decision
+3): it can add keys, widen origins and signals, set the org and the stamped name and
+environment. It cannot touch listeners, pipelines, destinations or outbound credentials.
 
-| Field | Type | Meaning |
+Encoding: JSON, schema v1, typed and strict ([M], resolved 1). Fields, from [ADR10] line 62,
+[ADR10 §10] and what §§2–8 need:
+
+| Field | Type | Rule |
 |---|---|---|
-| `version` | uint64 | the snapshot version; echoed as `policyVersion` in reports |
+| `schemaVersion` | integer | exactly `1` |
+| `version` | uint64 ≥ 1 | monotonic, durable revision (§11.3); echoed as `policy.version` in reports |
 | `issuedAt` | RFC 3339 | when the backend built it |
-| `keys[]` | | every usable key: active, or expiring within its rotation overlap ([B] `rumtypes/key.go:151-167`) |
-| `keys[].id` | UUID | key ID, stamped as `fusescope.ingest.key_id` |
-| `keys[].sha256` | 64 lowercase hex | verifier (§2) |
+| `keys[]` | | every usable key: active, or expiring within its rotation overlap ([B] `rumtypes/key.go:151-167`); never a revoked one ([M], resolved 7); at most 50 000 |
+| `keys[].id` | UUID | unique; stamped as `fusescope.ingest.key_id` |
+| `keys[].sha256` | 64 lowercase hex | unique (§2) |
 | `keys[].orgId` | UUID | org, for auth data |
 | `keys[].kind` | `secret` \| `public` \| `runner` | [ADR10] §2 |
-| `keys[].signals` | list of `traces`, `metrics`, `logs`, `profiles`, `artifacts` | for `public`: `traces`, `logs` |
+| `keys[].signals` | non-empty set of `traces`, `metrics`, `logs`, `profiles`, `artifacts` | no duplicates; `public`: a subset of `traces`, `logs` |
 | `keys[].expiresAt` | RFC 3339 or null | end of a rotation overlap |
-| `keys[].limit` | `{rate, burst}` or absent | this replica's share of the key's limit (§7) |
-| `keys[].applicationId` | UUID | `public` keys only: their RUM application |
-| `rumApplications[]` | | |
-| `rumApplications[].id`, `.orgId` | UUID | |
-| `rumApplications[].name`, `.environment` | string | stamping (§8.1), at most 128 and 64 bytes ([B] `rumtypes/application.go:17-18`) |
+| `keys[].limit` | `{rate > 0, burst ≥ 1}` or absent | this replica's share (§7) |
+| `keys[].applicationId` | UUID | required for `public`, absent otherwise; must name an application below |
+| `rumApplications[]` | | at most 10 000 |
+| `rumApplications[].id` | UUID | unique |
+| `rumApplications[].orgId` | UUID | equal to the `orgId` of every key naming it |
+| `rumApplications[].name` | string, 1–128 bytes | trimmed ([B] `rumtypes/application.go:17,385-388`) |
+| `rumApplications[].environment` | string, 1–64 bytes | trimmed ([B] `rumtypes/application.go:18,389-391`) |
 | `rumApplications[].platform` | `web` \| `android` | |
-| `rumApplications[].allowedOrigins` | list | web only (§4) |
-| `rumApplications[].allowedPackageNames` | list | android only (§5) |
-| `rumApplications[].piiPolicy` | `{dropQuery, queryAllowlist, urlAllowlist, …}` | §8.2; other fields ignored |
+| `rumApplications[].allowedOrigins` | list, ≤ 50 | §4 rules; empty for `android` |
+| `rumApplications[].allowedPackageNames` | list, ≤ 50 | §5 rules; empty for `web` |
+| `rumApplications[].piiPolicy` | `{dropQuery, queryAllowlist, urlAllowlist}` | lists ≤ 50; query names non-empty; URL prefixes absolute `http`/`https` ([B] `rumtypes/application.go:395-415,436-442`); no other field in v1 |
 
-`name` and `environment` go beyond the list in [ADR10] line 62, which names origins, package
-names, platform and PII policy; stamping (§8.1) needs them.
+`name` and `environment` go beyond the list in [ADR10] line 62; they are needed for parity
+(§8.1) and added by [ADR10 §10] ([M], resolved 3). `geoLookup`, `requireConsent` and
+`hashUserId` are not in v1 (§8.2), so the backend must not send them.
 
-### 11.2 Validation: restrict only
+### 11.2 Validation: whole snapshot, strict
 
-- The policy can only restrict what is accepted ([ADR 0006](../adr/0006-single-ingress.md)
-  decision 3). It never adds or changes receivers, exporters, extensions, endpoints or
-  pipelines, and it is never part of the effective configuration the collector reports.
-- A message that does not parse, or is larger than `max_policy_size` (local configuration,
-  default 16 MiB; [ADR10] line 64 estimates 2 MB at 10 000 keys), is rejected whole: the policy
-  held stays in force, and the rejection is logged without content.
-- Within a parsed policy, an entry that fails validation is dropped, which only refuses more:
-  a key with a malformed verifier, an unknown kind, or a `public` key whose application is
-  missing or dropped; an application with an unknown platform, invalid origins or package
-  names (§4, §5), or more than 50 entries in a list. Dropped entries are counted in a metric,
-  never logged with their values.
-- A valid policy replaces the one held, whatever its `version`: the backend is the authority,
-  and the policy can only restrict.
+A snapshot is accepted whole or rejected whole; nothing is applied from a rejected one, and the
+policy held, if any, stays in force ([M]). It is rejected, with the `policy.error` code
+reported (§10.2) and a log line without content, when:
 
-### 11.3 Cache and fail closed
+| Code | Condition |
+|---|---|
+| `too_large` | the data is over `max_policy_size`, 16 MiB ([M], resolved 1; [ADR10] line 64 estimates 2 MB at 10 000 keys) |
+| `parse_error` | it is not valid JSON of the v1 types |
+| `schema_version` | `schemaVersion` is missing or not `1` |
+| `unknown_field` | any object, at any depth, has a field v1 does not define: ignoring a new field could ignore a new restriction |
+| `lower_version` | `version` is below the highest accepted (§11.3) |
+| `version_conflict` | `version` equals the highest accepted but the content hash differs |
+| `duplicate_id` | two keys, or two applications, share an `id` |
+| `duplicate_verifier` | two keys share a `sha256` |
+| `dangling_reference` | a `public` key's `applicationId` names no application, or a non-public key has one |
+| `org_mismatch` | a key's `orgId` differs from its application's |
+| `invalid_value` | any other rule of §11.1 fails (formats, enums, sizes, list lengths, origin and package rules) |
 
-- **Cache** ([ADR10] line 74): every accepted policy is written to
-  `<storage>/ingest-policy.json`, mode `0600`, atomically (temporary file renamed over the old
-  one, as [ADR 0008](../adr/0008-opamp-remote-config.md) point 4 does for pushes). It holds the
-  policy as received: verifiers only, never a key, since the message carries none. It is never
-  logged or reported.
-- **At start** the cache is read and validated like a pushed policy (§11.2) and used until the
-  backend pushes. A lost OpAMP connection keeps the policy held in use ([ADR10] line 74).
-- **[G1] Fail closed.** With no policy held, none received and none cached, or a cache that
-  cannot be read or validated, `rumreceiver` refuses every request: POST with **503** and
-  `Retry-After: 5`, preflight with **403**. Nothing is counted in the report, since no
-  application is known. `ingestauth` refuses likewise, in every mode. **Differs** from
-  [ADR10] line 75, which accepts in `permissive` and `warn`.
-- **Staleness** ([ADR10] line 74): the policy's age is exported as a metric. An optional
-  `max_staleness`, with no default, makes the receiver refuse with 503 once the policy is older.
+### 11.3 Revision and cache
+
+- The content hash is the SHA-256 of the message's `data` bytes as received. The backend sends
+  identical bytes for the same `version`.
+- A snapshot whose `version` equals the highest accepted and whose hash matches is a no-op
+  (it refreshes the policy's last-received time, for staleness). One with a higher version that
+  passes §11.2 replaces the policy held.
+- **Cache** ([ADR10] line 74): an accepted policy is written to `<storage>/ingest-policy.json`
+  (the data bytes), then `<storage>/ingest-policy.state` with `{version, sha256}`, the highest
+  accepted revision. Both mode `0600`, each written atomically (temporary file renamed over the
+  old one, as [ADR 0008](../adr/0008-opamp-remote-config.md) point 4 does for pushes). They hold
+  verifiers only, never a key, since the message carries none, and are never logged or
+  reported.
+- **At start** the state file is read first; the cached policy is used only if its hash
+  equals the state's and it passes §11.2 (its version then equals the floor). It is used until
+  the backend pushes. A lost OpAMP connection keeps the policy held in use ([ADR10] line 74).
+  If the state file is missing or unreadable, the collector starts with no policy and no floor
+  and logs an error; the next valid push sets both.
+
+### 11.4 Fail closed and staleness
+
+- **[G1].** With no valid policy (none received and none cached, or a cache rejected at start),
+  `rumreceiver` refuses every request: POST with **503** and `Retry-After: 5`, preflight with
+  **403**. Nothing is counted in the report beyond `policy.status`. `ingestauth` refuses
+  likewise, in every mode. The collector reports not ready (health check), and the chart routes
+  `/rum/v1` to it only once it holds a valid policy; the backend is deployed and publishing
+  first ([M], resolved 4). **Differs** from [ADR10] line 75, amended by [ADR10 §10].
+- **Staleness** ([ADR10] line 74): the policy's age since last received is exported as a metric.
+  An optional `max_staleness`, with no default, makes the receiver refuse with 503 once older.
 - Revocation reaches a connected collector within 10 s p95 ([ADR10] line 65); during an outage,
   revoked keys keep working from the cache until the connection returns or `max_staleness`
   passes.
@@ -517,59 +623,64 @@ names, platform and PII policy; stamping (§8.1) needs them.
 
 | # | Backend at `6c8991257` | Here | Why |
 |---|---|---|---|
-| 1 | Key lookup in the database with a 30 s cache; first request after start always answers | Keys from the ingest policy; with no policy, every request refused (503) | [G1], [ADR10] §3–4 |
-| 2 | `X-Forwarded-For` first address, from any peer when `trust_forwarded_for` is on (`pkg/ratelimit/ratelimit.go:16-31`) | Only from peers in `trusted_proxies` (default none), walked right to left | [G2] |
-| 3 | Per-key limit in each backend replica, full value | Policy's per-replica share | [ADR10] §4 |
-| 4 | Forward to the collector, status mapped from its HTTP answer | Next consumer; permanent errors 400, others 503 | no extra hop, [ADR10] §6 |
-| 5 | Setup status in memory per backend replica, `lastOrigin` kept for every reason | Report over OpAMP every minute; `lastOrigin` only for the three reasons the UI shows, validated and bounded; no session IDs | [ADR10] §6, [G5] |
-| 6 | Revoked or expired keys known to the database, counted as `bad_key` on their application | Revoked keys absent from the policy, counted as `unknown_key` by origin; expired ones still `bad_key` while listed | [ADR10] line 62 lists usable keys only |
-| 7 | No `fusescope.ingest.key_id`, no org in auth data | Both stamped | [ADR10] §4 |
-| 8 | Unknown-key preflight and attribution read applications of all orgs from the database | Same rule, from the policy | [B] `impl/module.go:186-213` |
+| 1 | Key lookup in the database with a 30 s cache; the gateway always answers | Keys from a strict, versioned policy; with none valid, every request refused (503) and not ready | [G1], [ADR10 §10] |
+| 2 | Key in the header or the `fusescope_rum_key` query parameter | Header only; preflight allowed by origin alone | [G4], [Fetch], [ADR10 §10] |
+| 3 | `X-Forwarded-For` first address, from any peer when `trust_forwarded_for` is on (`pkg/ratelimit/ratelimit.go:16-31`) | Only from peers in `trusted_proxies` (default none), walked right to left | [G2] |
+| 4 | Per-key limit in each backend replica, full value; per-IP buckets per exact address, map unbounded until the idle sweep | Policy's per-replica share; IPv6 by /64; bucket map capped with LRU eviction | [ADR10] §4, [G6] |
+| 5 | Session IDs stored as strings; strings stored unbounded | 64-bit hashes; strings bounded before storing; connection, request and timeout limits | [G6] |
+| 6 | Forward to the collector, status mapped from its HTTP answer | Next consumer; permanent errors 400, others 503 | no extra hop, [ADR10] §6 |
+| 7 | Setup status in memory per backend replica; `lastOrigin` kept for every reason; unknown keys counted on every application allowing the origin, across orgs | Report over OpAMP every minute with sequence and ack; `lastOrigin` for two reasons, validated and bounded; unknown keys as one global counter | [ADR10] §6, [G5], [M] |
+| 8 | Revoked keys known to the database, counted as `bad_key` | Not in the policy, so unknown; expired ones still `bad_key` while listed | [M], resolved 7 |
+| 9 | No `fusescope.ingest.key_id`, no org in auth data | Both stamped | [ADR10] §4 |
+| 10 | Browser bundle served at `/rum/v1/sdk/browser/…` | Not served; CDN | [M], resolved 11 |
 
-## 13. Open questions
+## 13. Decisions and follow-ups
 
-1. **Policy encoding and limits.** JSON as proposed, or protobuf? Confirm `max_policy_size`
-   (16 MiB) against the OpAMP WebSocket message limits of both sides, and the report bounds of
-   §10.3 (1 000 applications, 10 000 keys, 256 KiB) against the backend's needs.
-2. **Who validates RUM keys:** `rumreceiver` against the shared policy (as specified), or
-   `ingestauth` with a RUM key extractor (header or query)? Either way one policy store.
-3. **Per-client-IP limit across replicas.** It stays a local, per-replica limit; with N replicas
-   behind a round-robin balancer a client gets up to N times it. Accept, or have the backend
-   send a share as for keys ([ADR10] open question on shared counters)? Bucket IPv6 clients by
-   /64? Cap the number of buckets (the backend's limiter grows with distinct identities until
-   the 10-minute sweep)?
-4. **Sessions across replicas.** Summed per-replica distinct counts over-count; a mergeable
-   sketch (HyperLogLog) would fix it without sending IDs. Needed for the setup screen?
-5. **Revoked keys** (§12 row 6): should the policy list recently revoked keys for a while, so
-   the screen keeps saying `bad_key` on the right application?
-6. **Requests without `Origin` for web applications** are accepted (§4). Origins are a browser
-   control and any non-browser client can forge them, so this is not a hole the backend closes
-   either; confirm it stays.
-7. **Unscrubbed fields:** log bodies and scope attributes are not scrubbed today (§8.2). Extend
-   the scrubbing, which would change stored data, or keep parity?
-8. **`geoLookup`:** stored but not implemented by the backend. Implement in the receiver (needs a
-   GeoIP database and its licence, ADR 0005) or drop the flag?
-9. **Browser bundle** (§1): serve it from the receiver ([ADR10] line 99) or rely on the CDN
-   ([ADR10] open question)? Embedding the `@fusescope/browser` build (Apache-2.0) is a new
-   dependency of the build, to be approved first.
-10. **Cross-org attribution** of unknown keys (§10.1): an unknown key from origin X is counted
-    on every org's application allowing X. Keep, or restrict to one org when the collector
-    serves several?
-11. **Upgrade order** (ADR 0006 consequences): with fail closed, the backend must publish the
-    policy before `ingestauth` reaches an install, including in-cluster agents on the internal
-    `permissive` listener. Does the chart gate on it?
-12. **Query-string keys at the edge:** `fusescope_rum_key` in the URL can land in the access logs
-    of a load balancer or ingress controller in front of the collector. Document it for
-    operators, or ask the SDK to stop using the query parameter (the browser SDK already sends
-    the header with `fetch(…, { keepalive: true })`, [SDK] lines 187–189)?
+Resolved by the maintainer on PR #41:
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Policy encoding and limits | JSON schema v1, typed and strict, with `schemaVersion` and a monotonic revision, 16 MiB cap (§11). **Requirement for step 2:** an integration test that sends a policy at the maximum size through OpAMP end to end and checks it is accepted, cached and applied. |
+| 2 | Who validates RUM keys | `rumreceiver`, against the same immutable policy store as `ingestauth` (§2) |
+| 3 | `name` and `environment` in the policy | included, sizes validated; ADR 0010 amended (§11.1) |
+| 4 | Upgrade order | backend first; a collector without a policy is not ready; the chart routes `/rum/v1` only after a valid policy (§11.4) |
+| 5 | Rate limits across replicas | local per replica, per-key share from the policy; IPv6 by /64; bucket map globally bounded (§7, §7.1) |
+| 6 | Sessions across replicas | exact local count over fixed-size hashes; the small over-count across replicas is accepted; no HyperLogLog now (§8.6) |
+| 7 | Revoked keys | not published in `keys[]`, counted as unknown; revocation metadata may come later, in a structure that can never authorise (§2) |
+| 8 | Requests without `Origin` | kept, for parity: `Origin` is not authentication (§4) |
+| 9 | Scrubbing beyond the backend's | parity now (§8.2); separate improvement below |
+| 10 | GeoIP | not implemented, not in schema v1 (§8.2) |
+| 11 | Browser bundle | CDN at first; no new dependency in this phase (§1) |
+| 12 | Unknown keys | never attributed to applications; one bounded global counter (§10.1) |
+| 13 | Query-string key | removed (§2) |
+
+Follow-ups, out of this spec:
+
+- Extra scrubbing (log bodies, scope attributes, more URL-bearing attributes): a separate
+  improvement, since it changes stored data.
+- Dropping `text/plain` (§6), kept only for parity now that no SDK uses `sendBeacon`.
+- Backend: consume `report`, send `reportAck` under §10.4, show the global unknown-key counter in
+  the setup screen, and move its own rate limiter to trusted proxies only ([ADR10 §10]).
+
+Still open:
+
+- The defaults of §7.1 (connections, requests, bucket cap) are first estimates; confirm them
+  with the step 2 load benchmark.
 
 ## 14. Tests to port
 
 Table-driven, next to the code ([B] files, adapted to `rumreceiver`):
-`impl/gateway_test.go` (auth and CORS, unknown-key attribution, preflight, rate limit,
-decoding, `event.name`, consumer failures, Android package names), `impl/otlp_test.go`,
-`impl/otlp_mobile_test.go`, `impl/monitor_test.go`, `rumtypes/pii_test.go`,
-`rumtypes/application_test.go`, `rumtypes/key_test.go`, `pkg/ratelimit/*_test.go`. New ones for
-§7 trusted proxies, §10.3 bounds and PII, §11 validation, cache and fail closed, and a test that
-no log line, span or metric of the receiver contains the key, the query string or the client IP
-([G4], [G5]).
+`impl/gateway_test.go` (auth and CORS, preflight, rate limit, decoding, `event.name`, consumer
+failures, Android package names), `impl/otlp_test.go`, `impl/otlp_mobile_test.go`,
+`impl/monitor_test.go`, `rumtypes/pii_test.go`, `rumtypes/application_test.go`,
+`rumtypes/key_test.go`, `pkg/ratelimit/*_test.go`. Dropped: the query-key cases
+(`QueryKeyForBeacon_Accepted`, `QueryKeyOtherOrigin_Forbidden`, `impl/gateway_test.go:111,194`)
+become "query key ignored, 401" and "preflight by origin only", and the per-application
+unknown-key cases (`impl/gateway_test.go:144-149`) become global-counter cases.
+
+New ones: trusted proxies and IPv6 /64 grouping (§7); every bound of §7.1; the allowed report
+fields and bounds (§10.3); the ack protocol, including repeated and unknown acks and values
+changed after a report (§10.4); every rejection code of §11.2; revision, cache and floor
+handling at start (§11.3); fail closed and readiness (§11.4); the maximum-size policy
+integration test (§13, decision 1); and a test that no log line, span or metric of the receiver
+contains a key, a verifier, the request URL or a client IP ([G4], [G5]).
