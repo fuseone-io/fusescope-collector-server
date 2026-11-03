@@ -71,3 +71,58 @@ func TestEmptyResourceGroupsMemory(t *testing.T) {
 		})
 	}
 }
+
+// Maintainer review of #43: the worst a request can allocate at the
+// structural ceiling (elements_per_request 25 000), whatever the kind of
+// element, and with one large string filling the body. Together with
+// limits.requests this bounds the memory in flight (rum.md §7.1).
+func TestWorstCaseAllocationAtCeiling(t *testing.T) {
+	m := maxStructure
+	shapes := map[string]shape{
+		"Attributes":    {resources: 1, scopes: 1, items: 193, itemAttrs: m.attributes},
+		"Events":        {resources: 1, scopes: 1, items: 193, events: m.eventsPerSpan},
+		"Links":         {resources: 1, scopes: 1, items: 193, links: m.linksPerSpan},
+		"EmptySpans":    {resources: 1, scopes: 1, items: m.items},
+		"ResourceAttrs": {resources: m.resources, resourceAttrs: 23},
+		"EmptyScopes":   {resources: 240, scopes: m.scopesPerResource},
+		"ArrayValues":   {resources: 1, scopes: 1, items: 1, arrayLen: m.attributes},
+	}
+	for name, s := range shapes {
+		for _, enc := range []string{"application/json", "application/x-protobuf"} {
+			t.Run(name+"/"+enc, func(t *testing.T) {
+				body := []byte(s.json())
+				if enc != "application/json" {
+					body = s.proto()
+				}
+				f := newFixture(t, func(cfg *Config) { cfg.MaxBodySize = 64 << 20 })
+				code, bytes := allocated(t, f, enc, body)
+				t.Logf("%s %s: body %d bytes, status %d, allocated %.1f MiB", name, enc, len(body), code, float64(bytes)/(1<<20))
+				require.Equal(t, http.StatusOK, code, "within the ceiling")
+				limit := uint64(worstCaseElements)
+				if raceEnabled {
+					limit += 2 * uint64(len(body))
+				}
+				assert.Less(t, bytes, limit, "allocation at the ceiling")
+			})
+		}
+	}
+	t.Run("OneLargeString", func(t *testing.T) {
+		value := strings.Repeat("v", 4<<20-200)
+		body := []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"s","attributes":[{"key":"k","value":{"stringValue":"` + value + `"}}]}]}]}]}`)
+		f := newFixture(t, nil)
+		code, bytes := allocated(t, f, "application/json", body)
+		t.Logf("one large string: body %d bytes, status %d, allocated %.1f MiB", len(body), code, float64(bytes)/(1<<20))
+		require.Equal(t, http.StatusOK, code)
+		limit := uint64(worstCaseBody)
+		if raceEnabled {
+			limit += 2 * uint64(len(body))
+		}
+		assert.Less(t, bytes, limit, "the body and its decoded copy")
+	})
+}
+
+// Thresholds the in-flight bound of rum.md §7.1 is built on.
+const (
+	worstCaseElements = 6 << 20  // a request at the structural ceiling: measured up to 5.0 MiB
+	worstCaseBody     = 10 << 20 // a 4 MiB body, its buffer and decoded copy: measured 8.0 MiB
+)

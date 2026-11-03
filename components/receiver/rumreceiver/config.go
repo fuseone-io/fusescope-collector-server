@@ -103,7 +103,7 @@ func createDefaultConfig() component.Config {
 			SessionsPerBucket:   10_000,
 			PendingKeys:         10_000,
 			Connections:         4096,
-			Requests:            512,
+			Requests:            16,
 			HeaderReadTimeout:   10 * time.Second,
 			BodyReadTimeout:     30 * time.Second,
 			WriteTimeout:        30 * time.Second,

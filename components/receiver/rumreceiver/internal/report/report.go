@@ -255,62 +255,87 @@ func Merge(pages [][]byte) (Report, error) {
 	if len(pages) == 0 {
 		return Report{}, errors.New("no page")
 	}
-	var merged, header Report
-	byPage := map[int][]byte{}
-	apps, keys := map[string]bool{}, map[string]bool{}
-	for i, data := range pages {
-		if len(data) > MaxPageBytes {
-			return Report{}, fmt.Errorf("page %d is %d bytes", i+1, len(data))
-		}
-		r, err := decodePage(data)
-		if err != nil {
+	var m merger
+	for _, data := range pages {
+		if _, err := m.add(data); err != nil {
 			return Report{}, err
 		}
-		if r.Pages < 1 || r.Pages > MaxPages || r.Page < 1 || r.Page > r.Pages {
-			return Report{}, fmt.Errorf("page %d of %d is out of range", r.Page, r.Pages)
-		}
-		if prev, ok := byPage[r.Page]; ok {
-			if !bytes.Equal(prev, data) {
-				return Report{}, fmt.Errorf("page %d received twice with different content", r.Page)
-			}
-			continue
-		}
-		byPage[r.Page] = data
-		head := r
-		head.Applications, head.Keys, head.Page = nil, nil, 0
-		if len(byPage) == 1 {
-			header = head
-		} else if !reflect.DeepEqual(head, header) {
-			return Report{}, fmt.Errorf("page %d header differs", r.Page)
-		}
-		for _, a := range r.Applications {
-			if apps[a.ID] {
-				return Report{}, fmt.Errorf("application %s in two pages", a.ID)
-			}
-			apps[a.ID] = true
-		}
-		for _, k := range r.Keys {
-			if keys[k.ID] {
-				return Report{}, fmt.Errorf("key %s in two pages", k.ID)
-			}
-			keys[k.ID] = true
-		}
-		merged.Applications = append(merged.Applications, r.Applications...)
-		merged.Keys = append(merged.Keys, r.Keys...)
 	}
-	if len(byPage) != header.Pages {
-		return Report{}, fmt.Errorf("%d of %d pages", len(byPage), header.Pages)
+	return m.result()
+}
+
+// merger validates the pages of one sequence as they come.
+type merger struct {
+	header Report
+	byPage map[int][]byte
+	apps   map[string]bool
+	keys   map[string]bool
+	merged Report
+	size   int
+}
+
+// add takes one page; repeat reports an identical copy of a page held.
+func (m *merger) add(data []byte) (repeat bool, err error) {
+	if len(data) > MaxPageBytes {
+		return false, fmt.Errorf("a page is %d bytes", len(data))
 	}
-	apps1, keys1 := merged.Applications, merged.Keys
-	merged = header
-	merged.Applications, merged.Keys = apps1, keys1
-	if merged.Applications == nil {
-		merged.Applications = []ApplicationReport{}
+	r, err := decodePage(data)
+	if err != nil {
+		return false, err
 	}
-	if merged.Keys == nil {
-		merged.Keys = []KeyReport{}
+	if r.Pages < 1 || r.Pages > MaxPages || r.Page < 1 || r.Page > r.Pages {
+		return false, fmt.Errorf("page %d of %d is out of range", r.Page, r.Pages)
 	}
-	return merged, nil
+	if m.byPage == nil {
+		m.byPage, m.apps, m.keys = map[int][]byte{}, map[string]bool{}, map[string]bool{}
+	}
+	if prev, ok := m.byPage[r.Page]; ok {
+		if !bytes.Equal(prev, data) {
+			return false, fmt.Errorf("page %d received twice with different content", r.Page)
+		}
+		return true, nil
+	}
+	head := r
+	head.Applications, head.Keys, head.Page = nil, nil, 0
+	if len(m.byPage) == 0 {
+		m.header = head
+	} else if !reflect.DeepEqual(head, m.header) {
+		return false, fmt.Errorf("page %d header differs", r.Page)
+	}
+	for _, a := range r.Applications {
+		if m.apps[a.ID] {
+			return false, fmt.Errorf("application %s in two pages", a.ID)
+		}
+		m.apps[a.ID] = true
+	}
+	for _, k := range r.Keys {
+		if m.keys[k.ID] {
+			return false, fmt.Errorf("key %s in two pages", k.ID)
+		}
+		m.keys[k.ID] = true
+	}
+	m.byPage[r.Page] = data
+	m.size += len(data)
+	m.merged.Applications = append(m.merged.Applications, r.Applications...)
+	m.merged.Keys = append(m.merged.Keys, r.Keys...)
+	return false, nil
+}
+
+func (m *merger) complete() bool { return len(m.byPage) > 0 && len(m.byPage) == m.header.Pages }
+
+func (m *merger) result() (Report, error) {
+	if !m.complete() {
+		return Report{}, fmt.Errorf("%d of %d pages", len(m.byPage), m.header.Pages)
+	}
+	out := m.header
+	out.Applications, out.Keys = m.merged.Applications, m.merged.Keys
+	if out.Applications == nil {
+		out.Applications = []ApplicationReport{}
+	}
+	if out.Keys == nil {
+		out.Keys = []KeyReport{}
+	}
+	return out, nil
 }
 
 // decodePage decodes one page strictly. encoding/json matches field names

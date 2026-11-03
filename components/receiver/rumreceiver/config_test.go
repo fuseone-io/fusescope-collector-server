@@ -23,11 +23,11 @@ func TestConfigDefaults(t *testing.T) {
 	assert.Zero(t, cfg.MaxStaleness, "max_staleness has no default")
 	assert.Equal(t, LimitsConfig{
 		ClientBuckets: 100_000, SessionsPerBucket: 10_000, PendingKeys: 10_000,
-		Connections: 4096, Requests: 512,
+		Connections: 4096, Requests: 16,
 		HeaderReadTimeout: 10 * time.Second, BodyReadTimeout: 30 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
 		ResourcesPerRequest: 1000, ScopesPerResource: 100, ItemsPerRequest: 10_000, EventsPerSpan: 128,
-		LinksPerSpan: 128, AttributesPerEntity: 128, ElementsPerRequest: 100_000, ValueDepth: 8,
+		LinksPerSpan: 128, AttributesPerEntity: 128, ElementsPerRequest: 25_000, ValueDepth: 8,
 	}, cfg.Limits)
 	assert.Equal(t, "1.3", cfg.TLS.MinVersion)
 }
@@ -95,7 +95,7 @@ func TestConfigValidate(t *testing.T) {
 		{name: "EventsOverMax", edit: func(c *Config) { c.Limits.EventsPerSpan = 129 }, err: "limits.events_per_span"},
 		{name: "LinksOverMax", edit: func(c *Config) { c.Limits.LinksPerSpan = 129 }, err: "limits.links_per_span"},
 		{name: "AttributesOverMax", edit: func(c *Config) { c.Limits.AttributesPerEntity = 129 }, err: "limits.attributes_per_entity"},
-		{name: "ElementsOverMax", edit: func(c *Config) { c.Limits.ElementsPerRequest = 100_001 }, err: "limits.elements_per_request"},
+		{name: "ElementsOverMax", edit: func(c *Config) { c.Limits.ElementsPerRequest = 25_001 }, err: "limits.elements_per_request"},
 		{name: "ValueDepthOverMax", edit: func(c *Config) { c.Limits.ValueDepth = 9 }, err: "limits.attribute_value_depth"},
 		{name: "ValueDepthZero", edit: func(c *Config) { c.Limits.ValueDepth = 0 }, err: "limits.attribute_value_depth"},
 		{name: "NoHeaderTimeout", edit: func(c *Config) { c.Limits.HeaderReadTimeout = 0 }, err: "limits.header_read_timeout"},

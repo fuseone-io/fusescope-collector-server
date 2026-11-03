@@ -30,7 +30,7 @@ var maxStructure = structureLimits{
 	eventsPerSpan:     128,
 	linksPerSpan:      128,
 	attributes:        128,
-	elements:          100_000,
+	elements:          25_000,
 	valueDepth:        8,
 }
 
