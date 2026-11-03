@@ -26,6 +26,7 @@ Every rule cites one of:
 - **[G1]**–**[G6]**: the security gates of [ADR 0006](../adr/0006-single-ingress.md#security-gates).
 - **[OTLP]**: the OTLP specification, OTLP/HTTP (response codes, `Retry-After`).
 - **[M]**: a maintainer decision recorded in ADR 0006 or on PR #41, with no other source.
+  **[M43]**: a maintainer decision in the review of PR #43 (step 2).
 
 A rule marked **Differs** is a deliberate change from the backend, listed again in §12.
 
@@ -63,6 +64,12 @@ allowed (ADR 0005), but nothing needs them.
   and concurrency limits of §7.1: preflight; policy present (§11.4); key; origin; rate limits;
   content type; body; decoding; package names; processing; pipeline. A request refused at one
   step is not examined further.
+- **TLS.** The listener serves TLS 1.3 only, with no plaintext option ([ADR 0004](../adr/0004-security-baseline.md);
+  [M43]). Unlike ClickHouse ([ADR 0007](../adr/0007-clickhouse-plaintext-for-migration.md)),
+  no existing deployment needs an exception. Deployment: the public proxy (Caddy) terminates
+  the client's TLS and opens a second TLS connection to the collector that validates the
+  collector's certificate; mutual TLS on that hop is recommended. The proxy's addresses go in
+  `trusted_proxies` (§7).
 - The browser bundle route of the backend (`/rum/v1/sdk/browser/{version}/…`) is not served:
   the CDN serves it in this phase, with no new build dependency ([M], resolved 11; [ADR10 §10]).
 
@@ -91,6 +98,10 @@ allowed (ADR 0005), but nothing needs them.
   unknown ([M], resolved 7).
 - Missing, malformed, unknown or expired: **401** ([B] `impl/gateway.go:89-94`,
   `pkg/http/render/render.go:103`; test `impl/gateway_test.go:108-109`).
+- **Differs.** A valid key without the request's signal in its `signals` (for example a
+  logs-only key on `/rum/v1/traces`) is refused with **403**, reason `signal_not_allowed`, on
+  its application: authorisation, not authentication. The key is public, so telling it apart
+  from an invalid key helps no enumeration ([M43]).
 - Only keys of kind `public` are accepted on these routes; secret and runner keys are refused
   like unknown keys ([ADR10] §2 table, line 50: public keys for "RUM traces and logs, on the RUM
   routes only").
@@ -240,8 +251,8 @@ configuration ([M]):
 | Session IDs per application per minute bucket | 10 000 ([B] `impl/monitor.go:14,58-62`), stored as 64-bit hashes (`hash/maphash`, per-process seed) | further sessions not counted |
 | Per-application monitors | one per RUM application of the current policy (≤ 10 000), dropped when it leaves the policy | none for applications outside the policy |
 | Unknown keys | one global counter and last-seen time; no per-key or per-origin state | — |
-| Rejections per application | one entry per reason, six reasons (§10.1) | — |
-| Pending key usage for the report | 10 000 keys ([B] `impl/monitor.go:15`) | oldest use evicted, counted in `dropped` |
+| Rejections per application | one entry per reason, seven reasons (§10.1) | — |
+| Pending key usage for the report | 10 000 keys ([B] `impl/monitor.go:15`) | oldest use evicted, counted in `dropped.keys` |
 | `Origin` | 256 bytes, checked before matching or storing | matches nothing; observed as empty |
 | `app.package.name` | 256 bytes, checked before matching or storing | refused; observed as empty |
 | SDK name / version | 64 / 32 bytes, checked before storing | stored as empty |
@@ -365,6 +376,7 @@ receiver's pipeline, with no extra hop ([ADR10] §6, line 94). The data is count
 | Key missing or malformed | 401 | none | §2 |
 | Key unknown or of a wrong kind | 401 | global `unknownKeys` | §2, §10.1 |
 | Key expired | 401 | `bad_key` on its application | §2 |
+| Key valid, signal not in its `signals` | 403 | `signal_not_allowed` | §2 |
 | Origin not allowed (incl. any `Origin` on Android) | 403 | `origin_not_allowed` | §4, §5 |
 | Package name missing or not allowed | 403 | `package_not_allowed` | §5 |
 | Rate limited | 429, `Retry-After: 1` | `rate_limited` | §7 |
@@ -413,9 +425,9 @@ the key's application.
 
 **Differs.** Unknown keys are never attributed to applications: they increment one bounded
 global counter, with no origin, which avoids one tenant's traffic showing up on another
-tenant's setup screen ([M], resolved 12). The six per-application reasons are `bad_key`,
+tenant's setup screen ([M], resolved 12). The seven per-application reasons are `bad_key`,
 `origin_not_allowed`, `package_not_allowed`, `rate_limited`, `too_large`, `invalid_payload`
-([B] `rumtypes/status.go:12-20`, less `unknown_key`). The UI's unknown-key line needs a backend
+([B] `rumtypes/status.go:12-20`, less `unknown_key`) and `signal_not_allowed` (§2, [M43]). The UI's unknown-key line needs a backend
 follow-up to show the global counter instead.
 
 Today each backend replica keeps this in memory and answers only for itself ([B]
@@ -425,13 +437,16 @@ collector, aggregated by the backend across replicas.
 ### 10.2 Report
 
 Every 60 seconds ([ADR10] line 98), and at once after an OpAMP reconnect, the receiver sends a
-custom message, capability `io.fuseone.fusescope.ingest.v1`, type `report`, strict JSON
-(§11.2 rules apply to its shape):
+report: one logical report, sent as one or more custom messages, capability
+`io.fuseone.fusescope.ingest.v1`, type `report`, each a **page** of strict JSON (§11.2 rules
+apply to its shape) of at most 256 KiB ([M43]):
 
 ```json
 {
   "schemaVersion": 1,
   "reportSequence": 1874,
+  "page": 1,
+  "pages": 1,
   "generatedAt": "2026-11-03T12:01:00Z",
   "windowSeconds": 300,
   "policy": { "version": 42, "status": "ok" },
@@ -448,9 +463,17 @@ custom message, capability `io.fuseone.fusescope.ingest.v1`, type `report`, stri
   ],
   "keys": [ { "id": "0191c5e2-8a1b-7d2e-b0c4-5e6f7a8b9c0d", "lastUsedAt": "2026-11-03T12:00:59Z" } ],
   "unknownKeys": { "count": 7, "lastSeenAt": "2026-11-03T12:00:12Z" },
-  "dropped": { "applications": 0, "keys": 0 }
+  "dropped": { "keys": 0 }
 }
 ```
+
+- **Pages.** Every page of a report carries the same `reportSequence`, `pages`,
+  `generatedAt`, `windowSeconds`, `policy`, `unknownKeys` and `dropped`; `page` runs from 1 to
+  `pages`. `applications` and `keys` are split between the pages, each entry in exactly one
+  page. The backend applies a report only once it holds every page of its sequence, as if it
+  were one message; pages of an older sequence it has not completed are discarded. Every report
+  carries every active application and every pending key, so none is starved by newer ones
+  ([M43]).
 
 - **Window values** (`counts`, `sdk`, `rejections`, `unknownKeys`) are this replica's view of
   the last `windowSeconds`, in one-minute buckets as the backend keeps them ([B]
@@ -477,7 +500,7 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 |---|---|
 | `schemaVersion`, `reportSequence`, `generatedAt`, `windowSeconds` | fixed types |
 | `policy.version`, `policy.status`, `policy.error` | `error` one of the codes of §11.2 |
-| `applications[]` | at most 1 000 per report, most recently active first |
+| `applications[]` | every application of the policy active in the window or with a pending `firstSeenAt` (so at most 10 000), most recently active first, across pages |
 | `applications[].id` | UUID from the policy |
 | `applications[].firstSeenAt` | timestamp |
 | `applications[].counts.{sessions,views,errors,vitals}` | integers; sessions from hashes, never IDs |
@@ -485,14 +508,16 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 | `applications[].rejections[]` | at most 6, one per reason |
 | `rejections[].reason`, `.count`, `.lastSeenAt` | enum, integer, timestamp |
 | `rejections[].lastOrigin` | `origin_not_allowed`: the `Origin` when it parses as an `http`/`https` `scheme://host[:port]` origin of at most 256 bytes, lower-cased; `package_not_allowed`: the `app.package.name` when it matches the pattern of §5 and is at most 256 bytes; empty in every other case |
-| `keys[]` | at most 10 000, most recent use first; `id` (UUID from the policy) and `lastUsedAt` |
+| `keys[]` | every pending key (at most 10 000, §7.1), most recent use first, across pages; `id` (UUID from the policy) and `lastUsedAt` |
 | `unknownKeys.count`, `.lastSeenAt` | integer, timestamp; no key, verifier or origin |
-| `dropped.applications`, `.keys` | integers |
+| `dropped.keys` | integer: pending key uses evicted to keep the bound of §7.1, since start; never entries sent in another page |
+| `page`, `pages` | integers, 1 ≤ `page` ≤ `pages` ≤ 128 |
 
 - Never present: IP addresses, user agents, URL paths or queries, session or user IDs, attribute
   values, payload content, keys or verifiers ([G4], [G5]).
-- The encoded report is at most 256 KiB; when over, keys are dropped first, then the least
-  recently active applications, until it fits; dropped durable values stay pending.
+- Each encoded page is at most 256 KiB. Applications come first, then keys, packed in order
+  into as few pages as fit. At the bounds (10 000 applications at their largest, 10 000 keys) a
+  report takes 58 pages; 128 is the limit, which the backend may enforce.
 - **Differs.** The backend stores `lastOrigin` for every reason ([B] `impl/gateway.go:107-112`)
   and for unknown keys; here it is set for two reasons only, validated and bounded.
 - **Retention.** The collector holds window values in memory for the status window (5 min) and
@@ -511,12 +536,12 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   { "schemaVersion": 1, "reportSequence": 1874 }
   ```
 
-- **Backend, before acknowledging** ([M]): it applies the report idempotently (§10.2), then
-  persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only then
+- **Backend, before acknowledging** ([M]; pages [M43]): once it holds every page of the
+  sequence, it applies the report idempotently (§10.2), then persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only then
   sends the ack. A report whose sequence is not above the persisted one for that agent changes
   nothing and is acknowledged again. Acknowledging the same sequence twice changes nothing.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
-  whose report carried it arrives, and only if the value has not changed since (a newer
+  whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
   never sent, or already processed, is ignored. Handing a report to the OpAMP client clears
   nothing.
@@ -575,7 +600,7 @@ reported (§10.2) and a log line without content, when:
 
 | Code | Condition |
 |---|---|
-| `too_large` | the data is over `max_policy_size`, 16 MiB ([M], resolved 1; [ADR10] line 64 estimates 2 MB at 10 000 keys) |
+| `too_large` | the data is over `max_policy_size`, 24 MiB: a global cap, independent of the counts of §11.1, which a policy at every count bound with a `limit` on every key fits (about 18 MB). The backend enforces the same cap ([M], resolved 1; raised from 16 MiB by [M43]; [ADR10] line 64 estimates 2 MB at 10 000 keys) |
 | `parse_error` | it is not valid JSON of the v1 types |
 | `schema_version` | `schemaVersion` is missing or not `1` |
 | `unknown_field` | any object, at any depth, has a field v1 does not define: ignoring a new field could ignore a new restriction |
@@ -586,6 +611,7 @@ reported (§10.2) and a log line without content, when:
 | `dangling_reference` | a `public` key's `applicationId` names no application, or a non-public key has one |
 | `org_mismatch` | a key's `orgId` differs from its application's |
 | `invalid_value` | any other rule of §11.1 fails (formats, enums, sizes, list lengths, origin and package rules) |
+| `persist_error` | the snapshot is valid but its floor could not be persisted (§11.3): it is not accepted ([M43]) |
 
 ### 11.3 Revision and cache
 
@@ -594,12 +620,24 @@ reported (§10.2) and a log line without content, when:
 - A snapshot whose `version` equals the highest accepted and whose hash matches is a no-op
   (it refreshes the policy's last-received time, for staleness). One with a higher version that
   passes §11.2 replaces the policy held.
-- **Cache** ([ADR10] line 74): an accepted policy is written to `<storage>/ingest-policy.json`
-  (the data bytes), then `<storage>/ingest-policy.state` with `{version, sha256}`, the highest
-  accepted revision. Both mode `0600`, each written atomically (temporary file renamed over the
-  old one, as [ADR 0008](../adr/0008-opamp-remote-config.md) point 4 does for pushes). They hold
-  verifiers only, never a key, since the message carries none, and are never logged or
-  reported.
+- **Cache** ([ADR10] line 74; order [M43]): a valid policy of a higher version first has its
+  floor written to `<storage>/ingest-policy.state` as `{version, sha256}`, the highest accepted
+  revision, then its data bytes to `<storage>/ingest-policy.json`. Both mode `0600`, each
+  written atomically (temporary file renamed over the old one, as
+  [ADR 0008](../adr/0008-opamp-remote-config.md) point 4 does for pushes). They hold verifiers
+  only, never a key, since the message carries none, and are never logged or reported.
+- **Acceptance.** A revision is accepted, published and reported `ok` only once its floor is
+  durable, so no restart can bring back an older revision and the keys it revoked. If the floor
+  cannot be written, the revision is rejected with `persist_error`: the policy held, if any,
+  stays in force and the receiver's readiness is unchanged (ready with that older policy,
+  not ready with none), exactly as for any other rejected snapshot; the backend sees the older
+  `policy.version` and pushes again. If the floor is written but the policy file is not, the
+  revision is accepted and in force; the policy file is written again on the next identical
+  push. A restart in between, like a crash between the two files, finds the files mismatched
+  and starts with no policy (fail closed, §11.4), with the new floor refusing the older
+  revision.
+- A repeated identical push sets the policy file's modification time, which a restart reads as
+  when the policy was last received, without rewriting either file.
 - **At start** the state file is read first; the cached policy is used only if its hash
   equals the state's and it passes §11.2 (its version then equals the floor). It is used until
   the backend pushes. A lost OpAMP connection keeps the policy held in use ([ADR10] line 74).
@@ -614,8 +652,14 @@ reported (§10.2) and a log line without content, when:
   likewise, in every mode. The collector reports not ready (health check), and the chart routes
   `/rum/v1` to it only once it holds a valid policy; the backend is deployed and publishing
   first ([M], resolved 4). **Differs** from [ADR10] line 75, amended by [ADR10 §10].
+- **Readiness.** `rumreceiver` reports component status `RecoverableError` while it holds no
+  valid policy (or one past `max_staleness`) and `OK` once it does. The chart (step 4)
+  configures `healthcheckv2` with `component_health.include_recoverable_errors: true` and
+  `recovery_duration: 0s`, and uses that endpoint for readiness only, never liveness, so a
+  missing policy takes the pod out of traffic without a restart loop ([M43]).
 - **Staleness** ([ADR10] line 74): the policy's age since last received is exported as a metric.
-  An optional `max_staleness`, with no default, makes the receiver refuse with 503 once older.
+  An optional `max_staleness`, with no default, makes the receiver refuse POSTs with 503 and
+  preflights with 403 once older, and report not ready ([M43]).
 - Revocation reaches a connected collector within 10 s p95 ([ADR10] line 65); during an outage,
   revoked keys keep working from the cache until the connection returns or `max_staleness`
   passes.
@@ -630,10 +674,11 @@ reported (§10.2) and a log line without content, when:
 | 4 | Per-key limit in each backend replica, full value; per-IP buckets per exact address, map unbounded until the idle sweep | Policy's per-replica share; IPv6 by /64; bucket map capped with LRU eviction | [ADR10] §4, [G6] |
 | 5 | Session IDs stored as strings; strings stored unbounded | 64-bit hashes; strings bounded before storing; connection, request and timeout limits | [G6] |
 | 6 | Forward to the collector, status mapped from its HTTP answer | Next consumer; permanent errors 400, others 503 | no extra hop, [ADR10] §6 |
-| 7 | Setup status in memory per backend replica; `lastOrigin` kept for every reason; unknown keys counted on every application allowing the origin, across orgs | Report over OpAMP every minute with sequence and ack; `lastOrigin` for two reasons, validated and bounded; unknown keys as one global counter | [ADR10] §6, [G5], [M] |
+| 7 | Setup status in memory per backend replica; `lastOrigin` kept for every reason; unknown keys counted on every application allowing the origin, across orgs | Report over OpAMP every minute, in pages, with sequence and ack; `lastOrigin` for two reasons, validated and bounded; unknown keys as one global counter | [ADR10] §6, [G5], [M], [M43] |
 | 8 | Revoked keys known to the database, counted as `bad_key` | Not in the policy, so unknown; expired ones still `bad_key` while listed | [M], resolved 7 |
 | 9 | No `fusescope.ingest.key_id`, no org in auth data | Both stamped | [ADR10] §4 |
 | 10 | Browser bundle served at `/rum/v1/sdk/browser/…` | Not served; CDN | [M], resolved 11 |
+| 11 | No per-signal key permission | A valid key without the signal: 403 `signal_not_allowed` | [M43] |
 
 ## 13. Decisions and follow-ups
 
@@ -641,7 +686,7 @@ Resolved by the maintainer on PR #41:
 
 | # | Question | Decision |
 |---|---|---|
-| 1 | Policy encoding and limits | JSON schema v1, typed and strict, with `schemaVersion` and a monotonic revision, 16 MiB cap (§11). **Requirement for step 2:** an integration test that sends a policy at the maximum size through OpAMP end to end and checks it is accepted, cached and applied. |
+| 1 | Policy encoding and limits | JSON schema v1, typed and strict, with `schemaVersion` and a monotonic revision, 16 MiB cap (§11), raised to 24 MiB in the review of PR #43. **Requirement for step 2:** an integration test that sends a policy at the maximum size through OpAMP end to end and checks it is accepted, cached and applied. |
 | 2 | Who validates RUM keys | `rumreceiver`, against the same immutable policy store as `ingestauth` (§2) |
 | 3 | `name` and `environment` in the policy | included, sizes validated; ADR 0010 amended (§11.1) |
 | 4 | Upgrade order | backend first; a collector without a policy is not ready; the chart routes `/rum/v1` only after a valid policy (§11.4) |
