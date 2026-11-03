@@ -48,7 +48,7 @@ $(MDATAGEN):
 	cd $(BUILD_DIR)/tools/collector/cmd/mdatagen && go build -o $(MDATAGEN) .
 
 components-gen: $(MDATAGEN)
-	@for d in $(COMPONENTS); do (cd $$d && $(MDATAGEN) metadata.yaml) || exit 1; done
+	@for d in $(COMPONENTS); do test -f $$d/metadata.yaml || continue; (cd $$d && $(MDATAGEN) metadata.yaml) || exit 1; done
 
 clean:
 	rm -rf $(BUILD_DIR)
