@@ -287,14 +287,16 @@ cannot parse is 400 `invalid_payload`, as is a single message field (`resource`,
 that escapes its budget. The structural budget, the session bucket and the pending
 key bound are maxima: configuration (`limits.*`) may lower them, never raise them ([M43]).
 
-**Memory in flight.** A request allocates at most its body buffer, its decoded copy and its
-structure. Measured (`TestWorstCaseAllocationAtCeiling`, every kind of element at the 25 000
-ceiling): at most 5.3 MiB for JSON and 3.4 MiB for protobuf; a 4 MiB body of one large string,
-8.0 MiB (the buffer and the decoded copy). The tests hold them under 6 MiB and 10 MiB. So
-`limits.requests` × 10 MiB bounds what requests hold at once: 160 MiB with the default of 16,
-plus what the pipeline holds after the receiver. Raising `limits.requests` raises the bound in
-proportion. A global, weighted in-flight memory budget, instead of a count of requests, is a
-possible follow-up ([M43]).
+**Memory in flight.** A request allocates its body buffer, its decoded copy and its structure.
+Measured (`TestWorstCaseAllocationAtCeiling`, `TestWorstCaseAllocationCombined`): every kind of
+element at the 25 000 ceiling, at most 5.3 MiB (JSON) and 3.4 MiB (protobuf), held under 6 MiB
+as the structural regression check; a 4 MiB body of one large string, 8.0 MiB; both at once
+(999 resource groups of 23 attributes and a `schemaUrl` padding the body to 4 MiB), 10.8 MiB
+(JSON) and 10.9 MiB (protobuf), held under **12 MiB** per request. With the default
+`limits.requests` of 16, requests in flight hold about **192 MiB** (16 × 12 MiB), plus what the
+pipeline holds after the receiver; raising `limits.requests` raises it in proportion. This is a
+measured guardrail, not a hard limit, until a global, weighted in-flight memory budget replaces
+the count of requests, a follow-up ([M43]).
 
 Strings longer than their bound are never truncated into a stored value: a truncated origin or
 package name could match or name something else.
@@ -595,6 +597,12 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   again. Acknowledging the same sequence twice changes nothing. `report.Merge` and
   `report.Assembler` in `rumreceiver` implement these rules, as a reference model and for
   tests.
+- **Backend, per-agent markers** ([M43]): the last sequence applied and the highest sequence
+  invalidated live in the backend's persisted per-agent record, with `(agentID,
+  reportSequence)`, bounded by the agents it knows; never in assembly memory, which holds only
+  assemblies with pages (at most 1 000). A page of a sequence not above the one applied is
+  acknowledged again and changes nothing; a page of a sequence not above the one invalidated
+  is refused. The model takes that record as an injected store.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it

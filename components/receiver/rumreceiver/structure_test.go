@@ -23,6 +23,8 @@ type shape struct {
 	resourceAttrs, scopeAttrs, itemAttrs     int
 	eventAttrs, linkAttrs, arrayLen, nesting int
 	logs, deprecated, snake                  bool
+	// schemaURL pads the first resource group with a long string field.
+	schemaURL int
 }
 
 func (s shape) json() string {
@@ -75,7 +77,11 @@ func (s shape) json() string {
 	scope := `{"scope":{"name":"x","attributes":[` + attrs(s.scopeAttrs) + `]},"` + itemList + `":[` + items + `]}`
 	scopes := strings.TrimSuffix(strings.Repeat(scope+",", s.scopes), ",")
 	resource := `{"resource":{"attributes":[` + attrs(s.resourceAttrs) + `]},"` + scopeList + `":[` + scopes + `]}`
-	return `{"` + resList + `":[` + strings.TrimSuffix(strings.Repeat(resource+",", s.resources), ",") + `]}`
+	groups := strings.TrimSuffix(strings.Repeat(resource+",", s.resources), ",")
+	if s.schemaURL > 0 {
+		groups = `{"schemaUrl":"` + strings.Repeat("u", s.schemaURL) + `",` + groups[1:]
+	}
+	return `{"` + resList + `":[` + groups + `]}`
 }
 
 func msgField(b []byte, num protowire.Number, inner []byte) []byte {
@@ -135,7 +141,11 @@ func (s shape) proto() []byte {
 		resource = msgField(resource, scopeNum, scope)
 	}
 	var req []byte
-	for range s.resources {
+	for i := range s.resources {
+		if i == 0 && s.schemaURL > 0 {
+			req = msgField(req, resNum, msgField(append([]byte{}, resource...), 3, []byte(strings.Repeat("u", s.schemaURL))))
+			continue
+		}
 		req = msgField(req, resNum, resource)
 	}
 	return req

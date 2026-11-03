@@ -121,8 +121,39 @@ func TestWorstCaseAllocationAtCeiling(t *testing.T) {
 	})
 }
 
+// Maintainer review of #43: the structural ceiling and a full body at
+// once, the most a valid request allocates: 999 resource groups of 23
+// attributes (23 976 elements) and a schemaUrl padding the body to 4 MiB.
+func TestWorstCaseAllocationCombined(t *testing.T) {
+	for _, enc := range []string{"application/json", "application/x-protobuf"} {
+		t.Run(enc, func(t *testing.T) {
+			s := shape{resources: 999, resourceAttrs: 23}
+			render := func(s shape) []byte {
+				if enc == "application/json" {
+					return []byte(s.json())
+				}
+				return s.proto()
+			}
+			s.schemaURL = 4<<20 - len(render(s)) - 16
+			body := render(s)
+			require.LessOrEqual(t, len(body), 4<<20)
+			require.Greater(t, len(body), 4<<20-64)
+			f := newFixture(t, nil)
+			code, bytes := allocated(t, f, enc, body)
+			t.Logf("combined %s: body %d bytes, status %d, allocated %.1f MiB", enc, len(body), code, float64(bytes)/(1<<20))
+			require.Equal(t, http.StatusOK, code, "a valid request")
+			limit := uint64(worstCaseCombined)
+			if raceEnabled {
+				limit += 2 * uint64(len(body))
+			}
+			assert.Less(t, bytes, limit)
+		})
+	}
+}
+
 // Thresholds the in-flight bound of rum.md §7.1 is built on.
 const (
 	worstCaseElements = 6 << 20  // a request at the structural ceiling: measured up to 5.0 MiB
 	worstCaseBody     = 10 << 20 // a 4 MiB body, its buffer and decoded copy: measured 8.0 MiB
+	worstCaseCombined = 12 << 20 // both at once: the per-request guardrail of §7.1
 )
