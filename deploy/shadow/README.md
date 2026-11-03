@@ -126,7 +126,8 @@ yq '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_lim
 yq eval-all '. as $i ireduce ({}; . * $i)' /w/limited.yaml /s/demo-collector-shadow.yaml > merged.yaml
 [ "$(yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml)" = dns:///fusescope-collector-shadow:4317 ]
 mv merged.yaml config.yaml && rm limited.yaml
-cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps otel-collector   # 768 MiB, 0.5 CPU
+# Recreated, as compose does not see changes inside a mounted file; 768 MiB, 0.5 CPU.
+cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps --force-recreate otel-collector
 ```
 
 Watch the first minutes and restore `config.yaml.bak-pre-shadow` at once if the demo collector logs `otlp/shadow`
@@ -144,6 +145,7 @@ same data; collector 384 MiB; the demo collector's extra 384 MiB).
 ## Compare
 
 ```sh
+c="docker compose -f compose.yaml -f shadow/compose.shadow.yaml"
 $c run --rm shadow-compare                                  # last settled hour
 $c run --rm -e WINDOW_MINUTES=1440 shadow-compare           # last day
 ```
