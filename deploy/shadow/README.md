@@ -63,10 +63,9 @@ tar czf - -C deploy shadow | ssh root@<demo-host> 'tar xzf - --no-same-owner -C 
 On the demo host, in `/opt/fusescope`, start the shadow side; nothing in the demo changes yet:
 
 ```sh
-c="docker compose -f compose.yaml -f shadow/compose.shadow.yaml"
-$c up -d --no-deps clickhouse-shadow
-$c up --no-deps migrator-shadow
-$c up -d --no-deps fusescope-collector-shadow
+# Waits for clickhouse-shadow to be healthy and for the migration to succeed;
+# none of these depends on a demo service.
+docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --wait fusescope-collector-shadow
 ```
 
 Then the demo collector's configuration gets an exporter and one pipeline per signal fed by its existing `otlp`
@@ -118,13 +117,15 @@ go-ahead (an exception to ADR 0002 for this deployment file, which is merged wit
 
 ```sh
 set -e
-cd /opt/fusescope/otel-collector && cp -p config.yaml config.yaml.bak-pre-shadow
+cd /opt/fusescope/otel-collector
+# The backup is the configuration before any shadow change; every run starts from it.
+[ -e config.yaml.bak-pre-shadow ] || cp -p config.yaml config.yaml.bak-pre-shadow
 yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro mikefarah/yq:4.44.3 "$@"; }
 # Headroom: its memory limiter refused at 256 MiB (limit_mib 320, spike 64, from its own logs).
-yq -i '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)' /w/config.yaml
-yq eval-all '. as $i ireduce ({}; . * $i)' /w/config.yaml /s/demo-collector-shadow.yaml > merged.yaml
-yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml   # must print dns:///fusescope-collector-shadow:4317
-mv merged.yaml config.yaml
+yq '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)' /w/config.yaml.bak-pre-shadow > limited.yaml
+yq eval-all '. as $i ireduce ({}; . * $i)' /w/limited.yaml /s/demo-collector-shadow.yaml > merged.yaml
+[ "$(yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml)" = dns:///fusescope-collector-shadow:4317 ]
+mv merged.yaml config.yaml && rm limited.yaml
 cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps otel-collector   # 768 MiB, 0.5 CPU
 ```
 
