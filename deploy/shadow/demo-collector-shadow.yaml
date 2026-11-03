@@ -11,7 +11,8 @@ exporters:
       permit_without_stream: true
     sending_queue:
       enabled: true
-      queue_size: 5000
+      sizer: bytes
+      queue_size: 33554432   # 32 MiB per signal, held in the demo collector's memory
     retry_on_failure:
       enabled: true
       max_elapsed_time: 30s

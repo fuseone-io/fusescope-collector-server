@@ -86,7 +86,8 @@ exporters:
       permit_without_stream: true
     sending_queue:
       enabled: true
-      queue_size: 5000
+      sizer: bytes
+      queue_size: 33554432   # 32 MiB per signal, held in the demo collector's memory
     retry_on_failure:
       enabled: true
       max_elapsed_time: 30s
@@ -116,8 +117,9 @@ The demo collector's command takes a single `--config`, so the block is merged i
 go-ahead (an exception to ADR 0002 for this deployment file, which is merged without being read), on the demo host:
 
 ```sh
+set -e
 cd /opt/fusescope/otel-collector && cp -p config.yaml config.yaml.bak-pre-shadow
-yq() { docker run --rm -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro mikefarah/yq:4.44.3 "$@"; }
+yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro mikefarah/yq:4.44.3 "$@"; }
 # Headroom: its memory limiter refused at 256 MiB (limit_mib 320, spike 64, from its own logs).
 yq -i '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)' /w/config.yaml
 yq eval-all '. as $i ireduce ({}; . * $i)' /w/config.yaml /s/demo-collector-shadow.yaml > merged.yaml
@@ -177,7 +179,7 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 ## Risks
 
 - The shadow pipelines sit behind a `batch/shadow` processor, which accepts the copy and exports it on its own: a
-  full or failing `otlp/shadow` queue (5 000 requests) drops shadow copies and never fails a demo request. The
+  full or failing `otlp/shadow` queue (32 MiB per signal) drops shadow copies and never fails a demo request. The
   keepalive, the 5 s timeout and the 30 s retry limit keep that queue draining while the shadow collector is away.
 - The demo collector holds the queued copies in its own memory (768 MiB, limiter at 640 MiB); at the demo's volume
   that is a few MiB at most.
