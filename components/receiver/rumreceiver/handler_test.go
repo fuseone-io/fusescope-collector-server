@@ -570,6 +570,25 @@ func TestGatewayPolicyChangeAppliesAtOnce(t *testing.T) {
 	assert.Equal(t, http.StatusOK, f.post(tracesPath, testTraceJSON, jsonHeaders(webKey, "Origin", "https://new.example.com")).Code)
 }
 
+// Codex review on #43: a request authorised by a policy the watcher has not
+// passed to the monitor yet is still counted.
+func TestGatewayAccountsBeforeWatcherCatchesUp(t *testing.T) {
+	f := newFixture(t, nil)
+	const newApp, newKey, newKeyID = "0191c5e2-7f0a-7c3e-9a51-3c2b1d4e5f62", "rum_pub_newappnewappnewappnewappnewapp", "0191c5e2-8a1b-7d2e-b0c4-000000000007"
+	p := testPolicy(2)
+	app := p.RUMApplications[0]
+	app.ID = newApp
+	p.RUMApplications = append(p.RUMApplications, app)
+	p.Keys = append(p.Keys, ingestpolicy.Key{ID: newKeyID, SHA256: verifier(newKey), OrgID: testOrg, Kind: ingestpolicy.KindPublic, Signals: []string{"traces"}, ApplicationID: ptr(newApp)})
+	require.NoError(t, f.store.Apply(encodePolicy(t, p), testNow))
+
+	require.Equal(t, http.StatusOK, f.post(tracesPath, testTraceJSON, jsonHeaders(newKey)).Code)
+	data, err := f.acct.monitor.Build(1, f.now, f.store.Status())
+	require.NoError(t, err)
+	assert.Contains(t, string(data), newApp)
+	assert.Contains(t, string(data), newKeyID)
+}
+
 func TestGatewayConcurrencyLimit(t *testing.T) {
 	f := newFixture(t, func(cfg *Config) { cfg.Limits.Requests = 1 })
 	blocked := make(chan struct{})

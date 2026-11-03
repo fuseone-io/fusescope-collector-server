@@ -29,17 +29,22 @@ func newPendingKeys(capacity int) pendingKeys {
 // use records a use of id at now and reports whether the oldest use was
 // evicted to make room.
 func (p *pendingKeys) use(id string, now time.Time) bool {
+	// Requests can finish out of order: the newest use wins, and the list
+	// stays ordered by use time, not by arrival.
 	if k, ok := p.byID[id]; ok {
-		// Requests can finish out of order: the newest use wins.
 		if now.After(k.used) {
 			k.used = now
+			p.unlink(k)
+			p.insert(k)
 		}
-		p.unlink(k)
-		p.pushFront(k)
 		return false
 	}
 	evicted := false
 	if len(p.byID) >= p.capacity && p.tail != nil {
+		if !now.After(p.tail.used) {
+			// The new use is the oldest of all: it is the one evicted.
+			return true
+		}
 		old := p.tail
 		p.unlink(old)
 		delete(p.byID, old.id)
@@ -47,8 +52,33 @@ func (p *pendingKeys) use(id string, now time.Time) bool {
 	}
 	k := &keyUse{id: id, used: now}
 	p.byID[id] = k
-	p.pushFront(k)
+	p.insert(k)
 	return evicted
+}
+
+// insert places k by its use time, newest first; usually at the head.
+func (p *pendingKeys) insert(k *keyUse) {
+	next := p.head
+	for next != nil && next.used.After(k.used) {
+		next = next.next
+	}
+	if next == nil {
+		k.prev, k.next = p.tail, nil
+		if p.tail != nil {
+			p.tail.next = k
+		} else {
+			p.head = k
+		}
+		p.tail = k
+		return
+	}
+	k.prev, k.next = next.prev, next
+	if next.prev != nil {
+		next.prev.next = k
+	} else {
+		p.head = k
+	}
+	next.prev = k
 }
 
 func (p *pendingKeys) len() int { return len(p.byID) }
@@ -75,17 +105,6 @@ func (p *pendingKeys) newestFirst() iter.Seq2[string, time.Time] {
 				return
 			}
 		}
-	}
-}
-
-func (p *pendingKeys) pushFront(k *keyUse) {
-	k.prev, k.next = nil, p.head
-	if p.head != nil {
-		p.head.prev = k
-	}
-	p.head = k
-	if p.tail == nil {
-		p.tail = k
 	}
 }
 

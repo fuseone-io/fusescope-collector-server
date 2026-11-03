@@ -142,6 +142,8 @@ func (r *recorder) Reject(appID string, reason report.Reason, observed string, n
 	r.events = append(r.events, event{kind: "reject", app: appID, reason: reason, observed: observed})
 }
 
+func (r *recorder) SetPolicy(snap *ingestpolicy.Snapshot) { r.monitor.SetPolicy(snap) }
+
 func (r *recorder) UnknownKey(now time.Time) {
 	r.monitor.UnknownKey(now)
 	r.mu.Lock()

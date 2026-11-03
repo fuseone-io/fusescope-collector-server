@@ -56,6 +56,9 @@ const (
 // accounting is the report's view of each request (§10.1); report.Monitor
 // implements it.
 type accounting interface {
+	// SetPolicy advances accounting to the snapshot that authorised a
+	// request, before the request is recorded.
+	SetPolicy(snap *ingestpolicy.Snapshot)
 	Ingest(app *ingestpolicy.Application, keyID string, batch *report.Batch, now time.Time)
 	Reject(applicationID string, reason report.Reason, observed string, now time.Time)
 	UnknownKey(now time.Time)
@@ -233,6 +236,7 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 		return
 	}
 	app := k.Application
+	h.acct.SetPolicy(snap)
 	signal := ingestpolicy.SignalLogs
 	if traces {
 		signal = ingestpolicy.SignalTraces

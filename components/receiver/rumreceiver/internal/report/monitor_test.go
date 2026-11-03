@@ -43,10 +43,13 @@ func pad(s string, n int) string {
 	return s
 }
 
+var snapshotVersion uint64
+
 // snapshot is a policy with n web applications (appA, appB, then numbered).
 func snapshot(t testing.TB, n int) *ingestpolicy.Snapshot {
 	t.Helper()
-	p := ingestpolicy.Policy{SchemaVersion: 1, Version: 1, IssuedAt: "2026-11-03T12:00:00Z", Keys: []ingestpolicy.Key{}}
+	snapshotVersion++
+	p := ingestpolicy.Policy{SchemaVersion: 1, Version: snapshotVersion, IssuedAt: "2026-11-03T12:00:00Z", Keys: []ingestpolicy.Key{}}
 	for i := range n {
 		id := appID(i)
 		switch i {
@@ -245,6 +248,45 @@ func TestMonitorKeyUseKeepsNewest(t *testing.T) {
 	m.Ingest(snap.Application(appA), keyOne, &Batch{}, now)
 	r := build(t, m, now.Add(time.Minute))
 	assert.Equal(t, []KeyReport{{ID: keyOne, LastUsedAt: "2026-10-21T12:01:00Z"}}, r.Keys)
+}
+
+// Codex review on #43: the list is ordered by use time, so a late, older
+// use neither jumps ahead nor protects a key from eviction.
+func TestMonitorKeyOrderByUseTime(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 2})
+	snap := snapshot(t, 1)
+	m.SetPolicy(snap)
+	app := snap.Application(appA)
+	m.Ingest(app, "A", &Batch{}, now.Add(2*time.Second))
+	m.Ingest(app, "B", &Batch{}, now.Add(3*time.Second))
+	m.Ingest(app, "A", &Batch{}, now.Add(time.Second)) // late
+	r := build(t, m, now.Add(time.Minute))
+	assert.Equal(t, []KeyReport{{ID: "B", LastUsedAt: "2026-10-21T12:00:03Z"}, {ID: "A", LastUsedAt: "2026-10-21T12:00:02Z"}}, r.Keys)
+
+	m.Ingest(app, "C", &Batch{}, now.Add(4*time.Second))
+	m.Ingest(app, "D", &Batch{}, now) // late first use, older than every pending one
+	r = build(t, m, now.Add(time.Minute))
+	assert.Equal(t, []KeyReport{{ID: "C", LastUsedAt: "2026-10-21T12:00:04Z"}, {ID: "B", LastUsedAt: "2026-10-21T12:00:03Z"}}, r.Keys)
+	assert.Equal(t, uint64(2), r.Dropped.Keys, "A, then the late D, evicted")
+}
+
+// Codex review on #43: a request authorised by a newer snapshot than the
+// monitor holds is still counted, and an older one never reverts it.
+func TestMonitorSetPolicyOnlyAdvances(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 10})
+	older := snapshot(t, 1)
+	newer := snapshot(t, 2)
+	m.SetPolicy(older)
+
+	m.SetPolicy(newer) // as the handler does before recording
+	m.Ingest(newer.Application(appB), keyOne, &Batch{}, now)
+	m.SetPolicy(older) // an in-flight request of the older policy
+	m.Ingest(older.Application(appA), keyOne, &Batch{}, now)
+	r := build(t, m, now)
+	assert.NotNil(t, appReport(r, appB))
+	assert.NotNil(t, appReport(r, appA))
 }
 
 func TestMonitorUnknownKeys(t *testing.T) {

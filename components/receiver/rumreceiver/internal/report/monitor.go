@@ -90,10 +90,16 @@ func NewMonitor(cfg Config) *Monitor {
 	}
 }
 
-// SetPolicy keeps monitors only for the applications of snap (none for nil).
+// SetPolicy keeps monitors only for the applications of snap. It only
+// moves forward: the watcher and the requests authorised by a snapshot both
+// call it, and an in-flight request holding an older snapshot must not
+// revert a newer one.
 func (m *Monitor) SetPolicy(snap *ingestpolicy.Snapshot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if snap == nil || snap == m.policy || (m.policy != nil && snap.Version <= m.policy.Version) {
+		return
+	}
 	m.policy = snap
 	for id := range m.applications {
 		if snap == nil || snap.Application(id) == nil {
