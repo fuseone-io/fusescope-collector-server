@@ -38,7 +38,23 @@ def call(base, path, body=None, token=None):
         raise SystemExit(f"{base}{path}: {e.code} {e.read().decode(errors='replace')[:300]}") from None
 
 
+def wait_ready(base, seconds=120):
+    """Waits for the backend's health endpoint, as a freshly started one is not up yet."""
+    deadline = time.time() + seconds
+    while True:
+        try:
+            with urllib.request.urlopen(base + "/api/v1/health", timeout=5) as r:
+                if r.status == 200:
+                    return
+        except (urllib.error.URLError, OSError):
+            pass
+        if time.time() > deadline:
+            raise SystemExit(f"{base} not ready after {seconds} s")
+        time.sleep(2)
+
+
 def login(base, email, password, register=False):
+    wait_ready(base)
     if register:
         try:
             call(base, "/api/v1/register", {"name": "shadow", "email": email, "password": password,
