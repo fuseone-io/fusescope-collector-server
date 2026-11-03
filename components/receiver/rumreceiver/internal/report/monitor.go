@@ -127,10 +127,11 @@ func (m *Monitor) Ingest(application *ingestpolicy.Application, keyID string, ba
 	bucket.errors += batch.Errors
 	bucket.vitals += batch.Vitals
 
-	if batch.SDKName != "" {
+	// Requests can finish out of order: only a newer observation replaces one.
+	if batch.SDKName != "" && !now.Before(app.sdkSeen) {
 		app.sdkName, app.sdkVersion, app.sdkSeen = batch.SDKName, batch.SDKVersion, now
 	}
-	app.lastActive = now
+	app.active(now)
 	if !app.acked && app.firstSeen.IsZero() {
 		app.firstSeen = now
 	}
@@ -155,9 +156,10 @@ func (m *Monitor) Reject(applicationID string, reason Reason, observed string, n
 	}
 	r := &app.bucket(now).rejections[reason]
 	r.count++
-	r.observed = observed
-	r.seen = now
-	app.lastActive = now
+	if !now.Before(r.seen) {
+		r.observed, r.seen = observed, now
+	}
+	app.active(now)
 }
 
 // UnknownKey counts a key absent from the policy or of a wrong kind, with no
@@ -171,7 +173,9 @@ func (m *Monitor) UnknownKey(now time.Time) {
 		*b = countBucket{minute: minute}
 	}
 	b.count++
-	m.unknownLast = now
+	if now.After(m.unknownLast) {
+		m.unknownLast = now
+	}
 }
 
 // Expire releases window values older than the status window: session
@@ -229,6 +233,12 @@ func (app *applicationMonitor) bucket(now time.Time) *monitorBucket {
 		*bucket = monitorBucket{minute: minute, used: true, sessions: sessions}
 	}
 	return bucket
+}
+
+func (app *applicationMonitor) active(now time.Time) {
+	if now.After(app.lastActive) {
+		app.lastActive = now
+	}
 }
 
 func minuteOf(t time.Time) int64 { return t.Unix() / 60 }

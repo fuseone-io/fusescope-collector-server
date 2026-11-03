@@ -289,6 +289,28 @@ func TestMonitorSetPolicyOnlyAdvances(t *testing.T) {
 	assert.NotNil(t, appReport(r, appA))
 }
 
+// Codex review on #43: a slow request finishing after a newer one does not
+// overwrite its SDK, rejection origin or activity time.
+func TestMonitorOutOfOrderCompletions(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 59, 0, time.UTC)
+	m, snap := newTestMonitor(t, 2)
+	newer := &Batch{}
+	newer.SetSDK("@fusescope/browser", "0.3.0")
+	older := &Batch{}
+	older.SetSDK("@fusescope/browser", "0.2.0")
+	m.Ingest(snap.Application(appA), keyOne, newer, now.Add(time.Second))
+	m.Ingest(snap.Application(appA), keyOne, older, now)
+	m.Reject(appA, OriginNotAllowed, "https://new.example.com", now.Add(time.Second))
+	m.Reject(appA, OriginNotAllowed, "https://old.example.com", now)
+	m.Ingest(snap.Application(appB), keyOne, &Batch{}, now.Add(500*time.Millisecond))
+
+	r := build(t, m, now.Add(4*time.Minute+time.Second))
+	require.Len(t, r.Applications, 2)
+	assert.Equal(t, appA, r.Applications[0].ID, "lastActive keeps its maximum")
+	assert.Equal(t, SDKReport{Name: "@fusescope/browser", Version: "0.3.0"}, r.Applications[0].SDK, "the newer SDK stays, inside the window")
+	assert.Equal(t, "https://new.example.com", r.Applications[0].Rejections[0].LastOrigin)
+}
+
 func TestMonitorUnknownKeys(t *testing.T) {
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 	m, _ := newTestMonitor(t, 1)
