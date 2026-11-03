@@ -643,9 +643,11 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 - **Backend, retries** ([M43]): store calls are made outside the assembler's lock: a page costs
   one record read plus one retry pass of at most 8 store calls (one per commit or invalidation
   retried), whatever is pending, so other agents' pages wait for no one else's I/O. A pass takes
-  its jobs one at a time, each chosen, revalidated and claimed immediately before it runs: a job
-  is never started past its commit deadline or after its sequence was invalidated, and none
-  waits claimed behind another's call. Each failed commit or invalidation is retried with
+  its jobs one at a time, each chosen, revalidated and claimed immediately before it runs, at a
+  fresh reading of the clock (the pass's start plus the clock's progress since, so a slow
+  earlier call counts): a job is never started past its commit deadline or after its sequence
+  was invalidated, and none waits claimed behind another's call. The caller's own commit claims
+  at a fresh reading too. Each failed commit or invalidation is retried with
   exponential backoff (100 ms doubling to 30 s) and jitter. **Who retries a failed commit:**
   the retrier, run in each page's pass and from a backend ticker; it returns the sequences it
   committed, which the backend then acknowledges. A resent page of a sequence awaiting commit

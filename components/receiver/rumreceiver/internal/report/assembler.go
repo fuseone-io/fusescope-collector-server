@@ -101,6 +101,16 @@ type AgentStore interface {
 	Invalidate(ctx context.Context, agent string, seq uint64) error
 }
 
+// Clock tells the time; a commit is claimed at a fresh reading of it,
+// immediately before it starts.
+type Clock interface {
+	Now() time.Time
+}
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time { return time.Now() }
+
 // Committed is a sequence the retrier committed: the backend acknowledges it.
 type Committed struct {
 	Agent string
@@ -117,6 +127,7 @@ type Committed struct {
 // at most RetryBatch store calls.
 type Assembler struct {
 	store AgentStore
+	clock Clock
 
 	mu       sync.Mutex
 	agents   map[string]*entry
@@ -161,11 +172,19 @@ type entry struct {
 
 func NewAssembler(store AgentStore) *Assembler {
 	return &Assembler{
-		store: store, agents: map[string]*entry{},
+		store: store, clock: systemClock{}, agents: map[string]*entry{},
 		maxBytes: MaxAssemblyBytes, maxHeld: MaxAssemblies, maxPending: MaxPendingInvalidations,
 		batch: RetryBatch, maxDecoding: MaxCommitDecodeBytes, maxCommits: MaxCommitsInFlight,
 		callTimeout: StoreCallTimeout,
 	}
+}
+
+// since returns the time now for a call that began at now, as read by the
+// clock: now plus the clock's progress since start. A pass or a commit
+// reads it again immediately before each claim, so a store call that took
+// long cannot let a later claim pass a deadline it has passed.
+func (a *Assembler) since(now, start time.Time) time.Time {
+	return now.Add(a.clock.Now().Sub(start))
 }
 
 func (a *Assembler) callCtx() (context.Context, context.CancelFunc) {
@@ -280,7 +299,9 @@ func exactCopy(b []byte) []byte {
 // failure the sequence stays awaiting commit and the retrier tries again
 // with backoff, until CommitDeadline.
 func (a *Assembler) Commit(agent string, seq uint64, now time.Time) error {
+	start := a.clock.Now()
 	a.mu.Lock()
+	now = a.since(now, start) // fresh, immediately before the claim
 	cur := a.agents[agent]
 	if cur == nil || cur.state != applying || cur.seq != seq || cur.inFlight {
 		a.mu.Unlock()
@@ -347,16 +368,17 @@ func (a *Assembler) commit(agent string, cur *entry, now time.Time) error {
 // and invalidations, at most the batch, each one store call outside the
 // lock. The backend also calls it from a ticker. It returns the sequences
 // it committed, which the backend acknowledges.
-func (a *Assembler) Retry(now time.Time) []Committed {
+func (a *Assembler) Retry(start time.Time) []Committed {
 	var done []Committed
-	a.mu.Lock()
-	a.expire(now)
-	a.mu.Unlock()
+	began := a.clock.Now()
 	// One job at a time: each is chosen, revalidated and claimed under the
-	// lock immediately before it runs, so a job never outlives a deadline
-	// or an invalidation that came while an earlier one was running.
+	// lock immediately before it runs, at a fresh reading of the clock, so a
+	// job never outlives a deadline or an invalidation that came while an
+	// earlier one was running.
 	for range a.batch {
 		a.mu.Lock()
+		now := a.since(start, began)
+		a.expire(now)
 		agent, cur := a.nextJob(now)
 		a.mu.Unlock()
 		if cur == nil {

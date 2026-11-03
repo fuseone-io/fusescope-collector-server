@@ -823,3 +823,72 @@ func TestAssemblerCompletionMovesPages(t *testing.T) {
 	assertOnlyBytes(t, e)
 	assert.Same(t, &held[0], &e.raw[0][0], "the same bytes, not a second copy")
 }
+
+// fakeClock is a Clock tests advance by hand.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// slowStore advances the clock during each compare-and-apply, as a call
+// that takes that long.
+type slowStore struct {
+	*MemoryAgentStore
+	clock *fakeClock
+	took  time.Duration
+}
+
+func (s *slowStore) ApplyIfGreater(ctx context.Context, agent string, r *Report) (ApplyResult, error) {
+	s.clock.Advance(s.took)
+	return s.MemoryAgentStore.ApplyIfGreater(ctx, agent, r)
+}
+
+// Maintainer review of #43 (reproduced 20 times): a pass used the time it
+// was given for every claim, so after a slow first store call a second
+// commit was claimed past its real deadline and applied. Each claim reads
+// the clock again: only the attempt that started before the deadline is
+// applied; the next is invalidated.
+func TestAssemblerClaimsAtFreshClock(t *testing.T) {
+	for range 20 {
+		clock := &fakeClock{now: t0}
+		store := &slowStore{MemoryAgentStore: NewMemoryAgentStore(), clock: clock, took: 5 * time.Second}
+		a := NewAssembler(store)
+		a.clock = clock
+		complete(t, a, "first", smallSequence(t, 1), t0)
+		complete(t, a, "second", smallSequence(t, 1), t0)
+
+		// One second before the deadline; the first call takes five.
+		done := a.Retry(t0.Add(CommitDeadline - time.Second))
+		require.Len(t, done, 1, "only the attempt started before the deadline")
+		started := done[0].Agent
+		other := map[string]string{"first": "second", "second": "first"}[started]
+		assert.Equal(t, []uint64{1}, store.AppliedOf(started))
+		assert.Empty(t, store.AppliedOf(other), "claimed after the real deadline: never applied")
+		assert.Equal(t, uint64(1), store.RecordOf(other).Invalidated, "invalidated, and persisted in the same pass")
+	}
+	// The caller's own Commit, then the retrier: the time a call is given is
+	// when it started, and the clock's progress counts from there, whatever
+	// a store call took in between.
+	clock := &fakeClock{now: t0}
+	store := &slowStore{MemoryAgentStore: NewMemoryAgentStore(), clock: clock, took: 5 * time.Second}
+	store.SetFail("apply", true)
+	a := NewAssembler(store)
+	a.clock = clock
+	complete(t, a, "agent", smallSequence(t, 1), t0)
+	require.Error(t, a.Commit("agent", 1, t0.Add(CommitDeadline-time.Second)), "started before the deadline, failed")
+	store.SetFail("apply", false)
+	assert.Empty(t, a.Retry(t0.Add(CommitDeadline+time.Second)), "past the deadline: invalidated, not committed")
+	assert.Empty(t, store.AppliedOf("agent"))
+}
