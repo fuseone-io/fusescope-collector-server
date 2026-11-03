@@ -73,6 +73,14 @@ type PIIPolicy struct {
 	URLAllowlist   []string `json:"urlAllowlist"`
 }
 
+// Names of the request's auth data (client.Info.Auth) that rumreceiver and
+// ingestauth set from the policy, never from the payload; AuthKeyID is also
+// the resource attribute stamped on every resource (docs/spec/rum.md §8.1).
+const (
+	AuthOrgID = "fusescope.org.id"
+	AuthKeyID = "fusescope.ingest.key_id"
+)
+
 // Key kinds ([ADR10] §2).
 const (
 	KindSecret = "secret"
