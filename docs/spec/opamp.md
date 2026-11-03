@@ -119,6 +119,7 @@ fusescope_opamp:
   endpoint: wss://backend:4320/v1/opamp   # ws:// only with tls.insecure: true
   tls: {ca_file: /etc/fusescope/ca.pem}   # configtls client settings
   storage: /var/lib/fusescope-collector/opamp
+  role: writer                            # or ingress (rum.md §11.1); default writer
 extensions:
   fusescope_opamp: {}                     # confirms pushes; required
 service:
@@ -127,6 +128,12 @@ service:
     logs: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [fusescope_clickhouse]}
     traces: {receivers: [otlp], processors: [memory_limiter, signozspanmapper, batch, signozllmpricing], exporters: [fusescope_clickhouse]}
 ```
+
+`role` is reported as the non-identifying description attribute `fusescope.collector.role`
+(FuseScope `docs/adr/0009-fusescope-collector.md` line 79), next to `host.name` and `os.type`. With `ingress` the agent
+also declares the custom capability `io.fuseone.fusescope.ingest.v1` and keeps the ingest policy
+and the report sequence under `<storage>/ingest/` ([rum.md](rum.md) §§10.4, 11). Any other
+value is refused at start.
 
 The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
 in it itself (`$$` for a literal `$`); other substitution schemes are not available there. A change

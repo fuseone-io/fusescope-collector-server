@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
+	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/ingest"
 )
 
 // configFile is the one effective and remote config entry (opamp spec §3).
@@ -41,6 +42,7 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 		NonIdentifyingAttributes: []*protobufs.KeyValue{
 			str("host.name", host),
 			str("os.type", runtime.GOOS),
+			str("fusescope.collector.role", role(s)),
 		},
 	}
 	if err := oc.c.SetAgentDescription(desc); err != nil {
@@ -52,16 +54,34 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 		protobufs.AgentCapabilities_AgentCapabilities_ReportsRemoteConfig)); err != nil {
 		return nil, err
 	}
+	ing := a.Ingest()
+	if ing != nil {
+		// Only the ingress role declares the ingest capability (ADR 0006).
+		if err := oc.c.SetCustomCapabilities(ingest.CustomCapabilities()); err != nil {
+			return nil, err
+		}
+	}
 	settings := types.StartSettings{
 		OpAMPServerURL: s.Endpoint,
 		InstanceUid:    types.InstanceUid(uid),
+		// Every message read is bounded: the largest policy and a margin;
+		// remote configuration is smaller (agent.MaxPushBytes).
+		MaxMessageSize: ingest.MaxMessageSize,
 		Callbacks: types.Callbacks{
+			OnConnect: func(context.Context) {
+				if ing != nil {
+					ing.OnConnect()
+				}
+			},
 			OnMessage: func(ctx context.Context, msg *types.MessageData) {
 				// The server answers each message; the first one carried the
 				// status of a push that failed before the last exit.
 				a.FailedReported()
 				if msg.RemoteConfig != nil {
 					oc.onRemoteConfig(ctx, a, msg.RemoteConfig)
+				}
+				if ing != nil && msg.CustomMessage != nil {
+					ing.OnCustomMessage(msg.CustomMessage)
 				}
 			},
 			GetEffectiveConfig: func(context.Context) (*protobufs.EffectiveConfig, error) {
@@ -88,7 +108,17 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 	if err := oc.c.Start(ctx, settings); err != nil {
 		return nil, fmt.Errorf("start OpAMP client: %w", err)
 	}
+	if ing != nil {
+		ing.SetSender(oc.c)
+	}
 	return oc, nil
+}
+
+func role(s *Settings) string {
+	if s.Role == "" {
+		return RoleWriter
+	}
+	return s.Role
 }
 
 // clientTLS loads the TLS settings with the TLS 1.3 floor of ADR 0004.

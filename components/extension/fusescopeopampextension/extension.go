@@ -8,6 +8,7 @@ package fusescopeopampextension // import "github.com/fuseone-io/fusescope-colle
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/agent"
 	"github.com/fuseone-io/fusescope-collector-server/components/extension/fusescopeopampextension/internal/metadata"
+	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
 )
 
 // Config is set by the provider; nothing in it is meant to be written by hand.
@@ -55,3 +57,35 @@ func (w *watcher) Ready() error {
 }
 
 func (*watcher) NotReady() error { return nil }
+
+var (
+	_ ingestpolicy.Provider         = (*watcher)(nil)
+	_ ingestpolicy.ReporterProvider = (*watcher)(nil)
+)
+
+// IngestPolicy is the ingest policy for receivers (ADR 0006). Without an
+// ingress-role OpAMP agent it is a source that never holds a policy, so
+// they fail closed.
+func (*watcher) IngestPolicy() ingestpolicy.Source {
+	if a := agent.Current(); a != nil && a.Ingest() != nil {
+		return a.Ingest().Source()
+	}
+	return noPolicy{}
+}
+
+// IngestReporter carries the ingest report, nil without an ingress agent.
+func (*watcher) IngestReporter() ingestpolicy.Reporter {
+	if a := agent.Current(); a != nil && a.Ingest() != nil {
+		return a.Ingest().Reporter()
+	}
+	return nil
+}
+
+type noPolicy struct{}
+
+var never = make(chan struct{})
+
+func (noPolicy) Current() *ingestpolicy.Snapshot { return nil }
+func (noPolicy) LastReceived() time.Time         { return time.Time{} }
+func (noPolicy) Changed() <-chan struct{}        { return never }
+func (noPolicy) Status() ingestpolicy.Status     { return ingestpolicy.Status{} }

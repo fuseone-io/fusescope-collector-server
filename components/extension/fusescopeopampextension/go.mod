@@ -62,6 +62,7 @@ require (
 	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/elastic/proxy-connect-dialer-go v0.1.1 // indirect
 	github.com/foxboron/go-tpm-keyfiles v0.0.0-20251226215517-609e4778396f // indirect
+	github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy v0.0.0
 	github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor v0.0.0
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -183,3 +184,5 @@ replace github.com/fuseone-io/fusescope-collector-server/components/processor/si
 replace github.com/fuseone-io/fusescope-collector-server/components/processor/signozllmpricingprocessor => ../../processor/signozllmpricingprocessor
 
 replace github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor => ../../processor/signozlogspipelineprocessor
+
+replace github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy => ../../pkg/ingestpolicy
