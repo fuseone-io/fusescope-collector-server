@@ -2,7 +2,9 @@ name: parity
 
 # The reference collector and the candidate each write to their own ClickHouse.
 # Both ClickHouse servers answer to "clickhouse" on their own network, so both
-# collectors run the configuration they would use in production.
+# collectors run the configuration they would use in production. Host ports default to
+# the ones below; parity.sh reads PARITY_*_PORT to move them, and COMPOSE_PROJECT_NAME
+# renames the project, for running beside other stacks.
 
 x-reference-image: &reference-image ghcr.io/fuseone-io/fusescope-otel-collector:${REFERENCE_VERSION:-0.145.0}
 x-reference-env: &reference-env
@@ -39,7 +41,7 @@ services:
       reference:
         aliases: [clickhouse]
     ports:
-      - "18123:8123"
+      - "${PARITY_REFERENCE_CLICKHOUSE_PORT:-18123}:8123"
 
   clickhouse-candidate:
     <<: *clickhouse
@@ -47,7 +49,7 @@ services:
       candidate:
         aliases: [clickhouse]
     ports:
-      - "28123:8123"
+      - "${PARITY_CANDIDATE_CLICKHOUSE_PORT:-28123}:8123"
 
   migrator-reference:
     <<: *migrator
@@ -69,11 +71,11 @@ services:
     entrypoint: [/fusescope-otel-collector]
     command: [--config=/etc/reference-collector.yaml]
     volumes:
-      - ../observe/reference-collector.yaml:/etc/reference-collector.yaml:ro
+      - ./reference-collector.yaml:/etc/reference-collector.yaml:ro
     networks: [reference]
     ports:
-      - "14318:4318"
-      - "13133:13133"
+      - "${PARITY_REFERENCE_OTLP_PORT:-14318}:4318"
+      - "${PARITY_REFERENCE_HEALTH_PORT:-13133}:13133"
     depends_on:
       migrator-reference:
         condition: service_completed_successfully
@@ -87,8 +89,8 @@ services:
       - ./candidate-collector.yaml:/etc/candidate-collector.yaml:ro
     networks: [candidate]
     ports:
-      - "24318:4318"
-      - "23133:13133"
+      - "${PARITY_CANDIDATE_OTLP_PORT:-24318}:4318"
+      - "${PARITY_CANDIDATE_HEALTH_PORT:-23133}:13133"
     depends_on:
       migrator-candidate:
         condition: service_completed_successfully
