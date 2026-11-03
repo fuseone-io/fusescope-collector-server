@@ -6,6 +6,12 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        # Accepts the demo collector's exporter keepalive (10 s, also when idle,
+        # demo-collector-shadow.yaml) instead of closing it with too_many_pings.
+        keepalive:
+          enforcement_policy:
+            min_time: 5s
+            permit_without_stream: true
       http:
         endpoint: 0.0.0.0:4318
   host_metrics:

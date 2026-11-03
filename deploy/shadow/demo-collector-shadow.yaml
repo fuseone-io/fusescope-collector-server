@@ -1,0 +1,42 @@
+# Merged into the demo collector's configuration to feed the shadow (README.md, Install).
+exporters:
+  otlp/shadow:
+    endpoint: dns:///fusescope-collector-shadow:4317
+    tls:
+      insecure: true
+    timeout: 5s
+    keepalive:
+      time: 10s
+      timeout: 5s
+      permit_without_stream: true
+    sending_queue:
+      enabled: true
+      sizer: bytes
+      queue_size: 33554432   # 32 MiB per signal, held in the demo collector's memory
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 30s
+
+# The shadow pipelines start with the demo pipelines' own memory_limiter (that
+# is its ID in the demo collector; the install checks it exists). Its state is
+# shared, but each pipeline asks it separately, so admission is not atomic
+# across the two branches (README, Risks). The batch processor accepts the copy
+# and exports it on its own, so a full or failing shadow queue drops shadow
+# copies and never fails a demo request.
+processors:
+  batch/shadow: {}
+
+service:
+  pipelines:
+    traces/shadow:
+      receivers: [otlp]
+      processors: [memory_limiter, batch/shadow]
+      exporters: [otlp/shadow]
+    logs/shadow:
+      receivers: [otlp]
+      processors: [memory_limiter, batch/shadow]
+      exporters: [otlp/shadow]
+    metrics/shadow:
+      receivers: [otlp]
+      processors: [memory_limiter, batch/shadow]
+      exporters: [otlp/shadow]

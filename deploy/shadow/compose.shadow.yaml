@@ -1,7 +1,9 @@
 # Override for the FuseScope demo (fuseone-io/fusescope deploy/demo): runs the
-# FuseScope collector in shadow. Copy this directory to <demo>/shadow and use
+# FuseScope collector in shadow. The demo collector sends it a copy of what it
+# receives through an exporter added to its own configuration (README.md);
+# nothing else in the demo changes. Copy this directory to <demo>/shadow and use
 #   docker compose -f compose.yaml -f shadow/compose.shadow.yaml ...
-# Paths are relative to the demo directory. See README.md.
+# Paths are relative to the demo directory.
 
 x-shadow-logging: &shadow-logging
   logging:
@@ -11,31 +13,11 @@ x-shadow-logging: &shadow-logging
       max-file: "3"
 
 services:
-  # Sources send to the tee instead of otel-collector.
-  hotrod:
-    environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-tee:4318
-  logs-checkout:
-    command: [logs, --otlp-endpoint=otel-tee:4317, --otlp-insecure, --duration=inf, --rate=0.5, --service=checkout, --otlp-attributes=deployment.environment="demo", --body=order placed, --severity-text=Info, --severity-number=9]
-  logs-payment-error:
-    command: [logs, --otlp-endpoint=otel-tee:4317, --otlp-insecure, --duration=inf, --rate=0.1, --service=payment, --otlp-attributes=deployment.environment="demo", --body=card declined - insufficient funds, --severity-text=Error, --severity-number=17]
-  traces-payment-errors:
-    command: [traces, --otlp-endpoint=otel-tee:4317, --otlp-insecure, --duration=inf, --rate=0.1, --service=payment, --otlp-attributes=deployment.environment="demo", --child-spans=2, --span-duration=250ms, --status-code=Error]
-  fusescope:
-    environment:
-      SIGNOZ_RUM_COLLECTOR__ENDPOINT: http://otel-tee:4318
-
-  otel-tee:
-    <<: *shadow-logging
-    image: otel/opentelemetry-collector:0.139.0
-    command: [--config=/etc/otelcol/tee.yaml]
-    volumes:
-      - ./shadow/tee.yaml:/etc/otelcol/tee.yaml:ro
-    networks: [default, shadow]
-    depends_on: [otel-collector]
-    restart: unless-stopped
-    mem_limit: 384m
-    cpus: 0.2
+  # Headroom for the copy it sends to the shadow: the demo collector ran close
+  # to its 384 MiB limit on its own (README.md, Risks).
+  otel-collector:
+    mem_limit: 768m
+    cpus: 0.5
 
   clickhouse-shadow:
     <<: *shadow-logging
@@ -59,7 +41,7 @@ services:
       retries: 12
     networks: [shadow]
     restart: unless-stopped
-    mem_limit: 2560m
+    mem_limit: 4096m
     cpus: 0.75
 
   # The reference image's migrator, run as a black box (ADR 0002), creates
@@ -92,7 +74,9 @@ services:
     volumes:
       - ./shadow/collector.yaml:/etc/fusescope-collector/config.yaml:ro
       - /:/hostfs:ro
-    networks: [shadow]
+    # On the demo network only to receive from otel-collector; it writes only
+    # to clickhouse-shadow, which is not on that network.
+    networks: [default, shadow]
     depends_on:
       migrator-shadow:
         condition: service_completed_successfully

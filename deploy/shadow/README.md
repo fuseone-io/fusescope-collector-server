@@ -2,19 +2,29 @@
 
 Runs this collector next to the demo's collector on the same traffic, writing to its own ClickHouse,
 and compares the two (DESIGN.md §9, phase 6, [#7](https://github.com/fuseone-io/fusescope-collector-server/issues/7)).
-The demo's collector, ClickHouse and UI are unchanged: only the sources point at a tee.
+The demo's path is unchanged: the demo collector sends a copy of what its `otlp` receiver accepts to the shadow
+collector, through an exporter added to its own configuration.
 
 ```
-hotrod, telemetrygen, RUM (via fusescope) ──► otel-tee ──► otel-collector ──► clickhouse          (demo, unchanged)
-                                                  └──────► fusescope-collector-shadow ──► clickhouse-shadow
+hotrod, telemetrygen, RUM (via fusescope) ──► otel-collector ──► clickhouse          (demo, unchanged)
+                                                   └─ otlp/shadow ──► fusescope-collector-shadow ──► clickhouse-shadow
                                        shadow-compare: both, read-only, per settled window
 ```
 
+Two attempts went wrong before this one, both on 2026-11-02:
+- A tee in front of the demo collector kept a dead gRPC connection to the shadow collector after it was recreated;
+  its shadow side backed up, senders retried, and the demo collector, already close to its memory limit, refused and
+  was overloaded: about 7 minutes of demo data lost (22:29–22:36 UTC) and duplicated spans at 22:28. Hence no hop in
+  front of the demo, and an exporter that detects a dead connection.
+- The first exporter block deployed pointed at a local test name that resolved to the demo collector itself, which
+  then exported to itself in a loop: duplicated demo data for about 2 minutes (23:10–23:12 UTC). Hence the block as a
+  reviewed file, [`demo-collector-shadow.yaml`](demo-collector-shadow.yaml), and an endpoint check before it is used.
+
 | File | What |
 |---|---|
-| `compose.shadow.yaml` | override for the demo's `compose.yaml`: points the sources at `otel-tee`, adds the shadow services |
-| `tee.yaml` | upstream core collector: OTLP in, OTLP to the demo collector and, through a shadow-only pipeline, to the shadow collector |
+| `compose.shadow.yaml` | override for the demo's `compose.yaml`: adds the shadow services, gives the demo collector 768 MiB and 0.5 CPU |
 | `collector.yaml` | this collector's configuration in shadow |
+| `demo-collector-shadow.yaml` | the block merged into the demo collector's configuration to feed the shadow |
 | `clickhouse/cluster.xml` | single-node `cluster` with an embedded keeper, named `clickhouse-shadow` |
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
@@ -47,27 +57,104 @@ On a workstation, from this repository at the commit to shadow:
 ```sh
 docker build -t fusescope-collector:shadow .
 docker save fusescope-collector:shadow | ssh root@<demo-host> docker load
-scp -r deploy/shadow root@<demo-host>:/opt/fusescope/   # lands in /opt/fusescope/shadow, also on re-runs
+tar czf - -C deploy shadow | ssh root@<demo-host> 'tar xzf - --no-same-owner -C /opt/fusescope'
 ```
 
-On the demo host, in `/opt/fusescope`:
+On the demo host, in `/opt/fusescope`, start the shadow side; nothing in the demo changes yet:
 
 ```sh
-c="docker compose -f compose.yaml -f shadow/compose.shadow.yaml --profile generators"
-$c up -d clickhouse-shadow migrator-shadow fusescope-collector-shadow otel-tee
-$c up -d hotrod logs-checkout logs-payment-error traces-payment-errors fusescope   # sources to the tee
+# Waits for clickhouse-shadow to be healthy and for the migration to succeed;
+# none of these depends on a demo service.
+docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --wait fusescope-collector-shadow
 ```
 
-Recreating `fusescope` restarts the backend (a few seconds of UI and RUM unavailability).
+Then the demo collector's configuration gets an exporter and one pipeline per signal fed by its existing `otlp`
+receiver (its own telemetry names it `otlp`), leaving its existing pipelines as they are. The block is
+[`demo-collector-shadow.yaml`](demo-collector-shadow.yaml):
 
-Check: `docker logs fusescope-demo-otel-tee-1` and `fusescope-demo-fusescope-collector-shadow-1` show no export
-errors, and the demo's UI keeps showing new data.
+```yaml
+exporters:
+  otlp/shadow:
+    endpoint: dns:///fusescope-collector-shadow:4317
+    tls:
+      insecure: true
+    timeout: 5s
+    keepalive:
+      time: 10s
+      timeout: 5s
+      permit_without_stream: true
+    sending_queue:
+      enabled: true
+      sizer: bytes
+      queue_size: 33554432   # 32 MiB per signal, held in the demo collector's memory
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 30s
 
-Resources: about 3.3 GiB and 1.3 CPU more (`clickhouse-shadow` 2.5 GiB, collector 384 MiB, tee 384 MiB).
+# The shadow pipelines start with the demo pipelines' own memory_limiter (that
+# is its ID in the demo collector; the install checks it exists). Its state is
+# shared, but each pipeline asks it separately, so admission is not atomic
+# across the two branches (README, Risks). The batch processor accepts the copy
+# and exports it on its own, so a full or failing shadow queue drops shadow
+# copies and never fails a demo request.
+processors:
+  batch/shadow: {}
+
+service:
+  pipelines:
+    traces/shadow:
+      receivers: [otlp]
+      processors: [memory_limiter, batch/shadow]
+      exporters: [otlp/shadow]
+    logs/shadow:
+      receivers: [otlp]
+      processors: [memory_limiter, batch/shadow]
+      exporters: [otlp/shadow]
+    metrics/shadow:
+      receivers: [otlp]
+      processors: [memory_limiter, batch/shadow]
+      exporters: [otlp/shadow]
+```
+
+The demo collector's command takes a single `--config`, so the block is merged into its file. With the demo owner's
+go-ahead (an exception to ADR 0002 for this deployment file, which is merged without being read), on the demo host:
+
+```sh
+set -e
+cd /opt/fusescope/otel-collector
+# The first run keeps the configuration as it was before the shadow, for the
+# rollback's memory limiter values. Every run starts from the current file.
+[ -e config.yaml.bak-pre-shadow ] || cp -p config.yaml config.yaml.bak-pre-shadow
+yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro \
+  mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025 "$@"; }
+# Only the keys the shadow manages are removed; anything else in the file stays.
+strip='del(.exporters."otlp/shadow") | del(.processors."batch/shadow") | del(.service.pipelines."traces/shadow") | del(.service.pipelines."logs/shadow") | del(.service.pipelines."metrics/shadow")'
+# Headroom: its memory limiter refused at 256 MiB (limit_mib 320, spike 64, from its own logs).
+yq "$strip | (.processors[] | select(has(\"limit_mib\"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)" /w/config.yaml > base.yaml
+yq eval-all '. as $i ireduce ({}; . * $i)' /w/base.yaml /s/demo-collector-shadow.yaml > merged.yaml
+[ "$(yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml)" = dns:///fusescope-collector-shadow:4317 ]
+[ "$(yq '.processors | has("memory_limiter")' /w/merged.yaml)" = true ]   # the demo pipelines' limiter the block reuses
+mv merged.yaml config.yaml && rm base.yaml
+# Recreated, as compose does not see changes inside a mounted file; 768 MiB, 0.5 CPU.
+cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps --force-recreate otel-collector
+```
+
+Watch the first minutes and restore `config.yaml.bak-pre-shadow` at once if the demo collector logs `otlp/shadow`
+errors or refusals, or if the demo receives clearly more spans than the shadow (duplicates). The shadow pipelines
+carry exactly what the OTLP receiver accepted, before any of the demo collector's processing, so neither its host
+metrics nor its span metrics reach the shadow.
+
+Check: the demo's UI keeps showing new data, and `docker logs fusescope-demo-otel-collector-1` shows no
+`otlp/shadow` export errors.
+
+Upgrading the shadow collector (new image or configuration) needs nothing on the demo side: the demo collector's
+exporter reconnects. Resources: about 4.8 GiB and 1.3 CPU more (`clickhouse-shadow` 4 GiB, as much as the demo's own ClickHouse needs for the
+same data; collector 384 MiB; the demo collector's extra 384 MiB).
 
 ## Compare
 
 ```sh
+c="docker compose -f compose.yaml -f shadow/compose.shadow.yaml"
 $c run --rm shadow-compare                                  # last settled hour
 $c run --rm -e WINDOW_MINUTES=1440 shadow-compare           # last day
 ```
@@ -79,22 +166,46 @@ keys, and series per metric must be equal. Phase 6 asks for a week with every ho
 5 * * * * cd /opt/fusescope && docker compose -f compose.yaml -f shadow/compose.shadow.yaml run --rm shadow-compare >> /var/log/fusescope-shadow.log 2>&1
 ```
 
-## Rollback
+## Upgrading from the tee version
 
-Point the sources back at the demo collector, then stop the shadow:
+The first version (#32) pointed the sources at an `otel-tee`. Before merging the exporter block, put the sources back
+on the demo collector and remove the tee, or the shadow gets every item twice:
 
 ```sh
-docker compose -f compose.yaml --profile generators up -d hotrod logs-checkout logs-payment-error traces-payment-errors fusescope
-docker compose -f compose.yaml -f shadow/compose.shadow.yaml rm -sf otel-tee fusescope-collector-shadow migrator-shadow clickhouse-shadow
+docker compose -f compose.yaml --profile generators up -d --no-deps hotrod logs-checkout logs-payment-error traces-payment-errors fusescope
+docker rm -f fusescope-demo-otel-tee-1
+```
+
+## Rollback
+
+Remove the shadow's keys from the current demo collector configuration, put its memory limiter back to the values
+it had before the shadow, recreate it with the demo's compose alone (384 MiB), then stop the shadow:
+
+```sh
+set -e
+cd /opt/fusescope/otel-collector
+yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w \
+  mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025 "$@"; }
+strip='del(.exporters."otlp/shadow") | del(.processors."batch/shadow") | del(.service.pipelines."traces/shadow") | del(.service.pipelines."logs/shadow") | del(.service.pipelines."metrics/shadow")'
+lim=$(yq '[.processors[] | select(has("limit_mib")) | .limit_mib][0]' /w/config.yaml.bak-pre-shadow)
+spike=$(yq '[.processors[] | select(has("limit_mib")) | .spike_limit_mib][0]' /w/config.yaml.bak-pre-shadow)
+yq "$strip | (.processors[] | select(has(\"limit_mib\"))) |= (.limit_mib = $lim | .spike_limit_mib = $spike)" /w/config.yaml > restored.yaml
+mv restored.yaml config.yaml
+cd .. && docker compose -f compose.yaml up -d --no-deps --force-recreate otel-collector
+docker compose -f compose.yaml -f shadow/compose.shadow.yaml rm -sf fusescope-collector-shadow migrator-shadow clickhouse-shadow
 docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's data
 ```
 
 ## Risks
 
-- The tee is a new hop on the demo's path. If it stops, the demo gets no data until rollback.
-- The shadow side never fails a request to the demo: it sits behind a forward connector and a batch processor, which
-  accept the data and export it on their own. A slow, full (32 MiB per signal) or failing shadow path drops shadow
-  data, seen as differences in `compare.py`. Checked with the demo destination healthy and the shadow queue full:
-  the sender saw no error and the demo received everything. Only the tee's memory limiter (300 MiB) can refuse, under
-  a load the demo never sends.
+- The shadow pipelines sit behind a `batch/shadow` processor, which accepts the copy and exports it on its own: a
+  full or failing `otlp/shadow` queue (32 MiB per signal) drops shadow copies and never fails a demo request. The
+  keepalive, the 5 s timeout and the 30 s retry limit keep that queue draining while the shadow collector is away.
+- Admission is not atomic across the receiver's two branches: if memory crosses the shared limiter's threshold
+  between its calls to the demo and the shadow pipelines (microseconds apart), one side accepts and the other refuses,
+  and the sender's retry duplicates on one side. At the demo's volume the collector stays far below the limit; a
+  duplicate would show in `compare.py`. Limiting once before the branch would mean rewriting the demo collector's
+  existing pipelines.
+- The demo collector holds the queued copies in its own memory (768 MiB, limiter at 640 MiB); at the demo's volume
+  that is a few MiB at most.
 - The shadow collector shares the host's CPU and memory with the demo; the limits above bound it.
