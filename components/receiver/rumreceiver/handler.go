@@ -399,7 +399,11 @@ func (h *handler) consumeTraces(ctx context.Context, app *ingestpolicy.Applicati
 	if enc == encodingJSON {
 		td, err = (&ptrace.JSONUnmarshaler{}).UnmarshalTraces(wk.body.Bytes())
 	} else {
-		td, err = (&ptrace.ProtoUnmarshaler{}).UnmarshalTraces(wk.body.Bytes())
+		// The export request migrates the deprecated scope lists (field
+		// 1000), as the JSON unmarshaler does; the plain one drops them.
+		req := ptraceotlp.NewExportRequest()
+		err = req.UnmarshalProto(wk.body.Bytes())
+		td = req.Traces()
 	}
 	if err != nil {
 		return "", refusalInvalid
@@ -434,7 +438,9 @@ func (h *handler) consumeLogs(ctx context.Context, app *ingestpolicy.Application
 	if enc == encodingJSON {
 		ld, err = (&plog.JSONUnmarshaler{}).UnmarshalLogs(wk.body.Bytes())
 	} else {
-		ld, err = (&plog.ProtoUnmarshaler{}).UnmarshalLogs(wk.body.Bytes())
+		req := plogotlp.NewExportRequest()
+		err = req.UnmarshalProto(wk.body.Bytes())
+		ld = req.Logs()
 	}
 	if err != nil {
 		return "", refusalInvalid
