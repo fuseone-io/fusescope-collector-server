@@ -18,6 +18,8 @@ receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.164.1
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver v0.164.1
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver v0.164.1
+  - gomod: github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver v0.0.0
+    path: ./components/receiver/rumreceiver
 
 processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.164.0
@@ -73,3 +75,6 @@ providers:
 # fixed version itself; `make vuln` lists what is still needed.
 replaces:
   - golang.org/x/net => golang.org/x/net v0.62.0
+  # The ingest policy store shared by rumreceiver and ingestauth (ADR 0006);
+  # relative to output_path.
+  - github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy => ../components/pkg/ingestpolicy
