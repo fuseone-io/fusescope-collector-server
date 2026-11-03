@@ -567,6 +567,15 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 - `reportSequence` is a uint64, strictly increasing per agent across restarts: the collector
   persists the next value in its storage directory, next to the OpAMP instance UID
   ([ADR 0008](../adr/0008-opamp-remote-config.md) point 4), before sending a report with it.
+  It is `<storage>/ingest/report-sequence`, mode `0600`, written atomically (temporary file,
+  fsync, rename, directory fsync). The next value is the larger of the last one plus 1 and the
+  current Unix time in microseconds, so a lost or unreadable file still never reuses a sequence;
+  a value that cannot be persisted is not used and that report is not sent ([M]).
+- **Collector, sending** ([M]): `rumreceiver` builds a report every 60 s and right after each
+  OpAMP (re)connection, one at a time; handing its pages to the OpAMP client, in order, is
+  bounded by 30 s, after which the report is abandoned and its values stay pending. The report
+  is sent with no policy too, so `policy.status` reaches the backend. It reaches the extension
+  through the same `ingest_policy` extension ID as the policy.
 - The backend acknowledges with a custom message of the same capability, type `reportAck`:
 
   ```json
@@ -665,7 +674,10 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
   never sent, or already processed, is ignored. Handing a report to the OpAMP client clears
-  nothing.
+  nothing. A `reportAck` is parsed strictly: at most 1 KiB, exactly the two fields above,
+  `schemaVersion` 1 and a sequence above 0; anything else is dropped with a log line of its
+  size only. At most 16 acks wait for the receiver; more are dropped, which only repeats their
+  values in the next report ([M]).
 
 ## 11. The ingest policy
 
@@ -677,6 +689,17 @@ declares the custom capability `io.fuseone.fusescope.ingest.v1`; the backend sen
 snapshot, never a delta, pushed on any change, when the collector's `policy.version` is behind,
 and every 5 minutes regardless ([ADR10] line 64). It is sent only to collectors of role `ingress`
 ([ADR10] line 62; [ADR9] line 79).
+
+**Collector side** ([M]): the role is the `fusescope_opamp` setting `role` (`writer`, the
+default, or `ingress`), reported as the non-identifying description attribute
+`fusescope.collector.role` ([opamp.md](opamp.md) §8). Only `ingress` declares the capability,
+holds the policy and sends reports; a `writer` ignores every message of the capability, and its
+`IngestPolicy()` never holds a policy, so a `rumreceiver` on it fails closed. Messages of other
+capabilities or types are ignored. The OpAMP client accepts messages up to `max_policy_size` plus
+1 MiB, so a policy over the cap still arrives and is rejected as `too_large` rather than dropping
+the connection. Received policies are applied by one worker, off the OpAMP callback; a newer
+`policy` message replaces one still waiting, so only the latest is applied. Nothing about a
+message's content is logged, only its size.
 
 The policy is the remote authority for ingest authentication and identity (ADR 0006 decision
 3): it can add keys, widen origins and signals, set the org and the stamped name and
@@ -744,8 +767,9 @@ that breaks a rule, a string with surrounding spaces included, is `invalid_value
   (it refreshes the policy's last-received time, for staleness). One with a higher version that
   passes §11.2 replaces the policy held.
 - **Cache** ([ADR10] line 74; order [M43]): a valid policy of a higher version first has its
-  floor written to `<storage>/ingest-policy.state` as `{version, sha256}`, the highest accepted
-  revision, then its data bytes to `<storage>/ingest-policy.json`. Both mode `0600`, each
+  floor written to `<storage>/ingest/ingest-policy.state` as `{version, sha256}`, the highest
+  accepted revision, then its data bytes to `<storage>/ingest/ingest-policy.json`, where
+  `<storage>` is the `fusescope_opamp` storage directory and `ingest/` is mode `0700`. Both mode `0600`, each
   written atomically (temporary file renamed over the old one, as
   [ADR 0008](../adr/0008-opamp-remote-config.md) point 4 does for pushes). They hold verifiers
   only, never a key, since the message carries none, and are never logged or reported.

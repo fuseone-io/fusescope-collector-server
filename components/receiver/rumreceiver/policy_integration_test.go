@@ -18,42 +18,22 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
+	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy/ingestpolicytest"
 )
 
-func maxKey(i int) string { return fmt.Sprintf("rum_pub_%032d", i) }
+func maxKey(i int) string { return ingestpolicytest.Key(i) }
 
-// maxPolicy is a policy at every count bound of §11.1 (50 000 keys, each
-// with a rate limit, 10 000 applications with two origins), padded with
-// whitespace to exactly max_policy_size.
 func maxPolicy(t *testing.T, version uint64) []byte {
 	t.Helper()
-	p := &ingestpolicy.Policy{SchemaVersion: 1, Version: version, IssuedAt: "2026-11-03T12:00:00Z"}
-	for i := range ingestpolicy.MaxApplications {
-		p.RUMApplications = append(p.RUMApplications, ingestpolicy.RUMApplication{
-			ID: fmt.Sprintf("0191c5e2-7f0a-7c3e-9a51-%012d", i), OrgID: testOrg,
-			Name: fmt.Sprintf("app-%d", i), Environment: "production", Platform: ingestpolicy.PlatformWeb,
-			AllowedOrigins:      []string{fmt.Sprintf("https://app-%d.example.com", i), fmt.Sprintf("https://*.app-%d.example.com", i)},
-			AllowedPackageNames: []string{},
-			PIIPolicy:           ingestpolicy.PIIPolicy{DropQuery: true, QueryAllowlist: []string{"page"}, URLAllowlist: []string{}},
-		})
-	}
-	for i := range ingestpolicy.MaxKeys {
-		app := p.RUMApplications[i%ingestpolicy.MaxApplications].ID
-		p.Keys = append(p.Keys, ingestpolicy.Key{
-			ID: fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", i), SHA256: verifier(maxKey(i)), OrgID: testOrg,
-			Kind: ingestpolicy.KindPublic, Signals: []string{"traces", "logs"}, ApplicationID: ptr(app),
-			Limit: &ingestpolicy.Limit{Rate: 50, Burst: 100},
-		})
-	}
-	data := encodePolicy(t, p)
-	require.LessOrEqual(t, len(data), ingestpolicy.MaxSize, "the generated policy must fit before padding")
-	return append(data, bytes.Repeat([]byte("\n"), ingestpolicy.MaxSize-len(data))...)
+	data, err := ingestpolicytest.MaxPolicy(version)
+	require.NoError(t, err)
+	return data
 }
 
 // TestMaxSizePolicyAcceptedCachedApplied is the step 2 part of the §13
 // decision 1 requirement: a policy at max_policy_size is accepted, cached,
 // applied, and applied again from the cache after a restart. The OpAMP leg
-// of the end-to-end test comes with the extension (issue #13, step 3).
+// is TestIngestPolicyOverOpAMP in the extension's provider package.
 func TestMaxSizePolicyAcceptedCachedApplied(t *testing.T) {
 	data := maxPolicy(t, 7)
 	require.Len(t, data, ingestpolicy.MaxSize)
@@ -82,8 +62,8 @@ func TestMaxSizePolicyAcceptedCachedApplied(t *testing.T) {
 		rec := f.post(tracesPath, testTraceJSON, jsonHeaders(maxKey(last), "Origin", origin))
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		resource := f.traces.AllTraces()[0].ResourceSpans().At(0).Resource().Attributes().AsRaw()
-		assert.Equal(t, fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", last), resource[attributeKeyID])
-		assert.Equal(t, fmt.Sprintf("0191c5e2-7f0a-7c3e-9a51-%012d", last%ingestpolicy.MaxApplications), resource[attributeApplicationID])
+		assert.Equal(t, ingestpolicytest.KeyID(last), resource[attributeKeyID])
+		assert.Equal(t, ingestpolicytest.ApplicationID(last%ingestpolicy.MaxApplications), resource[attributeApplicationID])
 
 		pre := f.do(http.MethodOptions, tracesPath, nil, map[string]string{"Origin": "https://x.app-1234.example.com", "Access-Control-Request-Method": "POST"})
 		assert.Equal(t, http.StatusNoContent, pre.Code)

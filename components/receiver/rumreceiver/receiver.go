@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
 	"github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/metadata"
@@ -38,8 +39,15 @@ var (
 // a new snapshot.
 const stalenessPoll = time.Second
 
-// expireEvery is a variable for tests.
-var expireEvery = time.Minute
+// expireEvery, reportEvery and reportTimeout are variables for tests.
+var (
+	expireEvery = time.Minute
+	// reportEvery is the report period (§10.4).
+	reportEvery = time.Minute
+	// reportTimeout bounds the hand-over of one report's pages, so a stalled
+	// connection delays the next report instead of stopping reporting.
+	reportTimeout = 30 * time.Second
+)
 
 type rumReceiver struct {
 	cfg       *Config
@@ -144,7 +152,7 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 		return nil
 	}
 
-	source, err := resolveSource(host, r.cfg.IngestPolicy)
+	source, reporter, err := resolveSource(host, r.cfg.IngestPolicy)
 	if err != nil {
 		return err
 	}
@@ -197,7 +205,63 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 		defer r.wg.Done()
 		r.watch(source)
 	}()
+	if reporter != nil {
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			r.report(reporter, source)
+		}()
+	} else if r.cfg.IngestPolicy != (component.ID{}) {
+		r.set.Logger.Warn("The ingest_policy extension carries no ingest report; the backend will not see key use or rejections")
+	}
 	return nil
+}
+
+// report sends one report every reportEvery and after each reconnection,
+// one at a time, and applies the acknowledgements (§10.4). A report that is
+// not acknowledged leaves its values pending for the next one.
+func (r *rumReceiver) report(reporter ingestpolicy.Reporter, source ingestpolicy.Source) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-r.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	tick := time.NewTicker(reportEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+		case <-reporter.Connected():
+		case seq := <-reporter.Acks():
+			r.monitor.Ack(seq)
+			continue
+		case <-r.done:
+			return
+		}
+		r.sendReport(ctx, reporter, source)
+	}
+}
+
+func (r *rumReceiver) sendReport(ctx context.Context, reporter ingestpolicy.Reporter, source ingestpolicy.Source) {
+	seq, err := reporter.NextSequence()
+	if err != nil {
+		r.set.Logger.Error("Ingest report not sent: its reportSequence could not be persisted", zap.Error(err))
+		return
+	}
+	pages, err := r.monitor.Build(seq, r.handler.now(), source.Status())
+	if err != nil {
+		r.set.Logger.Error("Ingest report not built", zap.Uint64("report_sequence", seq), zap.Error(err))
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
+	defer cancel()
+	if err := reporter.Send(ctx, pages); err != nil && ctx.Err() != context.Canceled {
+		r.set.Logger.Warn("Ingest report not sent; its values stay pending", zap.Uint64("report_sequence", seq), zap.Int("pages", len(pages)), zap.Error(err))
+	}
 }
 
 // watch keeps the monitors to the policy's applications and reports the
@@ -278,20 +342,25 @@ func (r *rumReceiver) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// resolveSource finds the extension that holds the ingest policy.
-func resolveSource(host component.Host, id component.ID) (ingestpolicy.Source, error) {
+// resolveSource finds the extension that holds the ingest policy and, if it
+// carries one, its report transport.
+func resolveSource(host component.Host, id component.ID) (ingestpolicy.Source, ingestpolicy.Reporter, error) {
 	if id == (component.ID{}) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ext, ok := host.GetExtensions()[id]
 	if !ok {
-		return nil, fmt.Errorf("ingest_policy: extension %q not found", id)
+		return nil, nil, fmt.Errorf("ingest_policy: extension %q not found", id)
 	}
 	provider, ok := ext.(ingestpolicy.Provider)
 	if !ok {
-		return nil, fmt.Errorf("ingest_policy: extension %q does not hold an ingest policy", id)
+		return nil, nil, fmt.Errorf("ingest_policy: extension %q does not hold an ingest policy", id)
 	}
-	return provider.IngestPolicy(), nil
+	var reporter ingestpolicy.Reporter
+	if rp, ok := ext.(ingestpolicy.ReporterProvider); ok {
+		reporter = rp.IngestReporter()
+	}
+	return provider.IngestPolicy(), reporter, nil
 }
 
 // noPolicy is the source without a policy: fail closed.

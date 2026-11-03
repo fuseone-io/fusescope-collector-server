@@ -464,25 +464,8 @@ func (m *Monitor) Ack(seq uint64) {
 	}
 }
 
-// ParseAck decodes a reportAck strictly: {"schemaVersion":1,"reportSequence":N}.
-func ParseAck(data []byte) (uint64, error) {
-	var ack struct {
-		SchemaVersion  *int    `json:"schemaVersion"`
-		ReportSequence *uint64 `json:"reportSequence"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&ack); err != nil {
-		return 0, fmt.Errorf("reportAck: %w", err)
-	}
-	if dec.More() {
-		return 0, errors.New("reportAck: trailing data")
-	}
-	if ack.SchemaVersion == nil || *ack.SchemaVersion != 1 || ack.ReportSequence == nil {
-		return 0, errors.New("reportAck: schemaVersion 1 and reportSequence are required")
-	}
-	return *ack.ReportSequence, nil
-}
+// ParseAck decodes a reportAck strictly (ingestpolicy.ParseReportAck).
+func ParseAck(data []byte) (uint64, error) { return ingestpolicy.ParseReportAck(data) }
 
 func (app *applicationMonitor) activeSince(oldest int64) bool {
 	for i := range app.buckets {
