@@ -1,7 +1,7 @@
 // Copyright FuseOne
 // SPDX-License-Identifier: Apache-2.0
 
-package report
+package ingestreport
 
 import (
 	"context"
@@ -14,8 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
 )
 
 // clockOf is the assembler's fake clock, installed on first use.
@@ -44,19 +42,39 @@ func retryAt(a *Assembler, when time.Time) []Committed {
 	return a.Retry()
 }
 
-// sequences builds reports 1..n of one monitor, each of several pages.
+const (
+	appA   = "0191c5e2-7f0a-7c3e-9a51-3c2b1d4e5f60"
+	keyOne = "0191c5e2-8a1b-7d2e-b0c4-000000000001"
+)
+
+var t0 = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+
+func keyID(i int) string { return fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", i) }
+
+// build encodes report seq with one application and keys, as the
+// collector's monitor does.
+func build(t *testing.T, seq uint64, keys []KeyReport) [][]byte {
+	t.Helper()
+	header := Report{
+		SchemaVersion: 1, ReportSequence: seq, GeneratedAt: "2026-11-03T12:00:00Z", WindowSeconds: 300,
+		Policy: PolicyReport{Version: 1, Status: "ok"},
+	}
+	apps := []ApplicationReport{{ID: appA, FirstSeenAt: "2026-11-03T12:00:00Z", Counts: Counts{}, Rejections: []RejectionReport{}}}
+	pages, err := Paginate(header, apps, keys)
+	require.NoError(t, err)
+	return pages
+}
+
+// sequences builds reports 1..n, each of several pages.
 func sequences(t *testing.T, n int) [][][]byte {
 	t.Helper()
-	m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 10_000})
-	snap := snapshot(t, 1)
-	m.SetPolicy(snap)
-	for i := range 6000 {
-		m.Ingest(snap.Application(appA), keyID(i), &Batch{}, t0)
+	keys := make([]KeyReport, 6000)
+	for i := range keys {
+		keys[i] = KeyReport{ID: keyID(i), LastUsedAt: "2026-11-03T12:00:00Z"}
 	}
 	out := make([][][]byte, n+1)
 	for seq := 1; seq <= n; seq++ {
-		pages, err := m.Build(uint64(seq), t0, ingestpolicy.Status{Version: 1})
-		require.NoError(t, err)
+		pages := build(t, uint64(seq), keys)
 		require.GreaterOrEqual(t, len(pages), 2)
 		out[seq] = pages
 	}
@@ -651,16 +669,13 @@ func TestAssemblerCommitRetry(t *testing.T) {
 // smallSequence is a two-page report of small pages with sequence seq.
 func smallSequence(t *testing.T, seq int) [][]byte {
 	t.Helper()
-	m, snap := newTestMonitor(t, 1)
-	m.Ingest(snap.Application(appA), keyOne, &Batch{}, t0)
-	pages, err := m.Build(uint64(seq), t0, ingestpolicy.Status{Version: 1})
-	require.NoError(t, err)
+	pages := build(t, uint64(seq), []KeyReport{{ID: keyOne, LastUsedAt: "2026-11-03T12:00:00Z"}})
 	require.Len(t, pages, 1)
 	// Two pages: the same content, renumbered, with the key moved.
 	one := strings.Replace(string(pages[0]), `"pages":1`, `"pages":2`, 1)
 	two := strings.Replace(strings.Replace(one, `"page":1`, `"page":2`, 1), `"keys":[{"id":"`+keyOne+`","lastUsedAt":"2026-11-03T12:00:00Z"}]`, `"keys":[]`, 1)
 	two = replaceApplications(two, `"applications":[]`)
-	_, err = Merge([][]byte{[]byte(one), []byte(two)})
+	_, err := Merge([][]byte{[]byte(one), []byte(two)})
 	require.NoError(t, err, "a valid two-page sequence")
 	return [][]byte{[]byte(one), []byte(two)}
 }

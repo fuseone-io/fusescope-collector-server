@@ -1,7 +1,7 @@
 // Copyright FuseOne
 // SPDX-License-Identifier: Apache-2.0
 
-package report // import "github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/report"
+package ingestreport // import "github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestreport"
 
 import (
 	"context"
