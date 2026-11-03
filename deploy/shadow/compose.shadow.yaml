@@ -88,7 +88,7 @@ services:
   # APM pages over the shadow's data, for compare_ui.py. On demand, profile ui.
   fusescope-shadow-ui:
     <<: *shadow-logging
-    image: ghcr.io/fuseone-io/fusescope:${FUSESCOPE_VERSION:?set FUSESCOPE_VERSION in .env}
+    image: ghcr.io/fuseone-io/fusescope:${FUSESCOPE_VERSION}   # the demo backend's version, from .env
     environment:
       SIGNOZ_WEB_ENABLED: "false"
       SIGNOZ_SQLSTORE_SQLITE_PATH: /var/lib/fusescope/signoz.db
