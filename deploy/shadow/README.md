@@ -52,13 +52,15 @@ demo's `compose.yaml` and from what the demo's ClickHouse holds (read-only queri
 
 ## Install
 
-On a workstation, from this repository at the commit to shadow:
+Copy this directory to the demo host, from this repository at the commit to shadow:
 
 ```sh
-docker build -t fusescope-collector:shadow .
-docker save fusescope-collector:shadow | ssh root@<demo-host> docker load
 tar czf - -C deploy shadow | ssh root@<demo-host> 'tar xzf - --no-same-owner -C /opt/fusescope'
 ```
+
+The shadow collector runs `SHADOW_COLLECTOR_IMAGE`, for example the published
+`ghcr.io/fuseone-io/fusescope-collector:sha-<commit>` (set it in the demo's `.env`); a local build works too:
+`docker build -t fusescope-collector:shadow . && docker save fusescope-collector:shadow | ssh root@<demo-host> docker load`.
 
 On the demo host, in `/opt/fusescope`, start the shadow side; nothing in the demo changes yet:
 
