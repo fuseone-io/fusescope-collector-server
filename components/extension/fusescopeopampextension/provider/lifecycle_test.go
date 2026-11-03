@@ -85,10 +85,11 @@ type backend struct {
 	effective []byte
 	statuses  []*protobufs.RemoteConfigStatus
 	// The ingest capability's traffic (ingest_test.go).
-	description  *protobufs.AgentDescription
-	describedUID []byte
-	capabilities *protobufs.CustomCapabilities
-	customs      []*protobufs.CustomMessage
+	description   *protobufs.AgentDescription
+	describedUID  []byte
+	authorization string
+	capabilities  *protobufs.CustomCapabilities
+	customs       []*protobufs.CustomMessage
 }
 
 func startBackend(t *testing.T) *backend {
@@ -101,7 +102,10 @@ func startBackend(t *testing.T) *backend {
 	l.Close()
 	b := &backend{t: t, srv: server.New(nil), endpoint: "ws://" + addr + "/v1/opamp"}
 	err = b.srv.Start(server.StartSettings{ListenEndpoint: addr, Settings: server.Settings{Callbacks: srvtypes.Callbacks{
-		OnConnecting: func(*http.Request) srvtypes.ConnectionResponse {
+		OnConnecting: func(r *http.Request) srvtypes.ConnectionResponse {
+			b.mu.Lock()
+			b.authorization = r.Header.Get("Authorization")
+			b.mu.Unlock()
 			return srvtypes.ConnectionResponse{Accept: true, ConnectionCallbacks: srvtypes.ConnectionCallbacks{
 				OnMessage: func(_ context.Context, conn srvtypes.Connection, msg *protobufs.AgentToServer) *protobufs.ServerToAgent {
 					b.mu.Lock()

@@ -6,9 +6,13 @@ package provider // import "github.com/fuseone-io/fusescope-collector-server/com
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/open-telemetry/opamp-go/client"
 	"github.com/open-telemetry/opamp-go/client/types"
@@ -68,6 +72,11 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 		// remote configuration is smaller (agent.MaxPushBytes).
 		MaxMessageSize: ingest.MaxMessageSize,
 		Callbacks: types.Callbacks{
+			// No redirect is followed: one would resend the token and could
+			// move the connection to another host or from wss to ws.
+			CheckRedirect: func(*http.Request, []*http.Request, []*http.Response) error {
+				return errRedirect
+			},
 			OnConnect: func(context.Context) {
 				if ing != nil {
 					ing.OnConnect()
@@ -97,6 +106,13 @@ func startClient(ctx context.Context, logger *zap.Logger, s *Settings, a *agent.
 	}
 	if failed != nil {
 		settings.RemoteConfigStatus = remoteStatus(*failed)
+	}
+	if s.Auth.TokenFile != "" {
+		token, err := readToken(s.Auth.TokenFile)
+		if err != nil {
+			return nil, err
+		}
+		settings.Header = http.Header{"Authorization": {"Bearer " + token}}
 	}
 	if !s.TLS.Insecure {
 		tlsCfg, err := clientTLS(ctx, s)
@@ -193,4 +209,33 @@ func (z zapLogger) Debugf(_ context.Context, format string, v ...any) {
 
 func (z zapLogger) Errorf(_ context.Context, format string, v ...any) {
 	z.l.Warn(fmt.Sprintf(format, v...))
+}
+
+var errRedirect = errors.New("the OpAMP endpoint answered with a redirect, which is not followed")
+
+// The backend's bounds of an ingest token, its file read with room for a
+// newline.
+const (
+	minTokenLength = 32
+	maxTokenLength = 256
+	maxTokenFile   = maxTokenLength + 2
+)
+
+// readToken reads the one token of path; neither it nor its content is
+// ever in an error or a log.
+func readToken(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("fusescope_opamp.auth.token_file: %w", err)
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxTokenFile+1))
+	if err != nil {
+		return "", fmt.Errorf("fusescope_opamp.auth.token_file: %w", err)
+	}
+	token := strings.TrimSpace(string(b))
+	if len(b) > maxTokenFile || len(token) < minTokenLength || len(token) > maxTokenLength || strings.ContainsAny(token, " \t\r\n") {
+		return "", fmt.Errorf("fusescope_opamp.auth.token_file must hold one token of %d to %d characters", minTokenLength, maxTokenLength)
+	}
+	return token, nil
 }

@@ -6,9 +6,12 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -245,5 +248,82 @@ func TestWriterRoleHasNoIngest(t *testing.T) {
 	b.mu.Unlock()
 	if a := agent.Current(); a == nil || a.Ingest() != nil {
 		t.Fatal("writer agent has an ingest side")
+	}
+}
+
+// An ingress collector with auth.token_file presents the token as a bearer
+// credential on the OpAMP connection; it is never logged.
+func TestIngestTokenSent(t *testing.T) {
+	const token = "ingest-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := startBackend(t)
+	path := writeRole(t, b.endpoint, t.TempDir(), RoleIngress)
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = []byte(strings.Replace(string(cfg), "storage: ", fmt.Sprintf("auth: {token_file: %q}, storage: ", tokenFile), 1))
+	if err := os.WriteFile(path, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startCollector(t, path)
+	b.waitFor("a connection", func() bool { return b.authorization != "" })
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.authorization != "Bearer "+token {
+		t.Errorf("Authorization %q", b.authorization)
+	}
+	if strings.Contains(string(b.effective), token) {
+		t.Error("the token reached the effective configuration")
+	}
+}
+
+// The client follows no redirect, so a 3xx from the endpoint can send
+// neither the token nor the connection elsewhere, wss to ws included.
+func TestRedirectRefused(t *testing.T) {
+	const token = "ingest-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var reached atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			t.Error("the token reached the redirect target")
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer elsewhere.Close()
+	var redirects atomic.Int32
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirects.Add(1)
+		http.Redirect(w, r, elsewhere.URL+"/v1/opamp", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	path := writeRole(t, "ws"+strings.TrimPrefix(redirector.URL, "http")+"/v1/opamp", t.TempDir(), RoleIngress)
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = []byte(strings.Replace(string(cfg), "storage: ", fmt.Sprintf("auth: {token_file: %q}, storage: ", tokenFile), 1))
+	if err := os.WriteFile(path, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startCollector(t, path)
+	deadline := time.Now().Add(10 * time.Second)
+	for redirects.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if redirects.Load() == 0 {
+		t.Fatal("the client never connected")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := reached.Load(); n != 0 {
+		t.Errorf("the client followed the redirect %d times", n)
 	}
 }

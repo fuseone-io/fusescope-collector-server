@@ -49,6 +49,15 @@ type Settings struct {
 	// writer, the default, or ingress, which alone takes the ingest policy
 	// and sends the ingest report (ADR 0006).
 	Role string `mapstructure:"role"`
+	// Auth is the ingress collector's credential for the ingest policy.
+	Auth AuthSettings `mapstructure:"auth"`
+}
+
+// AuthSettings authenticate the ingress collector to the backend, which
+// sends the ingest policy only to a connection that presents a token it
+// holds (FuseScope ADR 0010 §3). The token is read from a file (ADR 0004).
+type AuthSettings struct {
+	TokenFile string `mapstructure:"token_file"`
 }
 
 // The collector roles of FuseScope ADR 0009 line 79.
@@ -70,6 +79,8 @@ func (s *Settings) validate() error {
 		return errors.New("fusescope_opamp.storage must name a directory")
 	case s.Role != "" && s.Role != RoleWriter && s.Role != RoleIngress:
 		return fmt.Errorf("fusescope_opamp.role must be %s or %s", RoleWriter, RoleIngress)
+	case s.Auth.TokenFile != "" && s.Role != RoleIngress:
+		return errors.New("fusescope_opamp.auth.token_file is for the ingress role")
 	case !s.TLS.Insecure && s.TLS.MinVersion != "" && s.TLS.MinVersion < minTLSVersion:
 		return fmt.Errorf("fusescope_opamp.tls.min_version must be at least %s (ADR 0004)", minTLSVersion)
 	}
@@ -160,7 +171,7 @@ func (p *provider) start(base map[string]any, s *Settings) error {
 	// only validated, so validation neither records a start nor takes pushes.
 	a.OnActivate(func(ctx context.Context) error {
 		if s.TLS.Insecure {
-			p.logger.Warn("OpAMP to the backend is in plaintext; remote configuration travels unencrypted and unauthenticated",
+			p.logger.Warn("OpAMP to the backend is in plaintext; remote configuration, the ingest policy and any ingest token travel unencrypted",
 				zap.String("endpoint", redactURL(s.Endpoint)))
 		}
 		if ing := a.Ingest(); ing != nil {

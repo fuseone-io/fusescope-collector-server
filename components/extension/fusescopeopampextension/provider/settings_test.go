@@ -6,6 +6,9 @@ package provider
 import (
 	"context"
 	"crypto/tls"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/collector/config/configtls"
@@ -25,6 +28,8 @@ func TestSettings(t *testing.T) {
 			TLS: configtls.ClientConfig{Config: configtls.Config{MinVersion: "1.2"}}}, true},
 		{"no storage", Settings{Endpoint: "wss://b:4320/v1/opamp"}, true},
 		{"http endpoint", Settings{Endpoint: "http://b:4320/v1/opamp", Storage: "/s"}, true},
+		{"token for ingress", Settings{Endpoint: "wss://b:4320/v1/opamp", Storage: "/s", Role: RoleIngress, Auth: AuthSettings{TokenFile: "/t"}}, false},
+		{"token for writer", Settings{Endpoint: "wss://b:4320/v1/opamp", Storage: "/s", Auth: AuthSettings{TokenFile: "/t"}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,5 +77,41 @@ receivers: {otlp: {}}
 func TestRedactURL(t *testing.T) {
 	if got := redactURL("ws://user:secret@backend:4320/v1/opamp?token=t0k3n"); got != "ws://backend:4320/v1/opamp" {
 		t.Errorf("redactURL = %q", got)
+	}
+}
+
+func TestReadToken(t *testing.T) {
+	const token = "ingest-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	write := func(content string) string {
+		path := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	got, err := readToken(write(token + "\n"))
+	if err != nil || got != token {
+		t.Fatalf("readToken = %q, %v", got, err)
+	}
+	for name, content := range map[string]string{
+		"empty":       "",
+		"short":       "short\n",
+		"two lines":   token + "\n" + token + "\n",
+		"inner space": "ingest token aaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"too long":    strings.Repeat("a", 257),
+		"too large":   strings.Repeat("a", 4097),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := readToken(write(content))
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if strings.Contains(err.Error(), "aaaa") {
+				t.Error("the token is in the error")
+			}
+		})
+	}
+	if _, err := readToken(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("a missing file is accepted")
 	}
 }
