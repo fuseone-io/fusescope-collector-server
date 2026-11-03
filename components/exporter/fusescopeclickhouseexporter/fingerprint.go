@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"slices"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
@@ -39,6 +40,7 @@ type resourceInfo struct {
 	attrs       []keyValue // sorted by key, values stringified
 	fingerprint string
 	labels      string // compact JSON object of attrs
+	json        string // labels without keys a longer key extends, for the resource JSON column
 	serviceName string
 }
 
@@ -75,8 +77,53 @@ func newResourceInfo(res pcommon.Resource, buf []byte) (resourceInfo, []byte) {
 	}
 	buf = append(buf, '}')
 	info.labels = string(buf)
+	info.json = info.labels
+	if slices.ContainsFunc(attrs, func(kv keyValue) bool { return shadowed(attrs, kv.key) }) {
+		buf = buf[:0]
+		buf = append(buf, '{')
+		for _, kv := range attrs {
+			if shadowed(attrs, kv.key) {
+				continue
+			}
+			if len(buf) > 1 {
+				buf = append(buf, ',')
+			}
+			buf = appendJSONString(buf, kv.key)
+			buf = append(buf, ':')
+			buf = appendJSONString(buf, kv.value)
+		}
+		buf = append(buf, '}')
+		info.json = string(buf)
+	}
 	info.serviceName, _ = info.get("service.name")
 	return info, buf
+}
+
+// shadowed reports whether another key of sorted extends key with a ".", which
+// the resource JSON column would nest under it (docs/spec/clickhouse-traces.md §2.2).
+func shadowed(sorted []keyValue, key string) bool {
+	// The first key not below key+"." starts with it when any does.
+	i, _ := slices.BinarySearchFunc(sorted, key, func(kv keyValue, k string) int { return compareDotted(kv.key, k) })
+	return i < len(sorted) && len(sorted[i].key) > len(key) && sorted[i].key[len(key)] == '.' &&
+		strings.HasPrefix(sorted[i].key, key)
+}
+
+// compareDotted compares s with key+".", without building it.
+func compareDotted(s, key string) int {
+	n := min(len(s), len(key))
+	if c := strings.Compare(s[:n], key[:n]); c != 0 {
+		return c
+	}
+	if len(s) <= len(key) {
+		return -1
+	}
+	if c := cmp.Compare(s[len(key)], '.'); c != 0 {
+		return c
+	}
+	if len(s) == len(key)+1 {
+		return 0
+	}
+	return 1
 }
 
 // sortedStrings appends m's attributes stringified and sorted by key.

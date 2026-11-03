@@ -144,7 +144,7 @@ func (e *logsEncoder) appendRecord(res *resourceInfo, scope pcommon.Instrumentat
 		c.resourcesString.Values.Append(kv.value)
 	}
 	endRow(c.resourcesString)
-	c.resource.Append(res.labels)
+	c.resource.Append(res.json)
 	c.scopeName.Append(scope.Name())
 	c.scopeVersion.Append(scope.Version())
 	for _, kv := range e.scope {
