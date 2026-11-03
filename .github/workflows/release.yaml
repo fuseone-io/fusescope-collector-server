@@ -1,0 +1,52 @@
+name: release
+
+# Publishes the container image to GHCR: every push to main as :main and
+# :sha-<commit>, and every vX.Y.Z tag as :X.Y.Z, :X.Y and :latest, for
+# linux/amd64 and linux/arm64, with provenance and an SBOM.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/fusescope-collector
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tags and version
+        id: meta
+        run: |
+          sha=$(git rev-parse --short=12 HEAD)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            v=${GITHUB_REF_NAME#v}
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            echo "tags=-t $IMAGE:$v -t $IMAGE:${v%.*} -t $IMAGE:latest -t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.1.0-dev+$sha" >> "$GITHUB_OUTPUT"
+            echo "tags=-t $IMAGE:main -t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push
+        run: |
+          docker buildx create --use --name release
+          docker buildx build --push --platform linux/amd64,linux/arm64 \
+            --provenance=mode=max --sbom=true \
+            --build-arg VERSION=${{ steps.meta.outputs.version }} \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            --label org.opencontainers.image.version=${{ steps.meta.outputs.version }} \
+            --label org.opencontainers.image.licenses=Apache-2.0 \
+            ${{ steps.meta.outputs.tags }} .

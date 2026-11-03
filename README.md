@@ -41,6 +41,10 @@ make vuln       # govulncheck
 docker build -t fusescope-collector .
 ```
 
+Images are published to `ghcr.io/fuseone-io/fusescope-collector` for linux/amd64 and linux/arm64, with provenance
+and an SBOM: `:main` and `:sha-<commit>` for every commit on `main`, `:X.Y.Z`, `:X.Y` and `:latest` for every
+`vX.Y.Z` tag (`.github/workflows/release.yaml`).
+
 ## Configurations
 
 | File | Mode |
