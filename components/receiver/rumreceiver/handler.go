@@ -90,6 +90,50 @@ type handler struct {
 	bodyTimeout  time.Duration
 	writeTimeout time.Duration
 	slots        chan struct{}
+	active       activeRequests
+}
+
+// activeRequests lets Shutdown wait for every handler, including ones a
+// forced close interrupted, before the receiver's state is released.
+type activeRequests struct {
+	mu     sync.Mutex
+	n      int
+	closed bool
+	idle   chan struct{}
+}
+
+func (a *activeRequests) enter() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.n++
+	return true
+}
+
+func (a *activeRequests) leave() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.n--
+	if a.closed && a.n == 0 {
+		close(a.idle)
+	}
+}
+
+// closeAndWait refuses new requests and waits for the active ones.
+func (a *activeRequests) closeAndWait() {
+	a.mu.Lock()
+	if !a.closed {
+		a.closed = true
+		a.idle = make(chan struct{})
+		if a.n == 0 {
+			close(a.idle)
+		}
+	}
+	idle := a.idle
+	a.mu.Unlock()
+	<-idle
 }
 
 type encoding uint8
@@ -146,6 +190,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Before any refusal: net/http drains an unread body after the handler
 	// returns, which without a deadline a client could stall forever.
 	_ = http.NewResponseController(w).SetReadDeadline(h.now().Add(h.bodyTimeout))
+	if !h.active.enter() {
+		w.Header().Set("Connection", "close")
+		h.refuse(w, r, refusalBusy)
+		return
+	}
+	defer h.active.leave()
 	var traces bool
 	switch r.URL.Path {
 	case tracesPath:

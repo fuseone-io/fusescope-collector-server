@@ -29,7 +29,9 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componentstatus"
 	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/receivertest"
 
@@ -389,6 +391,55 @@ func TestReceiverExpiresWindowState(t *testing.T) {
 		data, err := s.r.monitor.Build(uint64(time.Now().UnixNano()), time.Now().Add(-time.Hour), store.Status())
 		return err == nil && !strings.Contains(string(data), "evil.example.org")
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+// ctxTraces blocks until its request's context ends.
+type ctxTraces struct {
+	entered chan struct{}
+	exited  chan struct{}
+}
+
+func (c ctxTraces) Capabilities() consumer.Capabilities { return consumer.Capabilities{} }
+func (c ctxTraces) ConsumeTraces(ctx context.Context, _ ptrace.Traces) error {
+	c.entered <- struct{}{}
+	<-ctx.Done()
+	close(c.exited)
+	return ctx.Err()
+}
+
+// Codex review on #43: Shutdown that times out closes active connections and
+// returns only once their handlers are done.
+func TestReceiverShutdownWaitsForActiveRequests(t *testing.T) {
+	tlsCfg, pool := writeCert(t)
+	cfg := createDefaultConfig().(*Config)
+	cfg.Endpoint, cfg.TLS, cfg.IngestPolicy = "127.0.0.1:0", tlsCfg, policyExtension
+	block := ctxTraces{entered: make(chan struct{}, 1), exited: make(chan struct{})}
+	r, err := NewFactory().CreateTraces(context.Background(), receivertest.NewNopSettings(metadata.Type), cfg, block)
+	require.NoError(t, err)
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: newStore(t, testPolicy(1))}})
+	require.NoError(t, r.Start(context.Background(), host))
+	host.waitFor(t, componentstatus.StatusOK)
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	defer client.CloseIdleConnections()
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, "https://"+r.(*rumReceiver).addr.String()+tracesPath, strings.NewReader(testTraceJSON))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(KeyHeader, webKey)
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-block.entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	assert.Error(t, r.Shutdown(ctx), "the graceful shutdown timed out")
+	select {
+	case <-block.exited:
+	default:
+		t.Fatal("Shutdown returned while a handler was still in the pipeline")
+	}
 }
 
 func assertClosed(t *testing.T, conn *tls.Conn) {

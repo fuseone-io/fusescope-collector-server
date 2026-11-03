@@ -263,8 +263,13 @@ func (r *rumReceiver) Shutdown(ctx context.Context) error {
 		server := r.server
 		r.mu.Unlock()
 		if server != nil {
-			err = server.Shutdown(ctx)
+			if err = server.Shutdown(ctx); err != nil {
+				// Graceful shutdown timed out: close the active connections,
+				// which cancels their requests' contexts.
+				_ = server.Close()
+			}
 		}
+		r.handler.active.closeAndWait()
 		r.wg.Wait()
 		r.telemetry.Shutdown()
 		r.forget()
