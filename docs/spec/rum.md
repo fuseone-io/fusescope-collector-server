@@ -200,6 +200,9 @@ allowed (ADR 0005), but nothing needs them.
   bound.
 - An OTLP payload that does not decode: **400** `invalid_payload` ([B]
   `impl/gateway_otlp.go:150-159`; tests `impl/gateway_test.go:262-263`).
+- Protobuf is decoded as an `Export*ServiceRequest`, which moves OTLP's deprecated scope lists
+  (field 1000, `deprecatedScopeSpans`/`deprecatedScopeLogs`) into the current ones, as pdata's
+  JSON decoder does; their spans and records are delivered, never dropped ([M43]).
 - The response body is an empty `Export*ServiceResponse` in the request's encoding: JSON for
   JSON and `text/plain`, protobuf otherwise, with the matching `Content-Type`, status **200**
   ([B] `impl/gateway.go:118-120`, `impl/gateway_otlp.go:47-53,73-79,143-148`; tests
@@ -257,7 +260,7 @@ configuration ([M]):
 | `app.package.name` | 256 bytes, checked before matching or storing | refused; observed as empty |
 | SDK name / version | 64 / 32 bytes, checked before storing | stored as empty |
 | Concurrent connections per listener | 4 096 | new connections wait in the accept backlog, then are refused |
-| Concurrent requests per listener | 512 | 503 with `Retry-After: 1` |
+| Concurrent requests per listener | 16 ([M43]) | 503 with `Retry-After: 1` |
 | Header read timeout | 10 s | connection closed |
 | Body read timeout | 30 s | connection closed |
 | Write timeout | 30 s | connection closed |
@@ -269,7 +272,7 @@ configuration ([M]):
 | Events per span, links per span | 128 each | 413 `too_large` |
 | Attributes per resource, scope, span, log record, event or link, and entries per array or map value | 128 | 413 `too_large` |
 | Nesting of array and map attribute values | 8 | 413 `too_large` |
-| Repeated entries of a request, all kinds together | 100 000 | 413 `too_large` |
+| Repeated entries of a request, all kinds together | 25 000 ([M43]) | 413 `too_large` |
 
 The structural budget (the last seven rows) is checked on the encoded body, **before** pdata
 decodes it ([M43]): a protobuf wire-format scan (`protowire`) and a streaming JSON scan, both
@@ -281,6 +284,15 @@ cannot parse is 400 `invalid_payload`, as is a single message field (`resource`,
 `body`, an array or map value) given twice, which both decoders would merge into one message
 that escapes its budget. The structural budget, the session bucket and the pending
 key bound are maxima: configuration (`limits.*`) may lower them, never raise them ([M43]).
+
+**Memory in flight.** A request allocates at most its body buffer, its decoded copy and its
+structure. Measured (`TestWorstCaseAllocationAtCeiling`, every kind of element at the 25 000
+ceiling): at most 5.3 MiB for JSON and 3.4 MiB for protobuf; a 4 MiB body of one large string,
+8.0 MiB (the buffer and the decoded copy). The tests hold them under 6 MiB and 10 MiB. So
+`limits.requests` × 10 MiB bounds what requests hold at once: 160 MiB with the default of 16,
+plus what the pipeline holds after the receiver. Raising `limits.requests` raises the bound in
+proportion. A global, weighted in-flight memory budget, instead of a count of requests, is a
+possible follow-up ([M43]).
 
 Strings longer than their bound are never truncated into a stored value: a truncated origin or
 package name could match or name something else.
@@ -559,24 +571,28 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 
 - **Backend, assembling pages** ([M43]), so incomplete reports cannot fill its memory or disk:
   - at most one incomplete sequence per agent; a page of a newer sequence discards the
-    incomplete one;
+    incomplete one; a page of a lower sequence never replaces the one held, and is refused;
   - an incomplete assembly expires 120 s after its first page (two report intervals);
-  - at most 256 MiB of buffered pages and 1 000 incomplete assemblies in total; over either,
-    the oldest incomplete assembly is discarded first; pages are buffered in memory only;
+  - at most 128 MiB of buffered pages and 1 000 incomplete assemblies in total; over either,
+    the oldest incomplete assembly is discarded first; pages are buffered in memory only. The
+    128 MiB counts page bytes only, so the backend's heap, maps and copies stay well within a
+    small deployment (the demo's 768 MiB limit) ([M43]);
   - a page received again is ignored if its bytes (SHA-256) equal the first copy's; any other
     repeat is a conflict;
   - the sequence is invalidated, never acknowledged, on a conflict, a page over 256 KiB or not
     strict JSON of §10.3, a `page`/`pages` out of range or above 128, a header field that
     differs between pages, or an application or key ID in two pages; a page still missing at
-    expiry discards it likewise. The collector's next report, with a new sequence, carries the
-    same pending values.
+    expiry, or an assembly discarded for the global bounds, invalidates it likewise. Pages of an
+    invalidated sequence are refused, a replay included, until a higher sequence arrives. The
+    collector's next report, with a new sequence, carries the same pending values.
 - **Backend, before acknowledging** ([M]; pages [M43]): only once every page of the sequence
   is held and the assembly validated, it applies the report idempotently (§10.2), then
   persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only
   then sends the ack. No ack for a partial, invalid or unpersisted sequence. A report whose
   sequence is not above the persisted one for that agent changes nothing and is acknowledged
-  again. Acknowledging the same sequence twice changes nothing. `report.Merge` in
-  `rumreceiver` implements these validation rules, as a reference and for tests.
+  again. Acknowledging the same sequence twice changes nothing. `report.Merge` and
+  `report.Assembler` in `rumreceiver` implement these rules, as a reference model and for
+  tests.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
