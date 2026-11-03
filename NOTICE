@@ -18,3 +18,12 @@ components/processor/signozlogspipelineprocessor/internal/grok
   Licensed under the Apache License, Version 2.0
   (components/processor/signozlogspipelineprocessor/internal/grok/LICENSE).
   Changes made by FuseOne are listed in that directory's README.md.
+
+components/receiver/rumreceiver and components/pkg/ingestpolicy
+  The RUM ingestion gateway of the FuseScope backend
+  (https://github.com/fuseone-io/fusescope at 6c8991257), moved rather than
+  rewritten (ADR 0006, decision 2). It is FuseOne's own code, licensed under
+  the MIT License, and keeps that notice: each moved file is marked
+  "SPDX-License-Identifier: MIT" with the backend path it comes from and what
+  changed, and the backend's license text is in LICENSE-MIT in each of the
+  two modules. The provenance check is in docs/spec/rum.md §0.

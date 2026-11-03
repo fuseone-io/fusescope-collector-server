@@ -1,0 +1,34 @@
+display_name: FuseScope RUM Receiver
+type: rum
+github_project: fuseone-io/fusescope-collector-server
+
+status:
+  disable_codecov_badge: true
+  class: receiver
+  stability:
+    alpha: [traces, logs]
+  distributions: []
+
+tests:
+  # The listener requires TLS (ADR 0004); receiver_test.go starts one with a
+  # generated certificate.
+  skip_lifecycle: true
+
+telemetry:
+  metrics:
+    receiver_rum_policy_age:
+      enabled: true
+      stability: development
+      description: Seconds since the ingest policy held was last received; not observed while no policy is held.
+      unit: s
+      gauge:
+        value_type: double
+        async: true
+    receiver_rum_requests_refused:
+      enabled: true
+      stability: development
+      description: RUM requests refused, by reason (attribute reason).
+      unit: "{request}"
+      sum:
+        value_type: int
+        monotonic: true

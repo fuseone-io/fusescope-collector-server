@@ -3,8 +3,9 @@
 What `rumreceiver` must do to replace the FuseScope backend's RUM gateway for the SDKs and the
 setup screen ([ADR 0006](../adr/0006-single-ingress.md), FuseScope ADR 0010 §6 and §10), and the
 shape of the OpAMP ingest policy, ingest report and acknowledgement it depends on. Status:
-specification only; no code yet (issue
-[#13](https://github.com/fuseone-io/fusescope-collector-server/issues/13), step 1).
+implemented in `components/receiver/rumreceiver` and `components/pkg/ingestpolicy` without the
+OpAMP transport, which is step 3 (issue
+[#13](https://github.com/fuseone-io/fusescope-collector-server/issues/13), step 2).
 
 ## 0. Sources
 
