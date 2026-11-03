@@ -18,8 +18,10 @@
   decision 4).
 - Remote configuration over OpAMP accepts only allow-listed processor types; receivers,
   exporters, extensions, endpoints and credentials are local configuration only. The ingest
-  policy custom message (ADR 0006) is not configuration: it can only restrict what is
-  accepted, holds verifiers and never keys, and is cached on disk.
+  policy custom message (ADR 0006) is not configuration: it is the remote authority for ingest
+  authentication and identity (which keys, signals, origins and org), holds verifiers and never
+  keys, and is cached on disk. It cannot change listeners, pipelines, destinations or outbound
+  credentials.
 - Debug and introspection endpoints (`pprof`, `zpages`, the health config view) are off or
   bound to `localhost` by default.
 - Distroless, non-root, read-only root filesystem images.
