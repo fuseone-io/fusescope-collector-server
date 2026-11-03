@@ -31,8 +31,13 @@ It writes to two storage backends ([ADR 0003](docs/adr/0003-clickhouse-and-engin
 One binary, two configurations ([`config/`](config/)). The gateway is the **only** ingest
 surface exposed to the internet ([ADR 0006](docs/adr/0006-single-ingress.md), FuseScope ADR
 0010). It carries OTLP, RUM, profiles and artifact uploads, and the backend serves no ingest
-route. Until this collector writes storage itself, the gateway is an ingress tier in front of
-the existing collector and forwards OTLP to it (FuseScope ADR 0009, phase 1).
+route. Browsers and mobile apps send to its `rumreceiver` (`/rum/v1/*`), which replaces the
+backend's RUM gateway ([spec](docs/spec/rum.md)) under the security gates of ADR 0006: fail
+closed without an ingest policy, `X-Forwarded-For` only from configured proxies, body limits
+before and after decompression, header-only keys never logged or reported, minimised reports,
+and bounded state. Until this collector writes
+storage itself, the gateway is an ingress tier in front of the existing collector and forwards
+OTLP to it (FuseScope ADR 0009, phase 1).
 
 ## 3. Components
 
@@ -125,11 +130,14 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
   configuration is applied only where it differs from the local one in allow-listed processor
   blocks (`signozlogspipeline/pipeline_*`, `signozspanmapper`, `signozllmpricing`); only
   `signozlogspipeline/pipeline_*` may change position, and only within the logs pipeline. The
-  ingest policy custom message can only
-  restrict what is accepted. Receivers, exporters, extensions, endpoints and outbound
-  credentials can never be changed remotely, so a compromised backend cannot redirect telemetry.
-- **Limits:** gRPC message size, concurrent streams, and request timeouts on receivers; the
-  engine enforces attribute and cardinality limits per tenant.
+  ingest policy custom message is the remote authority for ingest authentication and identity:
+  a compromised backend can authorise keys and change org attribution. Listeners, receivers,
+  pipelines, exporters, extensions, endpoints and outbound credentials can never be changed
+  remotely, so it cannot redirect telemetry to another endpoint.
+- **Limits:** gRPC message size, concurrent streams, and request timeouts on receivers; body
+  size before and after decompression; per-key and per-client-IP rate limits, the client IP
+  from `X-Forwarded-For` only behind trusted proxies (ADR 0006 security gates); the engine
+  enforces attribute and cardinality limits per tenant.
 - **Surface:** health on `localhost` by default with the config endpoint off; `pprof` and
   `zpages` compiled in but disabled unless configured on `localhost`.
 - **Runtime:** distroless, non-root, read-only root filesystem; only the queue and checkpoint
