@@ -16,7 +16,7 @@ receivers:
         endpoint: 0.0.0.0:4318
   host_metrics:
     collection_interval: 60s
-    root_path: /hostfs
+    root_path: ${env:HOST_ROOT_PATH:-/hostfs}
     scrapers:
       # Per logical CPU, and no logical count: the demo writes system.cpu.time
       # with a cpu label and no system.cpu.logical.count.
@@ -49,7 +49,11 @@ exporters:
     endpoint: clickhouse-shadow:9000
     tls:
       insecure: true
-    # The exporter's default since it was found here (docs/spec/clickhouse-traces.md §1, Insert batches).
+    # 10 s, as the reference inserts: the service map joins parent and child
+    # spans only within one insert (docs/spec/clickhouse-traces.md §1, Insert
+    # batches). Also the exporter's default from the release that found it.
+    sending_queue:
+      batch:
         flush_timeout: 10s
 
 extensions:
