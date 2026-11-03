@@ -78,6 +78,9 @@ def edges_match(d, s):
 
 
 def main():
+    missing = [k for k in ("DEMO_EMAIL", "DEMO_PASSWORD", "SHADOW_UI_EMAIL", "SHADOW_UI_PASSWORD") if not os.environ.get(k)]
+    if missing:
+        raise SystemExit(f"set {', '.join(missing)} (README, APM pages)")
     demo = login(DEMO, os.environ["DEMO_EMAIL"], os.environ["DEMO_PASSWORD"])
     shadow = login(SHADOW, os.environ["SHADOW_UI_EMAIL"], os.environ["SHADOW_UI_PASSWORD"], register=True)
     checks = [("services", "/api/v2/services", WINDOW), ("service map", "/api/v1/dependency_graph", WINDOW)]

@@ -92,7 +92,8 @@ services:
     environment:
       SIGNOZ_WEB_ENABLED: "false"
       SIGNOZ_SQLSTORE_SQLITE_PATH: /var/lib/fusescope/signoz.db
-      SIGNOZ_TOKENIZER_JWT_SECRET: ${SHADOW_UI_JWT_SECRET:?set SHADOW_UI_JWT_SECRET}
+      # Optional variables: compose interpolates every service, profile ui or not.
+      SIGNOZ_TOKENIZER_JWT_SECRET: ${SHADOW_UI_JWT_SECRET:-}
       SIGNOZ_ALERTMANAGER_PROVIDER: signoz
       SIGNOZ_TELEMETRYSTORE_PROVIDER: clickhouse
       SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN: tcp://clickhouse-shadow:9000
@@ -115,10 +116,10 @@ services:
     volumes:
       - ./shadow/compare_ui.py:/compare_ui.py:ro
     environment:
-      DEMO_EMAIL: ${DEMO_EMAIL:?set DEMO_EMAIL in .env}
-      DEMO_PASSWORD: ${DEMO_PASSWORD:?pass the demo viewer password}
+      DEMO_EMAIL: ${DEMO_EMAIL:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
       SHADOW_UI_EMAIL: shadow@fusescope.local
-      SHADOW_UI_PASSWORD: ${SHADOW_UI_PASSWORD:?set SHADOW_UI_PASSWORD}
+      SHADOW_UI_PASSWORD: ${SHADOW_UI_PASSWORD:-}
     networks: [default, shadow]
     depends_on: [fusescope-shadow-ui]
     profiles: [ui]
