@@ -603,6 +603,23 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   assemblies with pages (at most 1 000). A page of a sequence not above the one applied is
   acknowledged again and changes nothing; a page of a sequence not above the one invalidated
   is refused. The model takes that record as an injected store.
+- **Backend, applying** ([M43]): a completed sequence stays in memory as *applying* until it is
+  committed, and while it does, a page of a lower sequence is refused and one of a higher
+  sequence waits (no ack, the collector sends again). The commit is one compare-and-apply on
+  the persisted record: the report is applied and its sequence recorded as applied in one
+  transaction, only if the sequence is above both the applied and the invalidated one. That
+  single atomic step, rather than a per-agent lock, is what orders applications, also across
+  backend replicas: whichever finishes first, a lower sequence can never be applied after a
+  higher one. The ack is sent, and the applying marker released, only after the commit
+  succeeds; a commit that finds a higher sequence already applied is acknowledged again with no
+  effect.
+- **Backend, store failures** ([M43]): reading the record, the compare-and-apply and persisting
+  an invalidation all return errors, and every failure fails closed. A page whose agent record
+  cannot be read is refused. A failed commit sends no ack and keeps the applying marker, which
+  still refuses lower sequences, until a retry succeeds. A failed invalidation keeps an
+  in-memory marker refusing that sequence (and holding back higher ones) until it is persisted.
+  Applying and invalidation markers count toward the 1 000 entries and are never shed; when the
+  bound is full of them, new assemblies are refused.
 - **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
