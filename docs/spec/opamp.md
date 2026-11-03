@@ -120,6 +120,7 @@ fusescope_opamp:
   tls: {ca_file: /etc/fusescope/ca.pem}   # configtls client settings
   storage: /var/lib/fusescope-collector/opamp
   role: writer                            # or ingress (rum.md §11.1); default writer
+  auth: {token_file: /etc/fusescope/ingest-token}   # ingress only
 extensions:
   fusescope_opamp: {}                     # confirms pushes; required
 service:
@@ -136,6 +137,14 @@ and the report sequence under `<storage>/ingest/` ([rum.md](rum.md) §§10.4, 11
 value is refused at start. The instance UID persists across restarts (ADR 0008 point 4) with
 one exception: an `ingress` collector without a valid report sequence state for its UID takes
 a new UID before connecting (rum.md §10.4), so the backend sees a new agent.
+
+The backend sends the ingest policy only to a connection that presented, at the handshake, one
+of the tokens in its `rum.ingest_policy.token_file`, as `Authorization: Bearer` (FuseScope
+`pkg/query-service/app/opamp/opamp_server.go`, fuseone-io/fusescope#310). An `ingress`
+collector reads its token from `auth.token_file`: one token of at least 32 characters, at most
+4 KiB, read once when the client starts, never logged and never in the effective
+configuration. A connection without it still takes remote configuration. With `tls.insecure`
+the token travels unencrypted, as the plaintext warning says.
 
 The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
 in it itself (`$$` for a literal `$`); other substitution schemes are not available there. A change

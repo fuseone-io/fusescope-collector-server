@@ -247,3 +247,33 @@ func TestWriterRoleHasNoIngest(t *testing.T) {
 		t.Fatal("writer agent has an ingest side")
 	}
 }
+
+// An ingress collector with auth.token_file presents the token as a bearer
+// credential on the OpAMP connection; it is never logged.
+func TestIngestTokenSent(t *testing.T) {
+	const token = "ingest-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := startBackend(t)
+	path := writeRole(t, b.endpoint, t.TempDir(), RoleIngress)
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = []byte(strings.Replace(string(cfg), "storage: ", fmt.Sprintf("auth: {token_file: %q}, storage: ", tokenFile), 1))
+	if err := os.WriteFile(path, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startCollector(t, path)
+	b.waitFor("a connection", func() bool { return b.authorization != "" })
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.authorization != "Bearer "+token {
+		t.Errorf("Authorization %q", b.authorization)
+	}
+	if strings.Contains(string(b.effective), token) {
+		t.Error("the token reached the effective configuration")
+	}
+}
