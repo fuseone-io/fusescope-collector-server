@@ -339,6 +339,28 @@ func TestStoreRetriesFailedCache(t *testing.T) {
 	assert.Equal(t, uint64(2), restarted.Current().Version)
 }
 
+// Codex review on #43: an identical push refreshes freshness on disk too,
+// so a restart does not see the policy as stale under max_staleness.
+func TestIdenticalPushFreshnessSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(zap.NewNop(), NewFileCache(dir))
+	v1 := encode(t, testPolicy(1))
+	require.NoError(t, s.Apply(v1, t0))
+	before, err := os.ReadFile(filepath.Join(dir, PolicyFile))
+	require.NoError(t, err)
+
+	refreshed := time.Now().Add(-time.Minute).Truncate(time.Second)
+	require.NoError(t, s.Apply(v1, refreshed))
+	after, err := os.ReadFile(filepath.Join(dir, PolicyFile))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "the snapshot is not rewritten")
+
+	restarted := NewStore(zap.NewNop(), NewFileCache(dir))
+	restarted.Start()
+	require.NotNil(t, restarted.Current())
+	assert.True(t, refreshed.Equal(restarted.LastReceived()), "%v", restarted.LastReceived())
+}
+
 type flakyCache struct {
 	*FileCache
 	fail  bool

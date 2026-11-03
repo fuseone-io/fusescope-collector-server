@@ -195,6 +195,7 @@ func (s *Store) apply(data []byte, now time.Time) error {
 			// The same revision again: only its freshness changes.
 			s.received.Store(now.UnixNano())
 			s.save(data, *s.floor)
+			s.touch(now)
 			return nil
 		}
 	}
@@ -221,6 +222,22 @@ func (s *Store) save(data []byte, floor Floor) {
 		return
 	}
 	s.unsaved = nil
+}
+
+// Toucher is a Cache that can record a fresher receipt of the policy it
+// holds without rewriting it, so freshness survives a restart (§11.4).
+type Toucher interface {
+	Touch(received time.Time) error
+}
+
+func (s *Store) touch(now time.Time) {
+	t, ok := s.cache.(Toucher)
+	if !ok || s.unsaved != nil {
+		return
+	}
+	if err := t.Touch(now); err != nil {
+		s.logger.Warn("Ingest policy freshness not cached", zap.Error(err))
+	}
 }
 
 func (s *Store) publish(snap *Snapshot, received time.Time) {

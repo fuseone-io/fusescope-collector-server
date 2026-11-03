@@ -29,7 +29,10 @@ type FileCache struct {
 	dir string
 }
 
-var _ Cache = (*FileCache)(nil)
+var (
+	_ Cache   = (*FileCache)(nil)
+	_ Toucher = (*FileCache)(nil)
+)
 
 // NewFileCache caches in dir, created on the first Save.
 func NewFileCache(dir string) *FileCache { return &FileCache{dir: dir} }
@@ -85,6 +88,12 @@ func (c *FileCache) Save(data []byte, floor Floor) error {
 		return err
 	}
 	return c.write(StateFile, st)
+}
+
+// Touch sets the cached policy's modification time, which Load returns as
+// when it was last received.
+func (c *FileCache) Touch(received time.Time) error {
+	return os.Chtimes(filepath.Join(c.dir, PolicyFile), received, received)
 }
 
 // write replaces name atomically: a synced temporary file renamed over it,
