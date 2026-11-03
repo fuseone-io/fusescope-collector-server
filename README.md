@@ -42,8 +42,8 @@ docker build -t fusescope-collector .
 ```
 
 Images are published to `ghcr.io/fuseone-io/fusescope-collector` for linux/amd64 and linux/arm64, with provenance
-and an SBOM: `:sha-<commit>` for every commit on `main` and `:main` for its latest, `:X.Y.Z`, `:X.Y` and `:latest` for every
-`vX.Y.Z` tag (`.github/workflows/release.yaml`).
+and an SBOM: `:sha-<commit>` for every commit on `main` and `:main` for its head, `:X.Y.Z`, `:X.Y` and `:latest` for every
+`vX.Y.Z` tag, each only once `ci` has passed on that commit (`.github/workflows/release.yaml`).
 
 ## Configurations
 
