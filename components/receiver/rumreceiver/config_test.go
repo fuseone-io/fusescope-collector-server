@@ -68,6 +68,11 @@ func TestConfigValidate(t *testing.T) {
 		{name: "Valid", edit: func(*Config) {}},
 		{name: "NoTLS", edit: func(c *Config) { c.TLS = configtls.ServerConfig{Config: configtls.Config{MinVersion: "1.3"}} }, err: "tls is required"},
 		{name: "TLS12", edit: func(c *Config) { c.TLS.MinVersion = "1.2" }, err: "tls.min_version must be 1.3"},
+		// Codex review on #43: credentials from files only.
+		{name: "InlineKey", edit: func(c *Config) { c.TLS.KeyFile, c.TLS.KeyPem = "", "-----BEGIN EC PRIVATE KEY-----" }, err: "inline cert_pem, key_pem and ca_pem are refused"},
+		{name: "InlineCert", edit: func(c *Config) { c.TLS.CertFile, c.TLS.CertPem = "", "-----BEGIN CERTIFICATE-----" }, err: "inline cert_pem, key_pem and ca_pem are refused"},
+		{name: "InlineClientCA", edit: func(c *Config) { c.TLS.CAPem = "-----BEGIN CERTIFICATE-----" }, err: "inline cert_pem, key_pem and ca_pem are refused"},
+		{name: "NoKeyFile", edit: func(c *Config) { c.TLS.KeyFile = "" }, err: "tls.cert_file and tls.key_file are required"},
 		{name: "NoEndpoint", edit: func(c *Config) { c.Endpoint = "" }, err: "endpoint"},
 		{name: "BodySizeZero", edit: func(c *Config) { c.MaxBodySize = 0 }, err: "max_body_size"},
 		{name: "KeyRateZero", edit: func(c *Config) { c.RateLimit.Key.Rate = 0 }, err: "rate_limit.key"},

@@ -591,6 +591,22 @@ func TestGatewayAccountsBeforeWatcherCatchesUp(t *testing.T) {
 	assert.Contains(t, string(data), newKeyID)
 }
 
+// Codex review on #43: a consumer blocked on backpressure gets a deadline,
+// so it cannot hold a request slot forever.
+func TestGatewayConsumerDeadline(t *testing.T) {
+	f := newFixture(t, func(cfg *Config) { cfg.Limits.WriteTimeout = 100 * time.Millisecond })
+	f.handler.now = time.Now
+	f.handler.traces = consumerFunc(func(ctx context.Context, _ ptrace.Traces) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	start := time.Now()
+	rec := f.post(tracesPath, testTraceJSON, jsonHeaders(webKey))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Equal(t, "5", rec.Header().Get("Retry-After"))
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 func TestGatewayConcurrencyLimit(t *testing.T) {
 	f := newFixture(t, func(cfg *Config) { cfg.Limits.Requests = 1 })
 	blocked := make(chan struct{})

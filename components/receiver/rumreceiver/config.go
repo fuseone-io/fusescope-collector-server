@@ -97,6 +97,14 @@ func (c *Config) Validate() error {
 	if err := c.TLS.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("tls is required on the RUM listener (ADR 0004): %w", err))
 	}
+	// Credentials come from files only (ADR 0004): an inline key would be in
+	// the configuration the OpAMP extension reports as effective.
+	if len(c.TLS.KeyPem) > 0 || len(c.TLS.CertPem) > 0 || len(c.TLS.CAPem) > 0 {
+		errs = append(errs, errors.New("tls: use cert_file and key_file; inline cert_pem, key_pem and ca_pem are refused (ADR 0004)"))
+	}
+	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
+		errs = append(errs, errors.New("tls.cert_file and tls.key_file are required"))
+	}
 	if c.TLS.MinVersion != minTLSVersion {
 		errs = append(errs, fmt.Errorf("tls.min_version must be %s (ADR 0004)", minTLSVersion))
 	}

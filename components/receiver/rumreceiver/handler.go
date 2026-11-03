@@ -347,7 +347,12 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 	_ = http.NewResponseController(w).SetWriteDeadline(h.now().Add(h.writeTimeout))
 
 	wk.batch.Reset()
-	ctx := client.NewContext(r.Context(), client.Info{Auth: authData{orgID: k.OrgID, keyID: k.ID}})
+	// A deadline for the pipeline: the write deadline does not cancel the
+	// request's context, and a consumer blocked on backpressure would hold
+	// a request slot and its payload indefinitely.
+	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
+	defer cancel()
+	ctx = client.NewContext(ctx, client.Info{Auth: authData{orgID: k.OrgID, keyID: k.ID}})
 	var refused refusal
 	var observed string
 	if traces {

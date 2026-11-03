@@ -64,7 +64,7 @@ allowed (ADR 0005), but nothing needs them.
   and concurrency limits of §7.1: preflight; policy present (§11.4); key; origin; rate limits;
   content type; body; decoding; package names; processing; pipeline. A request refused at one
   step is not examined further.
-- **TLS.** The listener serves TLS 1.3 only, with no plaintext option ([ADR 0004](../adr/0004-security-baseline.md);
+- **TLS.** The listener serves TLS 1.3 only, with no plaintext option, its certificate and key read from files (`cert_file`, `key_file`; inline PEM is refused so no key reaches the effective configuration reported over OpAMP) ([ADR 0004](../adr/0004-security-baseline.md);
   [M43]). Unlike ClickHouse ([ADR 0007](../adr/0007-clickhouse-plaintext-for-migration.md)),
   no existing deployment needs an exception. Deployment: the public proxy (Caddy) terminates
   the client's TLS and opens a second TLS connection to the collector that validates the
