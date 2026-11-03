@@ -119,6 +119,9 @@ func New(logger *zap.Logger, dir string, factories map[component.Type]processor.
 // InstanceUID is the agent's persistent identity.
 func (a *Agent) InstanceUID() ([16]byte, error) { return a.store.InstanceUID() }
 
+// RenewInstanceUID replaces the identity, before the client starts.
+func (a *Agent) RenewInstanceUID() ([16]byte, error) { return a.store.RenewInstanceUID() }
+
 func (a *Agent) storeDir() string { return a.store.Dir() }
 
 // Load reads the persisted lifecycle and decides what the collector runs

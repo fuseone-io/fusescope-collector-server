@@ -9,13 +9,18 @@ package ingest // import "github.com/fuseone-io/fusescope-collector-server/compo
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/open-telemetry/opamp-go/client/types"
@@ -33,7 +38,26 @@ const MaxMessageSize = ingestpolicy.MaxSize + 1<<20
 // dropped only leaves its values pending for the next report.
 const ackBuffer = 16
 
-const sequenceFile = "report-sequence"
+// sequenceFile holds "<instance UID hex> <last reportSequence>\n": the
+// sequence is valid only with the UID it was used with (§10.4).
+const (
+	sequenceFile    = "report-sequence"
+	maxSequenceFile = 64
+)
+
+var (
+	errNotStarted = errors.New("reportSequence: the ingest side has not started")
+	errExhausted  = errors.New("reportSequence: exhausted")
+	// ErrReporterClaimed is returned to a second receiver: two would
+	// interleave the pages of their reports and share acknowledgements.
+	ErrReporterClaimed = errors.New("the ingest report is already sent by another receiver; a collector runs one rumreceiver")
+)
+
+// Identity is the agent's instance UID, which scopes reportSequence.
+type Identity interface {
+	InstanceUID() ([16]byte, error)
+	RenewInstanceUID() ([16]byte, error)
+}
 
 // Sender is the OpAMP client's custom message sending.
 type Sender interface {
@@ -58,8 +82,14 @@ type Ingest struct {
 	pending []byte
 	wake    chan struct{}
 
-	seqMu   sync.Mutex
-	nextSeq uint64
+	seqMu sync.Mutex
+	uid   [16]byte
+	// lastSeq is the last sequence persisted for uid; seqErr, when set,
+	// stops every report (fail closed).
+	lastSeq uint64
+	seqErr  error
+
+	claimed atomic.Bool
 
 	startOnce, closeOnce sync.Once
 	done                 chan struct{}
@@ -86,12 +116,15 @@ func New(logger *zap.Logger, dir string) *Ingest {
 		connected: make(chan struct{}, 1),
 		wake:      make(chan struct{}, 1),
 		done:      make(chan struct{}),
+		seqErr:    errNotStarted,
 	}
 }
 
 // Start creates the state directory, loads the cached policy (§11.3) and
-// starts the policy worker. It runs when the collector really starts.
-func (i *Ingest) Start() error {
+// the reportSequence state (§10.4), and starts the policy worker. It runs
+// when the collector really starts, before the OpAMP client, which reads
+// the instance UID after a renewal here.
+func (i *Ingest) Start(id Identity) error {
 	var err error
 	i.startOnce.Do(func() {
 		// Only this collector reads the policy cache and the sequence.
@@ -103,6 +136,7 @@ func (i *Ingest) Start() error {
 			return
 		}
 		i.store.Start()
+		i.loadSequence(id)
 		i.wg.Add(1)
 		go i.work()
 	})
@@ -184,39 +218,97 @@ func (i *Ingest) work() {
 	}
 }
 
-// Reporter is the receiver's report transport.
-func (i *Ingest) Reporter() ingestpolicy.Reporter { return reporter{i} }
+// Reporter is the receiver's report transport, held by one receiver at a
+// time until it calls Release.
+func (i *Ingest) Reporter() (ingestpolicy.Reporter, error) {
+	if !i.claimed.CompareAndSwap(false, true) {
+		return nil, ErrReporterClaimed
+	}
+	return &reporter{i: i}, nil
+}
 
-type reporter struct{ i *Ingest }
+type reporter struct {
+	i        *Ingest
+	released atomic.Bool
+}
 
-func (r reporter) Acks() <-chan uint64        { return r.i.acks }
-func (r reporter) Connected() <-chan struct{} { return r.i.connected }
+func (r *reporter) Acks() <-chan uint64        { return r.i.acks }
+func (r *reporter) Connected() <-chan struct{} { return r.i.connected }
 
-// NextSequence reserves the next reportSequence and persists it before
-// returning it (§10.4). A missing or unreadable file starts from the clock
-// in microseconds, above any sequence a previous run used.
-func (r reporter) NextSequence() (uint64, error) {
-	i := r.i
+// Release lets another receiver take the transport, after a reload.
+func (r *reporter) Release() {
+	if r.released.CompareAndSwap(false, true) {
+		r.i.claimed.Store(false)
+	}
+}
+
+// loadSequence finds the sequence domain (§10.4). A valid state for the
+// current UID continues from its last sequence. A state that is absent, or
+// valid for another UID, cannot tell which sequences the backend has
+// applied for the current UID, so the UID is renewed: a new agent with a
+// new domain, starting at 1, recorded before anything uses it. A state that
+// exists but cannot be read or parsed fails closed: no report is sent
+// until an operator removes it, rather than guess a sequence the backend
+// may already have applied and acknowledge values it never saw.
+func (i *Ingest) loadSequence(id Identity) {
 	i.seqMu.Lock()
 	defer i.seqMu.Unlock()
 	path := filepath.Join(i.dir, sequenceFile)
-	if i.nextSeq == 0 {
-		last, err := readSequence(path)
+	stored, last, err := readSequence(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		i.seqErr = fmt.Errorf("reportSequence state %s unusable, no report is sent until it is removed: %w", path, err)
+		i.logger.Error("Ingest reports disabled: the reportSequence state is unreadable or corrupt; remove it to start a new instance UID", zap.String("path", path), zap.Error(err))
+		return
+	default:
+		uid, err := id.InstanceUID()
 		if err != nil {
-			i.logger.Warn("reportSequence state unreadable; continuing from the clock", zap.Error(err))
+			i.seqErr = fmt.Errorf("instance UID: %w", err)
+			i.logger.Error("Ingest reports disabled: the instance UID is unreadable", zap.Error(err))
+			return
 		}
-		i.nextSeq = max(last+1, uint64(i.now().UnixMicro()))
+		if uid == stored {
+			i.uid, i.lastSeq, i.seqErr = uid, last, nil
+			return
+		}
 	}
-	seq := i.nextSeq
-	if err := writeAtomic(path, []byte(strconv.FormatUint(seq, 10)+"\n")); err != nil {
+	uid, err := id.RenewInstanceUID()
+	if err == nil {
+		err = writeSequence(path, uid, 0)
+	}
+	if err != nil {
+		i.seqErr = fmt.Errorf("renew the instance UID: %w", err)
+		i.logger.Error("Ingest reports disabled: a new instance UID could not be recorded", zap.Error(err))
+		return
+	}
+	i.logger.Warn("No reportSequence state for this instance UID; renewed the UID, so the backend sees a new agent")
+	i.uid, i.lastSeq, i.seqErr = uid, 0, nil
+}
+
+// NextSequence reserves the next reportSequence of the UID's domain and
+// persists it before returning it (§10.4).
+func (r *reporter) NextSequence() (uint64, error) {
+	i := r.i
+	i.seqMu.Lock()
+	defer i.seqMu.Unlock()
+	if i.seqErr != nil {
+		return 0, i.seqErr
+	}
+	if i.lastSeq == math.MaxUint64 {
+		return 0, errExhausted
+	}
+	seq := i.lastSeq + 1
+	if err := writeSequence(filepath.Join(i.dir, sequenceFile), i.uid, seq); err != nil {
+		// Unsent, seq may be reserved again: it reached no backend.
 		return 0, fmt.Errorf("persist reportSequence: %w", err)
 	}
-	i.nextSeq = seq + 1
+	i.lastSeq = seq
 	return seq, nil
 }
 
 // Send hands the pages, in order, to the client, one at a time.
-func (r reporter) Send(ctx context.Context, pages [][]byte) error {
+func (r *reporter) Send(ctx context.Context, pages [][]byte) error {
 	s := r.i.sender.get()
 	if s == nil {
 		return errors.New("OpAMP client not started")
@@ -252,15 +344,35 @@ func wait(ctx context.Context, ch chan struct{}) error {
 	}
 }
 
-func readSequence(path string) (uint64, error) {
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
-	}
+// readSequence reads the state strictly, at most maxSequenceFile bytes.
+func readSequence(path string) (uid [16]byte, seq uint64, err error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return uid, 0, err
 	}
-	return strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxSequenceFile+1))
+	if err != nil {
+		return uid, 0, err
+	}
+	if len(b) > maxSequenceFile {
+		return uid, 0, errors.New("too large")
+	}
+	hexUID, digits, ok := strings.Cut(strings.TrimSuffix(string(b), "\n"), " ")
+	if !ok || hex.DecodedLen(len(hexUID)) != len(uid) {
+		return uid, 0, errors.New("malformed")
+	}
+	if _, err := hex.Decode(uid[:], []byte(hexUID)); err != nil {
+		return uid, 0, errors.New("malformed")
+	}
+	if seq, err = strconv.ParseUint(digits, 10, 64); err != nil {
+		return uid, 0, errors.New("malformed")
+	}
+	return uid, seq, nil
+}
+
+func writeSequence(path string, uid [16]byte, seq uint64) error {
+	return writeAtomic(path, []byte(hex.EncodeToString(uid[:])+" "+strconv.FormatUint(seq, 10)+"\n"))
 }
 
 // writeAtomic writes b to path through a synced temporary file renamed

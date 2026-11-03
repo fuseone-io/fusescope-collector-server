@@ -73,12 +73,13 @@ func (*watcher) IngestPolicy() ingestpolicy.Source {
 	return noPolicy{}
 }
 
-// IngestReporter carries the ingest report, nil without an ingress agent.
-func (*watcher) IngestReporter() ingestpolicy.Reporter {
+// IngestReporter carries the ingest report for one receiver at a time;
+// nil, nil without an ingress agent.
+func (*watcher) IngestReporter() (ingestpolicy.Reporter, error) {
 	if a := agent.Current(); a != nil && a.Ingest() != nil {
 		return a.Ingest().Reporter()
 	}
-	return nil
+	return nil, nil
 }
 
 type noPolicy struct{}

@@ -27,6 +27,7 @@ Every rule cites one of:
 - **[OTLP]**: the OTLP specification, OTLP/HTTP (response codes, `Retry-After`).
 - **[M]**: a maintainer decision recorded in ADR 0006 or on PR #41, with no other source.
   **[M43]**: a maintainer decision in the review of PR #43 (step 2).
+  **[M44]**: a maintainer decision in the review of PR #44 (step 3).
 
 A rule marked **Differs** is a deliberate change from the backend, listed again in §12.
 
@@ -568,14 +569,33 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   persists the next value in its storage directory, next to the OpAMP instance UID
   ([ADR 0008](../adr/0008-opamp-remote-config.md) point 4), before sending a report with it.
   It is `<storage>/ingest/report-sequence`, mode `0600`, written atomically (temporary file,
-  fsync, rename, directory fsync). The next value is the larger of the last one plus 1 and the
-  current Unix time in microseconds, so a lost or unreadable file still never reuses a sequence;
-  a value that cannot be persisted is not used and that report is not sent ([M]).
-- **Collector, sending** ([M]): `rumreceiver` builds a report every 60 s and right after each
+  fsync, rename, directory fsync), holding `<instance UID, 32 lowercase hex> <last sequence>`
+  and a newline, at most 64 bytes ([M44]). The sequence belongs to that UID: the backend keys
+  what it applied by `(agentID, reportSequence)`, so only the last sequence persisted for the
+  same UID proves a new one is above everything the backend may have applied. The clock proves
+  nothing and is not used.
+  - **Valid, same UID:** the next sequence is the last plus 1; at `2^64-1` no report is sent.
+  - **Absent, or valid for another UID:** nothing says which sequences the backend applied for
+    the current UID, so the collector renews its instance UID before the OpAMP client starts and
+    records `<new UID> 0` before any report: a new agent to the backend, a new sequence domain
+    starting at 1. Reusing a lower sequence instead would let the backend answer
+    `already_applied` and acknowledge values it never applied, which the collector would then
+    clear. The first start of an `ingress` collector, or a switch from `writer`, renews the UID
+    this way once.
+  - **Unreadable or corrupt** (over 64 bytes, not exactly that format, a number out of
+    range): fail closed. No report is sent, and an error is logged, until an operator removes
+    the file, after which the next start renews the UID as above.
+  - A sequence that cannot be persisted is not used and that report is not sent; it reached no
+    backend, so it may be reserved again.
+- **Collector, sending** ([M]; one receiver [M44]): `rumreceiver` builds a report every 60 s and right after each
   OpAMP (re)connection, one at a time; handing its pages to the OpAMP client, in order, is
   bounded by 30 s, after which the report is abandoned and its values stay pending. The report
   is sent with no policy too, so `policy.status` reaches the backend. It reaches the extension
-  through the same `ingest_policy` extension ID as the policy.
+  through the same `ingest_policy` extension ID as the policy. The extension hands the
+  transport to one receiver at a time, released at its shutdown: a second `rumreceiver` on the
+  same collector fails to start, since two would interleave the pages of different sequences,
+  which the backend's one assembly per agent invalidates, and take each other's
+  acknowledgements.
 - The backend acknowledges with a custom message of the same capability, type `reportAck`:
 
   ```json
@@ -670,13 +690,14 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
 - **Backend, compare-and-apply answers** ([M43]): only "applied" and "already applied" let the
   backend acknowledge; "invalidated" refuses the sequence; any other answer, or none, fails
   closed like a store error: no ack, the sequence stays awaiting commit and is retried.
-- **Collector:** a pending durable value is cleared only when the `reportAck` for a sequence
+- **Collector, acknowledgements:** a pending durable value is cleared only when the `reportAck` for a sequence
   whose report (any of its pages) carried it arrives, and only if the value has not changed since (a newer
   `lastUsedAt` stays pending). Until then every report repeats it. An ack for a sequence it
   never sent, or already processed, is ignored. Handing a report to the OpAMP client clears
-  nothing. A `reportAck` is parsed strictly: at most 1 KiB, exactly the two fields above,
-  `schemaVersion` 1 and a sequence above 0; anything else is dropped with a log line of its
-  size only. At most 16 acks wait for the receiver; more are dropped, which only repeats their
+  nothing. A `reportAck` is parsed strictly: at most 1 KiB, one object with exactly the two
+  fields above, each once and spelled exactly (no case folding, no duplicate), `schemaVersion`
+  the number `1` and `reportSequence` an integer from 1 to `2^64-1`; anything else is dropped
+  with a log line of its size only ([M44]). At most 16 acks wait for the receiver; more are dropped, which only repeats their
   values in the next report ([M]).
 
 ## 11. The ingest policy

@@ -6,16 +6,21 @@ package rumreceiver
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/receiver/receivertest"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
+	"github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/metadata"
 	"github.com/fuseone-io/fusescope-collector-server/components/receiver/rumreceiver/internal/report"
 )
 
@@ -34,6 +39,7 @@ type fakeReporter struct {
 	sent      chan sentReport
 	acks      chan uint64
 	connected chan struct{}
+	released  atomic.Int32
 }
 
 func newFakeReporter(t *testing.T) *fakeReporter {
@@ -67,6 +73,7 @@ func (f *fakeReporter) Send(ctx context.Context, pages [][]byte) error {
 
 func (f *fakeReporter) Acks() <-chan uint64        { return f.acks }
 func (f *fakeReporter) Connected() <-chan struct{} { return f.connected }
+func (f *fakeReporter) Release()                   { f.released.Add(1) }
 
 func (f *fakeReporter) set(fn func(*fakeReporter)) {
 	f.mu.Lock()
@@ -97,9 +104,10 @@ func (f *fakeReporter) none(t *testing.T, within time.Duration) {
 type reporterExtension struct {
 	providerExtension
 	reporter ingestpolicy.Reporter
+	err      error
 }
 
-func (r reporterExtension) IngestReporter() ingestpolicy.Reporter { return r.reporter }
+func (r reporterExtension) IngestReporter() (ingestpolicy.Reporter, error) { return r.reporter, r.err }
 
 func withReportEvery(t *testing.T, every, timeout time.Duration) {
 	oldEvery, oldTimeout := reportEvery, reportTimeout
@@ -120,7 +128,7 @@ func TestReceiverReportsOnConnectAndAppliesAcks(t *testing.T) {
 	withReportEvery(t, time.Hour, time.Second)
 	store := newStore(t, testPolicy(1))
 	rep := newFakeReporter(t)
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: store}, rep}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: store}, rep, nil}})
 	s := startReceiver(t, nil, host)
 
 	require.Equal(t, http.StatusOK, s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey)).StatusCode)
@@ -147,7 +155,7 @@ func TestReceiverReportsRejectedPolicy(t *testing.T) {
 	withReportEvery(t, time.Hour, time.Second)
 	store := newStore(t, testPolicy(2))
 	rep := newFakeReporter(t)
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: store}, rep}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: store}, rep, nil}})
 	startReceiver(t, nil, host)
 
 	require.Error(t, store.Apply(encodePolicy(t, testPolicy(1)), time.Now()))
@@ -161,7 +169,7 @@ func TestReceiverReportsRejectedPolicy(t *testing.T) {
 func TestReceiverReportsPeriodically(t *testing.T) {
 	withReportEvery(t, 20*time.Millisecond, time.Second)
 	rep := newFakeReporter(t)
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, nil)}, rep}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, nil)}, rep, nil}})
 	startReceiver(t, nil, host)
 
 	a, b := rep.next(t), rep.next(t)
@@ -174,7 +182,7 @@ func TestReceiverReportSequenceNotPersisted(t *testing.T) {
 	withReportEvery(t, time.Hour, time.Second)
 	rep := newFakeReporter(t)
 	rep.seqErr = errors.New("disk full")
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, rep}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, rep, nil}})
 	startReceiver(t, nil, host)
 
 	rep.connected <- struct{}{}
@@ -189,7 +197,7 @@ func TestReceiverReportStallIsBounded(t *testing.T) {
 	withReportEvery(t, time.Hour, 50*time.Millisecond)
 	rep := newFakeReporter(t)
 	rep.stall = true
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, rep}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, rep, nil}})
 	startReceiver(t, nil, host)
 
 	rep.connected <- struct{}{}
@@ -204,7 +212,7 @@ func TestReceiverShutdownCancelsReport(t *testing.T) {
 	rep := newFakeReporter(t)
 	rep.stall = true
 	store := newStore(t, testPolicy(1))
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: store}, rep}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: store}, rep, nil}})
 	s := startReceiver(t, nil, host)
 
 	rep.connected <- struct{}{}
@@ -220,7 +228,43 @@ func TestReceiverShutdownCancelsReport(t *testing.T) {
 }
 
 func TestReceiverWithoutReporter(t *testing.T) {
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, nil}})
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, nil, nil}})
 	s := startReceiver(t, nil, host)
 	assert.Equal(t, http.StatusOK, s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey)).StatusCode)
+}
+
+func TestReceiverReleasesReporter(t *testing.T) {
+	rep := newFakeReporter(t)
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, rep, nil}})
+	s := startReceiver(t, nil, host)
+	require.NoError(t, s.r.Shutdown(context.Background()))
+	assert.Equal(t, int32(1), rep.released.Load(), "released at shutdown, once")
+}
+
+func TestReceiverReporterClaimedElsewhere(t *testing.T) {
+	claimed := errors.New("already sent by another receiver")
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, nil, claimed}})
+	cfg := createDefaultConfig().(*Config)
+	cfg.Endpoint, cfg.IngestPolicy = "127.0.0.1:0", policyExtension
+	r, err := NewFactory().CreateTraces(context.Background(), receivertest.NewNopSettings(metadata.Type), cfg, new(consumertest.TracesSink))
+	require.NoError(t, err)
+	assert.ErrorIs(t, r.Start(context.Background(), host), claimed, "a second rumreceiver does not start")
+	require.NoError(t, r.Shutdown(context.Background()))
+}
+
+func TestReceiverReleasesReporterOnStartFailure(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer busy.Close()
+	rep := newFakeReporter(t)
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: reporterExtension{providerExtension{source: newStore(t, testPolicy(1))}, rep, nil}})
+	tlsCfg, _ := writeCert(t)
+	cfg := createDefaultConfig().(*Config)
+	cfg.Endpoint, cfg.IngestPolicy, cfg.TLS = busy.Addr().String(), policyExtension, tlsCfg
+	r, err := NewFactory().CreateTraces(context.Background(), receivertest.NewNopSettings(metadata.Type), cfg, new(consumertest.TracesSink))
+	require.NoError(t, err)
+	require.Error(t, r.Start(context.Background(), host))
+	assert.Equal(t, int32(1), rep.released.Load())
+	require.NoError(t, r.Shutdown(context.Background()))
+	assert.Equal(t, int32(1), rep.released.Load(), "not released twice")
 }

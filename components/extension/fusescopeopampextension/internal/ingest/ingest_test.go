@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,13 +54,58 @@ func message(typ string, data []byte) *protobufs.CustomMessage {
 	return &protobufs.CustomMessage{Capability: ingestpolicy.Capability, Type: typ, Data: data}
 }
 
-func started(t *testing.T, dir string) (*Ingest, *observer.ObservedLogs) {
+// identity is the agent's instance UID in memory.
+type identity struct {
+	mu       sync.Mutex
+	uid      [16]byte
+	renewals int
+	readErr  error
+	renewErr error
+}
+
+func (id *identity) InstanceUID() ([16]byte, error) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	return id.uid, id.readErr
+}
+
+func (id *identity) RenewInstanceUID() ([16]byte, error) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if id.renewErr != nil {
+		return [16]byte{}, id.renewErr
+	}
+	id.renewals++
+	id.uid = [16]byte{0xee, byte(id.renewals)}
+	return id.uid, nil
+}
+
+func (id *identity) get() ([16]byte, int) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	return id.uid, id.renewals
+}
+
+func startedAs(t *testing.T, dir string, id *identity) (*Ingest, *observer.ObservedLogs) {
 	t.Helper()
 	core, logs := observer.New(zap.DebugLevel)
 	i := New(zap.New(core), dir)
-	require.NoError(t, i.Start())
+	require.NoError(t, i.Start(id))
 	t.Cleanup(i.Close)
 	return i, logs
+}
+
+func started(t *testing.T, dir string) (*Ingest, *observer.ObservedLogs) {
+	t.Helper()
+	return startedAs(t, dir, &identity{uid: [16]byte{1}})
+}
+
+func claim(t *testing.T, i *Ingest) ingestpolicy.Reporter {
+	t.Helper()
+	r, err := i.Reporter()
+	require.NoError(t, err)
+	t.Cleanup(r.Release)
+	return r
 }
 
 func waitVersion(t *testing.T, s ingestpolicy.Source, version uint64) {
@@ -127,7 +173,7 @@ func TestOtherMessagesIgnored(t *testing.T) {
 
 func TestAcks(t *testing.T) {
 	i, logs := started(t, t.TempDir())
-	r := i.Reporter()
+	r := claim(t, i)
 	i.OnCustomMessage(message(ingestpolicy.TypeReportAck, []byte(`{"schemaVersion":1,"reportSequence":7}`)))
 	assert.Equal(t, uint64(7), <-r.Acks())
 
@@ -161,39 +207,163 @@ func TestConnectedCoalesced(t *testing.T) {
 	for range 5 {
 		i.OnConnect()
 	}
-	<-i.Reporter().Connected()
+	r := claim(t, i)
+	<-r.Connected()
 	select {
-	case <-i.Reporter().Connected():
+	case <-r.Connected():
 		t.Fatal("reconnections are coalesced into one pending signal")
 	default:
 	}
 }
 
+func readState(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, sequenceFile))
+	require.NoError(t, err)
+	return string(b)
+}
+
 func TestNextSequence(t *testing.T) {
 	dir := t.TempDir()
-	i, _ := started(t, dir)
-	i.now = func() time.Time { return time.UnixMicro(1000) }
-	first, err := i.Reporter().NextSequence()
+	id := &identity{uid: [16]byte{1}}
+	i, _ := startedAs(t, dir, id)
+	uid, renewals := id.get()
+	assert.Equal(t, 1, renewals, "no state: a new UID, a new sequence domain")
+	assert.Equal(t, hex.EncodeToString(uid[:])+" 0\n", readState(t, dir), "the domain is recorded before use")
+	r := claim(t, i)
+	first, err := r.NextSequence()
 	require.NoError(t, err)
-	second, err := i.Reporter().NextSequence()
+	second, err := r.NextSequence()
 	require.NoError(t, err)
-	assert.Equal(t, first+1, second)
+	assert.Equal(t, []uint64{1, 2}, []uint64{first, second})
+	assert.Equal(t, hex.EncodeToString(uid[:])+" 2\n", readState(t, dir), "persisted before it is returned")
 	info, err := os.Stat(filepath.Join(dir, sequenceFile))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	r.Release()
+	i.Close()
 
-	again, _ := started(t, dir) // a restart with a slower clock
-	again.now = func() time.Time { return time.UnixMicro(1) }
-	third, err := again.Reporter().NextSequence()
+	// A restart, whatever the clock says, continues the domain.
+	again, _ := startedAs(t, dir, id)
+	again.now = func() time.Time { return time.Unix(0, 0) }
+	third, err := claim(t, again).NextSequence()
 	require.NoError(t, err)
-	assert.Greater(t, third, second, "never reused across restarts")
+	assert.Equal(t, uint64(3), third)
+	_, renewals = id.get()
+	assert.Equal(t, 1, renewals, "a valid state for this UID keeps it")
+}
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, sequenceFile), []byte("garbage"), 0o600))
-	corrupt, _ := started(t, dir)
-	corrupt.now = func() time.Time { return time.UnixMicro(5_000_000) }
-	fourth, err := corrupt.Reporter().NextSequence()
-	require.NoError(t, err)
-	assert.Equal(t, uint64(5_000_000), fourth, "an unreadable state continues from the clock")
+func TestSequenceDomainRenewed(t *testing.T) {
+	for name, prepare := range map[string]func(t *testing.T, dir string, id *identity){
+		"state lost": func(t *testing.T, dir string, _ *identity) {
+			require.NoError(t, os.Remove(filepath.Join(dir, sequenceFile)))
+		},
+		"state of another UID": func(t *testing.T, _ string, id *identity) {
+			id.mu.Lock()
+			id.uid = [16]byte{9}
+			id.mu.Unlock()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			id := &identity{uid: [16]byte{1}}
+			i, _ := startedAs(t, dir, id)
+			r := claim(t, i)
+			for range 5 {
+				_, err := r.NextSequence()
+				require.NoError(t, err)
+			}
+			r.Release()
+			i.Close()
+			before, _ := id.get()
+
+			prepare(t, dir, id)
+			again, _ := startedAs(t, dir, id)
+			after, renewals := id.get()
+			assert.Equal(t, 2, renewals)
+			assert.NotEqual(t, before, after)
+			seq, err := claim(t, again).NextSequence()
+			require.NoError(t, err)
+			assert.Equal(t, uint64(1), seq, "the sequence restarts only with a new UID")
+			assert.Equal(t, hex.EncodeToString(after[:])+" 1\n", readState(t, dir))
+		})
+	}
+}
+
+func TestSequenceStateFailsClosed(t *testing.T) {
+	uid := [16]byte{1}
+	valid := hex.EncodeToString(uid[:])
+	for name, content := range map[string]string{
+		"garbage":        "garbage",
+		"empty":          "",
+		"no sequence":    valid + "\n",
+		"no UID":         "5\n",
+		"short UID":      valid[:30] + " 5\n",
+		"bad hex":        "zz" + valid[2:] + " 5\n",
+		"negative":       valid + " -5\n",
+		"signed":         valid + " +5\n",
+		"overflow":       valid + " 18446744073709551616\n",
+		"two spaces":     valid + "  5\n",
+		"trailing bytes": valid + " 5\nx",
+		"too large":      valid + " 5" + strings.Repeat("0", maxSequenceFile),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, sequenceFile), []byte(content), 0o600))
+			id := &identity{uid: uid}
+			i, logs := startedAs(t, dir, id)
+			_, err := claim(t, i).NextSequence()
+			assert.Error(t, err, "no report without a trusted sequence")
+			_, renewals := id.get()
+			assert.Zero(t, renewals, "a corrupt state is not replaced by guessing")
+			assert.Equal(t, content, readState(t, dir), "left for an operator")
+			assert.Equal(t, 1, logs.FilterMessageSnippet("Ingest reports disabled").Len())
+		})
+	}
+}
+
+func TestSequenceStateUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, sequenceFile)
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o000))
+	id := &identity{uid: [16]byte{1}}
+	i, _ := startedAs(t, dir, id)
+	_, err := claim(t, i).NextSequence()
+	assert.Error(t, err)
+	_, renewals := id.get()
+	assert.Zero(t, renewals)
+}
+
+func TestSequenceExhausted(t *testing.T) {
+	dir := t.TempDir()
+	uid := [16]byte{1}
+	full := hex.EncodeToString(uid[:]) + " 18446744073709551615\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, sequenceFile), []byte(full), 0o600))
+	i, _ := startedAs(t, dir, &identity{uid: uid})
+	_, err := claim(t, i).NextSequence()
+	assert.ErrorIs(t, err, errExhausted)
+	assert.Equal(t, full, readState(t, dir))
+}
+
+func TestSequenceIdentityFailures(t *testing.T) {
+	dir := t.TempDir()
+	i, _ := startedAs(t, dir, &identity{renewErr: errors.New("disk full")})
+	_, err := claim(t, i).NextSequence()
+	assert.Error(t, err, "no domain could be recorded")
+
+	uid := [16]byte{1}
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, sequenceFile), []byte(hex.EncodeToString(uid[:])+" 5\n"), 0o600))
+	j, _ := startedAs(t, other, &identity{uid: uid, readErr: errors.New("unreadable")})
+	_, err = claim(t, j).NextSequence()
+	assert.Error(t, err)
+
+	notStarted, _ := New(zap.NewNop(), t.TempDir()).Reporter()
+	_, err = notStarted.NextSequence()
+	assert.ErrorIs(t, err, errNotStarted)
 }
 
 func TestNextSequencePersistFailure(t *testing.T) {
@@ -202,10 +372,31 @@ func TestNextSequencePersistFailure(t *testing.T) {
 	}
 	dir := t.TempDir()
 	i, _ := started(t, dir)
+	r := claim(t, i)
 	require.NoError(t, os.Chmod(dir, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	_, err := i.Reporter().NextSequence()
+	_, err := r.NextSequence()
 	assert.Error(t, err, "a sequence that cannot be persisted is not used")
+	require.NoError(t, os.Chmod(dir, 0o700))
+	seq, err := r.NextSequence()
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), seq, "an unpersisted sequence reached nobody and is reserved again")
+}
+
+func TestReporterClaimedOnce(t *testing.T) {
+	i, _ := started(t, t.TempDir())
+	r, err := i.Reporter()
+	require.NoError(t, err)
+	_, err = i.Reporter()
+	assert.ErrorIs(t, err, ErrReporterClaimed, "a second receiver would interleave pages")
+	r.Release()
+	r.Release() // idempotent: does not release a later claim
+	r2, err := i.Reporter()
+	require.NoError(t, err)
+	r.Release()
+	_, err = i.Reporter()
+	assert.ErrorIs(t, err, ErrReporterClaimed, "a stale release does not free the new claim")
+	r2.Release()
 }
 
 type fakeSender struct {
@@ -233,7 +424,7 @@ func (f *fakeSender) SendCustomMessage(m *protobufs.CustomMessage) (chan struct{
 
 func TestSend(t *testing.T) {
 	i, _ := started(t, t.TempDir())
-	r := i.Reporter()
+	r := claim(t, i)
 	assert.Error(t, r.Send(context.Background(), [][]byte{[]byte("{}")}), "no client yet")
 
 	f := &fakeSender{pendings: 2}

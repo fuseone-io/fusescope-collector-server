@@ -56,6 +56,8 @@ type rumReceiver struct {
 	monitor   *report.Monitor
 	telemetry *metadata.TelemetryBuilder
 	forget    func()
+	// reporter is held from Start to Shutdown, then released.
+	reporter ingestpolicy.Reporter
 
 	mu      sync.Mutex
 	hosts   []component.Host
@@ -160,8 +162,15 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 		r.set.Logger.Warn("No ingest_policy configured: every RUM request is refused and the receiver is not ready")
 		source = noPolicy{}
 	}
+	// Released on every failure below, and at Shutdown once started.
+	release := func() {
+		if reporter != nil {
+			reporter.Release()
+		}
+	}
 	tlsCfg, err := r.cfg.TLS.LoadTLSConfig(ctx)
 	if err != nil {
+		release()
 		return fmt.Errorf("rum receiver TLS: %w", err)
 	}
 	if err := r.telemetry.RegisterReceiverRumPolicyAgeCallback(func(_ context.Context, o metric.Float64Observer) error {
@@ -170,10 +179,12 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 		}
 		return nil
 	}); err != nil {
+		release()
 		return err
 	}
 	ln, err := net.Listen("tcp", r.cfg.Endpoint)
 	if err != nil {
+		release()
 		return err
 	}
 	r.addr = ln.Addr()
@@ -192,6 +203,7 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
 	r.started = true
+	r.reporter = reporter
 
 	limited := newLimitListener(ln, r.cfg.Limits.Connections)
 	r.wg.Add(2)
@@ -336,6 +348,9 @@ func (r *rumReceiver) Shutdown(ctx context.Context) error {
 		}
 		r.handler.active.closeAndWait()
 		r.wg.Wait()
+		if r.reporter != nil {
+			r.reporter.Release()
+		}
 		r.telemetry.Shutdown()
 		r.forget()
 	})
@@ -358,7 +373,10 @@ func resolveSource(host component.Host, id component.ID) (ingestpolicy.Source, i
 	}
 	var reporter ingestpolicy.Reporter
 	if rp, ok := ext.(ingestpolicy.ReporterProvider); ok {
-		reporter = rp.IngestReporter()
+		var err error
+		if reporter, err = rp.IngestReporter(); err != nil {
+			return nil, nil, fmt.Errorf("ingest_policy: extension %q: %w", id, err)
+		}
 	}
 	return provider.IngestPolicy(), reporter, nil
 }

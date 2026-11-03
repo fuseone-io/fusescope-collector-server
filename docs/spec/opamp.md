@@ -133,7 +133,9 @@ service:
 (FuseScope `docs/adr/0009-fusescope-collector.md` line 79), next to `host.name` and `os.type`. With `ingress` the agent
 also declares the custom capability `io.fuseone.fusescope.ingest.v1` and keeps the ingest policy
 and the report sequence under `<storage>/ingest/` ([rum.md](rum.md) §§10.4, 11). Any other
-value is refused at start.
+value is refused at start. The instance UID persists across restarts (ADR 0008 point 4) with
+one exception: an `ingress` collector without a valid report sequence state for its UID takes
+a new UID before connecting (rum.md §10.4), so the backend sees a new agent.
 
 The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
 in it itself (`$$` for a literal `$`); other substitution schemes are not available there. A change

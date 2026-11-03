@@ -165,7 +165,7 @@ func (p *provider) start(base map[string]any, s *Settings) error {
 		}
 		if ing := a.Ingest(); ing != nil {
 			// The cached policy is in force before any receiver starts.
-			if err := ing.Start(); err != nil {
+			if err := ing.Start(a); err != nil {
 				return err
 			}
 		}

@@ -132,7 +132,11 @@ func TestIngestPolicyOverOpAMP(t *testing.T) {
 	}
 
 	// A report and its acknowledgement.
-	rep := ing.Reporter()
+	rep, err := ing.Reporter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rep.Release()
 	seq, err := rep.NextSequence()
 	if err != nil {
 		t.Fatal(err)
@@ -162,8 +166,14 @@ func TestIngestPolicyOverOpAMP(t *testing.T) {
 		t.Fatal("no ack delivered")
 	}
 
+	b.mu.Lock()
+	uid := b.describedUID
+	b.mu.Unlock()
 	col.col.Shutdown()
 	<-col.done
+	b.mu.Lock()
+	b.description = nil
+	b.mu.Unlock()
 
 	// Restarted, the cached policy is applied before any push.
 	startCollector(t, path)
@@ -172,8 +182,51 @@ func TestIngestPolicyOverOpAMP(t *testing.T) {
 	if v := restarted.Current().Version; v != 7 {
 		t.Fatalf("policy %d from the cache, want 7", v)
 	}
-	if next, err := currentIngest(t, ing).Reporter().NextSequence(); err != nil || next <= seq {
-		t.Fatalf("reportSequence %d (%v) after a restart, want above %d", next, err, seq)
+	again, err := currentIngest(t, ing).Reporter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Release()
+	if next, err := again.NextSequence(); err != nil || next != seq+1 {
+		t.Fatalf("reportSequence %d (%v) after a restart, want %d", next, err, seq+1)
+	}
+	b.waitFor("the restarted agent", func() bool { return b.description != nil })
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if string(b.describedUID) != string(uid) {
+		t.Error("the instance UID changed across a restart with a valid reportSequence state")
+	}
+}
+
+// Without its reportSequence state, an agent that already has an instance
+// UID takes a new one: the backend may have applied any sequence for the
+// old one (rum.md §10.4).
+func TestLostSequenceStateRenewsInstanceUID(t *testing.T) {
+	b := startBackend(t)
+	storage := t.TempDir()
+	path := writeRole(t, b.endpoint, storage, RoleIngress)
+	col := startCollector(t, path)
+	ing := currentIngest(t, nil)
+	b.waitFor("a description", func() bool { return b.description != nil })
+	b.mu.Lock()
+	uid := b.describedUID
+	b.mu.Unlock()
+	col.col.Shutdown()
+	<-col.done
+	b.mu.Lock()
+	b.description = nil
+	b.mu.Unlock()
+
+	if err := os.Remove(filepath.Join(storage, "ingest", "report-sequence")); err != nil {
+		t.Fatal(err)
+	}
+	startCollector(t, path)
+	currentIngest(t, ing)
+	b.waitFor("the restarted agent", func() bool { return b.description != nil })
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if string(b.describedUID) == string(uid) {
+		t.Error("the instance UID was kept without its sequence state")
 	}
 }
 
