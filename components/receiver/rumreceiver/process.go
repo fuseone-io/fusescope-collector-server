@@ -141,6 +141,11 @@ func stampResource(app *ingestpolicy.Application, keyID string, resource pcommon
 	attributes := resource.Attributes()
 	scrubAttributes(&app.PIIPolicy, attributes)
 
+	// Every copy goes: pdata keeps duplicate keys a client sent, PutStr
+	// replaces only the first, and a later reader may take the last.
+	attributes.RemoveIf(func(k string, _ pcommon.Value) bool {
+		return k == attributeApplicationID || k == attributePlatform || k == attributeKeyID
+	})
 	attributes.PutStr(attributeApplicationID, app.ID)
 	attributes.PutStr(attributePlatform, app.Platform)
 	attributes.PutStr(attributeKeyID, keyID)

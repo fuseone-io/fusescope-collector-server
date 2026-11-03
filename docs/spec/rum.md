@@ -277,7 +277,9 @@ without allocation, count every repeated message pdata would build, under both t
 lowerCamelCase and snake_case JSON names pdata accepts and the deprecated scope lists. A few
 bytes of OTLP can name millions of empty messages, which a check after decoding would already
 have allocated. Over any bound the request is refused, counted `too_large`; a body the scan
-cannot parse is 400 `invalid_payload`. The structural budget, the session bucket and the pending
+cannot parse is 400 `invalid_payload`, as is a single message field (`resource`, `scope`, `value`,
+`body`, an array or map value) given twice, which both decoders would merge into one message
+that escapes its budget. The structural budget, the session bucket and the pending
 key bound are maxima: configuration (`limits.*`) may lower them, never raise them ([M43]).
 
 Strings longer than their bound are never truncated into a stored value: a truncated origin or
@@ -299,7 +301,8 @@ For every resource ([B] `impl/otlp.go:90-113`; tests `impl/otlp_test.go:47-68`):
 4. `deployment.environment.name` is set to the application's environment when missing (an
    empty value present is kept);
 5. **new, from [ADR10] §4 (line 72):** `fusescope.ingest.key_id` is overwritten with the key's
-   ID, and the key's org goes in the request's auth data (`client.Info`), never taken from the
+   ID (every copy a client sent of it, of `fusescope.rum.application.id` and of
+   `fusescope.rum.platform` is removed first), and the key's org goes in the request's auth data (`client.Info`), never taken from the
    payload. The auth data names are exactly `fusescope.org.id` (the org) and
    `fusescope.ingest.key_id` (the key ID), exported by `ingestpolicy` as `AuthOrgID` and
    `AuthKeyID` so `ingestauth` uses the same ([M43]). The client address is not passed on.

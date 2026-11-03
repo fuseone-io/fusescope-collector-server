@@ -291,6 +291,21 @@ type budget struct {
 // node is the per-message state: what its direct repeated fields used.
 type node struct {
 	scopes, events, links, entries int
+	// singular marks the single (not repeated) message fields seen. Both
+	// protobuf and pdata's JSON decoder merge a repeated occurrence into
+	// the first, which would let a message exceed its budget in parts; a
+	// repeat is refused instead, as no conforming encoder writes one.
+	singular uint32
+}
+
+// once records a single message field; false if it was seen before.
+func (n *node) once(f field) bool {
+	bit := uint32(1) << f.child
+	if n.singular&bit != 0 {
+		return false
+	}
+	n.singular |= bit
+	return true
 }
 
 // take counts one occurrence of f inside parent n; false when over budget.
@@ -362,6 +377,9 @@ func (b *budget) protoMessage(data []byte, m msg, depth int) structure {
 			return structureMalformed
 		}
 		data = data[l:]
+		if f.count == countNone && !n.once(f) {
+			return structureMalformed
+		}
 		if !b.take(&n, f) {
 			return structureOverBudget
 		}
@@ -478,6 +496,9 @@ func (s *jsonScanner) object(m msg, depth, vdepth int) structure {
 		case !ok:
 			r = s.value(msgOther, depth+1, vdepth)
 		case f.count == countNone:
+			if !n.once(f) {
+				return structureMalformed
+			}
 			r = s.child(&n, f, depth+1, vdepth)
 		default:
 			// A repeated field: its value is an array of children.

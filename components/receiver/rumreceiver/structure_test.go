@@ -247,6 +247,41 @@ func TestStructureJSONEdgeCases(t *testing.T) {
 	}
 }
 
+// Codex review on #43: a repeated single message field (resource, scope,
+// value, body, array or map value) would be merged by the decoder and
+// escape its budget in parts; it is refused in both encodings.
+func TestStructureRepeatedSingularField(t *testing.T) {
+	kv := func(i int) []byte {
+		return msgField(msgField(nil, 1, []byte(fmt.Sprintf("k%d", i))), 2, msgField(nil, 1, []byte("v")))
+	}
+	resourcePart := func(from, to int) []byte {
+		var b []byte
+		for i := from; i < to; i++ {
+			b = msgField(b, 1, kv(i))
+		}
+		return b
+	}
+	split := msgField(nil, 1, msgField(msgField(nil, 1, resourcePart(0, 100)), 1, resourcePart(100, 129)))
+	assert.Equal(t, structureMalformed, scanProto(split, msgTracesRequest, maxStructure), "resource in two parts")
+	whole := msgField(nil, 1, msgField(nil, 1, resourcePart(0, 128)))
+	assert.Equal(t, structureOK, scanProto(whole, msgTracesRequest, maxStructure), "one resource at the limit")
+
+	testCases := []string{
+		`{"resourceSpans":[{"resource":{},"resource":{}}]}`,
+		`{"resourceSpans":[{"scopeSpans":[{"scope":{},"scope":{}}]}]}`,
+		`{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{},"body":{}}]}]}]}`,
+		`{"resourceSpans":[{"resource":{"attributes":[{"key":"k","value":{},"value":{}}]}}]}`,
+		`{"resourceSpans":[{"resource":{"attributes":[{"key":"k","value":{"arrayValue":{},"array_value":{}}}]}}]}`,
+	}
+	for _, body := range testCases {
+		root := msgTracesRequest
+		if strings.Contains(body, "resourceLogs") {
+			root = msgLogsRequest
+		}
+		assert.Equal(t, structureMalformed, scanJSON([]byte(body), root, maxStructure), body)
+	}
+}
+
 func TestStructureProtoMalformed(t *testing.T) {
 	for _, body := range [][]byte{{0x0a}, {0x0a, 0x05, 0x01}, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}} {
 		assert.Equal(t, structureMalformed, scanProto(body, msgTracesRequest, maxStructure))

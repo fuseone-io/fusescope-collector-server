@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
@@ -144,6 +145,41 @@ func TestProcessTraces(t *testing.T) {
 			assert.Equal(t, "https://x/", linkURL.Str())
 		})
 	}
+}
+
+// Codex review on #43: duplicate copies of the stamped identity are all
+// replaced, whatever a later reader picks.
+func TestProcessDuplicateIdentityAttributes(t *testing.T) {
+	application, _ := testApplications(t)
+	kv := func(k, v string) []byte {
+		return msgField(msgField(nil, 1, []byte(k)), 2, msgField(nil, 1, []byte(v)))
+	}
+	var resource []byte
+	for _, k := range []string{attributeApplicationID, attributePlatform, attributeKeyID} {
+		resource = msgField(resource, 1, kv(k, "first-forged"))
+		resource = msgField(resource, 1, kv(k, "second-forged"))
+	}
+	span := msgField(nil, 5, []byte("s"))
+	body := msgField(nil, 1, msgField(msgField(nil, 1, resource), 2, msgField(nil, 2, span)))
+	td, err := (&ptrace.ProtoUnmarshaler{}).UnmarshalTraces(body)
+	require.NoError(t, err)
+	require.Equal(t, 6, td.ResourceSpans().At(0).Resource().Attributes().Len(), "pdata keeps the duplicates")
+
+	processTraces(application, webKeyID, td, &report.Batch{})
+
+	attrs := td.ResourceSpans().At(0).Resource().Attributes()
+	counts := map[string]int{}
+	attrs.Range(func(k string, v pcommon.Value) bool {
+		counts[k]++
+		assert.NotContains(t, v.Str(), "forged", k)
+		return true
+	})
+	assert.Equal(t, 1, counts[attributeApplicationID])
+	assert.Equal(t, 1, counts[attributePlatform])
+	assert.Equal(t, 1, counts[attributeKeyID])
+	raw := attrs.AsRaw()
+	assert.Equal(t, application.ID, raw[attributeApplicationID])
+	assert.Equal(t, webKeyID, raw[attributeKeyID])
 }
 
 func TestProcessTracesBatch(t *testing.T) {
