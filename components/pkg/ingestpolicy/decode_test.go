@@ -6,6 +6,7 @@ package ingestpolicy
 import (
 	"bytes"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -98,6 +99,36 @@ func TestParseDeepNestingRejected(t *testing.T) {
 	nested := strings.Replace(string(valid), `"keys":[`, `"x":`+strings.Repeat(`{"a":`, maxDepth)+`1`+strings.Repeat(`}`, maxDepth)+`,"keys":[`, 1)
 	_, err = Parse([]byte(nested))
 	assert.Equal(t, CodeParseError, codeOf(t, err), "too deep, though only inside an unknown field")
+}
+
+// Codex review on #43: list bounds are enforced while walking, so an
+// oversized list never reaches the typed decoder.
+func TestParseListBoundsBeforeDecoding(t *testing.T) {
+	valid := string(encode(t, testPolicy(1)))
+	many := func(n int, item string) string { return strings.TrimSuffix(strings.Repeat(item+",", n), ",") }
+	testCases := []struct {
+		name, body, path string
+	}{
+		{name: "QueryAllowlist", body: strings.Replace(valid, `"queryAllowlist":["page"]`, `"queryAllowlist":[`+many(2_000_000, `""`)+`]`, 1), path: "rumApplications[0].piiPolicy.queryAllowlist"},
+		{name: "Origins", body: strings.Replace(valid, `"allowedOrigins":["https://shop.example.com"`, `"allowedOrigins":[`+many(51, `"https://a.com"`)+`,"https://shop.example.com"`, 1), path: "rumApplications[0].allowedOrigins"},
+		{name: "Signals", body: strings.Replace(valid, `"signals":["traces","logs"]`, `"signals":[`+many(6, `"logs"`)+`]`, 1), path: "keys[0].signals"},
+		{name: "Keys", body: strings.Replace(valid, `"keys":[`, `"keys":[`+many(MaxKeys, `{}`)+`,`, 1), path: "keys"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Less(t, len(tc.body), MaxSize)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			_, err := Parse([]byte(tc.body))
+			runtime.ReadMemStats(&after)
+			require.Equal(t, CodeInvalidValue, codeOf(t, err), "%v", err)
+			assert.Equal(t, tc.path, err.(*RejectionError).Path)
+			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(len(tc.body))+(8<<20), "stopped before decoding the list")
+		})
+	}
+	_, err := Parse([]byte(strings.Replace(valid, `"queryAllowlist":["page"]`, `"queryAllowlist":[`+many(50, `"q"`)+`]`, 1)))
+	assert.NoError(t, err, "50 entries are allowed")
 }
 
 func TestParseAtMaxSizeAccepted(t *testing.T) {

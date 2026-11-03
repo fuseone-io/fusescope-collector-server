@@ -28,8 +28,11 @@ const (
 type node struct {
 	kind     kind
 	nullable bool
-	fields   []field
-	elem     *node
+	// max bounds an array's entries, checked while walking so an oversized
+	// list never reaches the typed decoder; 0 is unbounded.
+	max    int
+	fields []field
+	elem   *node
 }
 
 type field struct {
@@ -42,7 +45,8 @@ var (
 	stringNode   = &node{kind: kindString}
 	numberNode   = &node{kind: kindNumber}
 	boolNode     = &node{kind: kindBool}
-	stringsNode  = &node{kind: kindArray, elem: stringNode}
+	stringsNode  = &node{kind: kindArray, elem: stringNode, max: MaxListLength}
+	signalsNode  = &node{kind: kindArray, elem: stringNode, max: len(signalNames)}
 	nullableTime = &node{kind: kindString, nullable: true}
 
 	limitNode = &node{kind: kindObject, fields: []field{
@@ -54,7 +58,7 @@ var (
 		{"sha256", stringNode, true},
 		{"orgId", stringNode, true},
 		{"kind", stringNode, true},
-		{"signals", stringsNode, true},
+		{"signals", signalsNode, true},
 		{"expiresAt", nullableTime, false},
 		{"limit", limitNode, false},
 		{"applicationId", stringNode, false},
@@ -80,8 +84,8 @@ var (
 		{"schemaVersion", nil, false},
 		{"version", numberNode, true},
 		{"issuedAt", stringNode, true},
-		{"keys", &node{kind: kindArray, elem: keyNode}, true},
-		{"rumApplications", &node{kind: kindArray, elem: applicationNode}, true},
+		{"keys", &node{kind: kindArray, elem: keyNode, max: MaxKeys}, true},
+		{"rumApplications", &node{kind: kindArray, elem: applicationNode, max: MaxApplications}, true},
 	}}
 )
 
@@ -95,6 +99,9 @@ func Parse(data []byte) (*Policy, error) {
 	w := walker{dec: json.NewDecoder(bytes.NewReader(data))}
 	w.dec.UseNumber()
 	if err := w.walk(policyNode, true); err != nil {
+		if errors.Is(err, errTooMany) {
+			return nil, reject(CodeInvalidValue, w.tooMany)
+		}
 		return nil, reject(CodeParseError, w.render())
 	}
 	if _, err := w.dec.Token(); !errors.Is(err, io.EOF) {
@@ -105,6 +112,8 @@ func Parse(data []byte) (*Policy, error) {
 		return nil, reject(CodeSchemaVersion, "schemaVersion")
 	case w.unknown != "":
 		return nil, reject(CodeUnknownField, w.unknown)
+	case w.tooMany != "":
+		return nil, reject(CodeInvalidValue, w.tooMany)
 	case w.shape != "":
 		return nil, reject(CodeParseError, w.shape)
 	}
@@ -125,11 +134,15 @@ type walker struct {
 	depth           int
 	path            []string
 	unknown         string
+	tooMany         string
 	shape           string
 	schemaVersionOK bool
 }
 
-var errSyntax = errors.New("syntax")
+var (
+	errSyntax  = errors.New("syntax")
+	errTooMany = errors.New("too many entries")
+)
 
 func (w *walker) render() string { return strings.Join(w.path, "") }
 
@@ -267,6 +280,22 @@ func (w *walker) array(n *node) error {
 		elem = n.elem
 	}
 	for i := 0; w.dec.More(); i++ {
+		if n != nil && n.max > 0 && i == n.max && w.tooMany == "" {
+			w.tooMany = w.render()
+			if w.schemaVersionOK {
+				// Stop at once: the rest of the list is never read.
+				return errTooMany
+			}
+			// Keep walking for a schemaVersion that may follow and take
+			// precedence, without descending or tracking paths.
+			elem = nil
+		}
+		if elem == nil {
+			if err := w.walk(nil, false); err != nil {
+				return err
+			}
+			continue
+		}
 		w.path = append(w.path, "["+strconv.Itoa(i)+"]")
 		if err := w.walk(elem, false); err != nil {
 			return err
