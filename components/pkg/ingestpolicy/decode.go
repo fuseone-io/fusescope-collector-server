@@ -116,8 +116,13 @@ func Parse(data []byte) (*Policy, error) {
 	return &p, nil
 }
 
+// maxDepth bounds nesting before the walker descends. v1 needs four levels
+// (policy, keys, key, limit); anything far deeper is not a v1 policy.
+const maxDepth = 16
+
 type walker struct {
 	dec             *json.Decoder
+	depth           int
 	path            []string
 	unknown         string
 	shape           string
@@ -185,6 +190,10 @@ func (w *walker) walk(n *node, top bool) error {
 }
 
 func (w *walker) object(n *node, top bool) error {
+	if w.depth++; w.depth > maxDepth {
+		return errSyntax
+	}
+	defer func() { w.depth-- }()
 	var seen uint32
 	for w.dec.More() {
 		tok, err := w.dec.Token()
@@ -249,6 +258,10 @@ func (w *walker) object(n *node, top bool) error {
 }
 
 func (w *walker) array(n *node) error {
+	if w.depth++; w.depth > maxDepth {
+		return errSyntax
+	}
+	defer func() { w.depth-- }()
 	var elem *node
 	if n != nil {
 		elem = n.elem

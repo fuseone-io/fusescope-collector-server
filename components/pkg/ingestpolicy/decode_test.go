@@ -85,6 +85,21 @@ func TestParseCodes(t *testing.T) {
 	}
 }
 
+// Codex review on #43: nesting is bounded before descending, even inside an
+// unknown field, so a small policy cannot exhaust the stack.
+func TestParseDeepNestingRejected(t *testing.T) {
+	const levels = 2_000_000
+	deep := `{"schemaVersion":1,"x":` + strings.Repeat("[", levels) + strings.Repeat("]", levels) + `}`
+	require.Less(t, len(deep), MaxSize)
+	_, err := Parse([]byte(deep))
+	assert.Equal(t, CodeParseError, codeOf(t, err))
+
+	valid := encode(t, testPolicy(1))
+	nested := strings.Replace(string(valid), `"keys":[`, `"x":`+strings.Repeat(`{"a":`, maxDepth)+`1`+strings.Repeat(`}`, maxDepth)+`,"keys":[`, 1)
+	_, err = Parse([]byte(nested))
+	assert.Equal(t, CodeParseError, codeOf(t, err), "too deep, though only inside an unknown field")
+}
+
 func TestParseAtMaxSizeAccepted(t *testing.T) {
 	valid := encode(t, testPolicy(1))
 	data := append(valid, bytes.Repeat([]byte(" "), MaxSize-len(valid))...)
