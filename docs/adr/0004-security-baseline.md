@@ -1,6 +1,7 @@
 # 0004 · Security baseline
 
-- Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest policy over OpAMP) and
+- Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest authentication, the
+  ingest policy over OpAMP, security gates),
   [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in) and
   [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport)
 - Date: 2026-10-31
@@ -9,10 +10,16 @@
 
 - TLS 1.3 minimum on every network listener and exporter that leaves the host; mTLS between
   agents and gateways and from gateways to engine ingesters.
-- Bearer-token authentication on gateway OTLP ingest; engine exporters present the tenant's
-  `fst_` ingest token (engine DESIGN §10.3). Tokens come only from mounted files.
+- Ingest authentication on the gateway's public receivers by `ingestauth` and `rumreceiver`,
+  against SHA-256 verifiers of ingestion and RUM keys from the OpAMP ingest policy
+  ([ADR 0006](0006-single-ingress.md), decision 3 and security gates). Engine exporters present
+  the tenant's `fst_` ingest token (engine DESIGN §10.3). The collector's own credentials come
+  only from mounted files; the one exception is the artifact-intake credential (ADR 0006,
+  decision 4).
 - Remote configuration over OpAMP accepts only allow-listed processor types; receivers,
-  exporters, extensions, endpoints and credentials are local configuration only.
+  exporters, extensions, endpoints and credentials are local configuration only. The ingest
+  policy custom message (ADR 0006) is not configuration: it can only restrict what is
+  accepted, holds verifiers and never keys, and is cached on disk.
 - Debug and introspection endpoints (`pprof`, `zpages`, the health config view) are off or
   bound to `localhost` by default.
 - Distroless, non-root, read-only root filesystem images.
