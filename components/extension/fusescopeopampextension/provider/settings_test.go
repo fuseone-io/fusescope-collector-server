@@ -98,6 +98,7 @@ func TestReadToken(t *testing.T) {
 		"short":       "short\n",
 		"two lines":   token + "\n" + token + "\n",
 		"inner space": "ingest token aaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"too long":    strings.Repeat("a", 257),
 		"too large":   strings.Repeat("a", 4097),
 	} {
 		t.Run(name, func(t *testing.T) {

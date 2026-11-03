@@ -141,9 +141,10 @@ a new UID before connecting (rum.md §10.4), so the backend sees a new agent.
 The backend sends the ingest policy only to a connection that presented, at the handshake, one
 of the tokens in its `rum.ingest_policy.token_file`, as `Authorization: Bearer` (FuseScope
 `pkg/query-service/app/opamp/opamp_server.go`, fuseone-io/fusescope#310). An `ingress`
-collector reads its token from `auth.token_file`: one token of at least 32 characters, at most
-4 KiB, read once when the client starts, never logged and never in the effective
-configuration. A connection without it still takes remote configuration. With `tls.insecure`
+collector reads its token from `auth.token_file`: one token of 32 to 256 characters, the
+backend's bounds too, read once when the client starts, never logged and never in the effective
+configuration. The client follows no redirect, with or without a token: one would resend the
+token and could move the connection to another host or from `wss` to `ws`. A connection without it still takes remote configuration. With `tls.insecure`
 the token travels unencrypted, as the plaintext warning says.
 
 The section never reaches the collector, so the provider resolves `${env:NAME}` and `${NAME}`
