@@ -91,31 +91,28 @@ exporters:
       enabled: true
       max_elapsed_time: 30s
 
-# The memory limiter refuses with the same thresholds as the demo pipelines'
-# (raised in README, Install), so a request refused there is refused here too
-# and a sender's retry does not reach the shadow twice. The batch processor
-# accepts the copy and exports it on its own, so a full or failing shadow queue
-# drops shadow copies and never fails a demo request.
+# The shadow pipelines start with the demo pipelines' own memory_limiter
+# (that is its ID in the demo collector; the install checks it exists). The
+# processor is one shared instance per ID, so a request is refused or accepted
+# for both sides at once, and a sender's retry does not reach the shadow twice.
+# The batch processor accepts the copy and exports it on its own, so a full or
+# failing shadow queue drops shadow copies and never fails a demo request.
 processors:
-  memory_limiter/shadow:
-    check_interval: 2s
-    limit_mib: 640
-    spike_limit_mib: 128
   batch/shadow: {}
 
 service:
   pipelines:
     traces/shadow:
       receivers: [otlp]
-      processors: [memory_limiter/shadow, batch/shadow]
+      processors: [memory_limiter, batch/shadow]
       exporters: [otlp/shadow]
     logs/shadow:
       receivers: [otlp]
-      processors: [memory_limiter/shadow, batch/shadow]
+      processors: [memory_limiter, batch/shadow]
       exporters: [otlp/shadow]
     metrics/shadow:
       receivers: [otlp]
-      processors: [memory_limiter/shadow, batch/shadow]
+      processors: [memory_limiter, batch/shadow]
       exporters: [otlp/shadow]
 ```
 
@@ -132,6 +129,7 @@ yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope
 yq '(.processors[] | select(has("limit_mib"))) |= (.limit_mib = 640 | .spike_limit_mib = 128)' /w/config.yaml.bak-pre-shadow > limited.yaml
 yq eval-all '. as $i ireduce ({}; . * $i)' /w/limited.yaml /s/demo-collector-shadow.yaml > merged.yaml
 [ "$(yq '.exporters."otlp/shadow".endpoint' /w/merged.yaml)" = dns:///fusescope-collector-shadow:4317 ]
+[ "$(yq '.processors | has("memory_limiter")' /w/merged.yaml)" = true ]   # the demo pipelines' limiter the block reuses
 mv merged.yaml config.yaml && rm limited.yaml
 # Recreated, as compose does not see changes inside a mounted file; 768 MiB, 0.5 CPU.
 cd .. && docker compose -f compose.yaml -f shadow/compose.shadow.yaml up -d --no-deps --force-recreate otel-collector
