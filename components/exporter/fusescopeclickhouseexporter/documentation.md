@@ -17,7 +17,7 @@ sending_queue:
     num_consumers: 4           # OVERRIDE
     batch:
         enabled: true          # OVERRIDE
-        flush_timeout: 1s      # OVERRIDE
+        flush_timeout: 10s     # OVERRIDE
         sizer: items           # OVERRIDE
         min_size: 20000        # OVERRIDE
         max_size: 100000       # OVERRIDE

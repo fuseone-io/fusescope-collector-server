@@ -23,7 +23,7 @@ build: install-ocb
 	$(OCB) --config builder-config.yaml
 
 validate: $(BINARY)
-	@for f in config/*.yaml; do echo ">> $$f"; env $(VALIDATE_ENV) $(BINARY) validate --config=$$f || exit 1; done
+	@for f in config/*.yaml deploy/shadow/collector.yaml; do echo ">> $$f"; env $(VALIDATE_ENV) $(BINARY) validate --config=$$f || exit 1; done
 
 $(BINARY):
 	$(MAKE) build

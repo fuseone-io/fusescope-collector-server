@@ -27,6 +27,7 @@ Two attempts went wrong before this one, both on 2026-11-02:
 | `demo-collector-shadow.yaml` | the block merged into the demo collector's configuration to feed the shadow |
 | `clickhouse/cluster.xml` | single-node `cluster` with an embedded keeper, named `clickhouse-shadow` |
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
+| `compare_ui.py` | the APM pages from both backends (below) |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
 
 ## Derived from the demo's data
@@ -167,6 +168,24 @@ keys, and series per metric must be equal. Phase 6 asks for a week with every ho
 ```
 5 * * * * cd /opt/fusescope && docker compose -f compose.yaml -f shadow/compose.shadow.yaml run --rm shadow-compare >> /var/log/fusescope-shadow.log 2>&1
 ```
+
+## APM pages
+
+`compare_ui.py` compares what the FuseScope backend serves for the Services page (`/api/v2/services`), each
+service's top and entry-point operations, and the service map (`/api/v1/dependency_graph`), from the demo's
+backend and from `fusescope-shadow-ui`, a second backend of the same version reading `clickhouse-shadow` (profile
+`ui`). All must match exactly but the service map, whose call counts depend on each collector's insert batches
+(traces spec §1) and must agree within 5%:
+
+```sh
+umask 077; [ -e shadow/.ui.env ] || printf 'SHADOW_UI_JWT_SECRET=%s\nSHADOW_UI_PASSWORD=%s\n' "$(openssl rand -hex 32)" "Sh-$(openssl rand -hex 12)" > shadow/.ui.env
+set -a; . shadow/.ui.env; DEMO_PASSWORD=$(sed -n 's/^DEMO_PASSWORD=//p' credentials.txt); set +a
+c="docker compose -f compose.yaml -f shadow/compose.shadow.yaml --profile ui"
+$c up -d --no-deps fusescope-shadow-ui
+$c run --rm --no-deps shadow-compare-ui            # last settled hour
+```
+
+It logs in to the demo backend as the demo viewer.
 
 ## Upgrading from the tee version
 

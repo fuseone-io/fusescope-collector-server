@@ -29,6 +29,17 @@ The exporter never writes the MV targets. The Distributed sharding key is `cityH
 (`resource_string_*`, `attribute_string_*`, `*_exists`, `created_at`, camelCase aliases) are
 computed by ClickHouse and are not sent.
 
+**Insert batches.** `dependency_graph_minutes_service_calls_mv_v2` joins a span to its parent only
+within one inserted block, so the service map counts a call only when parent and child spans are
+inserted together. SDKs export each service's spans on their own timer (hotrod runs several services
+in one process, each with its own exporter), so parent and child usually arrive in different
+requests, seconds apart. The reference inserts about every 10 s on the demo's traffic (52 inserts in
+10 minutes, about 90 rows each, `system.query_log` of the demo's ClickHouse, 2026-11-03); the
+exporter's queue batches for 10 s by default (`sending_queue.batch.flush_timeout`). With 1 s, the
+shadow comparison counted a third fewer service-map calls; with 10 s, the same edges, with call counts
+0–3% above the reference's (`deploy/shadow/compare_ui.py`, 20 minutes of demo traffic). Two collectors never cut batches at the same
+instants, so the service map matches within a tolerance, not exactly.
+
 **Chunks (deliberate difference).** Every span copies its resource into `resources_string` and
 `resource`, and its scope into `scope_string`, so a large resource over many small spans expands
 far beyond the request. When those copies, plus 256 bytes per span, pass 256 MiB, the batch is
