@@ -40,7 +40,7 @@ func TestAssembler(t *testing.T) {
 	now := t0
 
 	t.Run("CompleteInAnyOrder", func(t *testing.T) {
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		pages := seqs[1]
 		for i := len(pages) - 1; i > 0; i-- {
 			r, err := a.Add("agent", pages[i], now)
@@ -54,12 +54,13 @@ func TestAssembler(t *testing.T) {
 		b, open := a.Buffered()
 		assert.Zero(t, b)
 		assert.Zero(t, open)
+		a.Applied("agent", 1)
 		r, err = a.Add("agent", pages[0], now)
-		assert.NoError(t, err, "a repeat after assembly is ignored")
+		assert.ErrorIs(t, err, ErrAlreadyApplied, "a repeat after it was applied is acknowledged again")
 		assert.Nil(t, r)
 	})
 	t.Run("IdenticalRepeatIgnored", func(t *testing.T) {
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		_, err := a.Add("agent", seqs[1][0], now)
 		require.NoError(t, err)
 		_, err = a.Add("agent", seqs[1][0], now)
@@ -72,7 +73,7 @@ func TestAssembler(t *testing.T) {
 		assert.NotNil(t, r)
 	})
 	t.Run("LowerSequenceNeverReplacesNewer", func(t *testing.T) {
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		_, err := a.Add("agent", seqs[2][0], now)
 		require.NoError(t, err)
 		_, err = a.Add("agent", seqs[1][0], now)
@@ -84,11 +85,12 @@ func TestAssembler(t *testing.T) {
 		}
 		require.NotNil(t, r, "sequence 2 still assembles")
 		assert.Equal(t, uint64(2), r.ReportSequence)
+		a.Applied("agent", 2)
 		_, err = a.Add("agent", seqs[1][1], now)
 		assert.ErrorIs(t, err, ErrStaleSequence, "nor after it completed")
 	})
 	t.Run("NewerSequenceDiscardsIncomplete", func(t *testing.T) {
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		_, err := a.Add("agent", seqs[1][0], now)
 		require.NoError(t, err)
 		_, err = a.Add("agent", seqs[2][0], now)
@@ -100,7 +102,7 @@ func TestAssembler(t *testing.T) {
 		assert.ErrorIs(t, err, ErrStaleSequence)
 	})
 	t.Run("ConflictInvalidatesUntilHigherSequence", func(t *testing.T) {
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		_, err := a.Add("agent", seqs[1][0], now)
 		require.NoError(t, err)
 		other := []byte(strings.Replace(string(seqs[1][0]), `"keys":[`, `"keys":[{"id":"0191c5e2-8a1b-7d2e-b0c4-ffffffffffff","lastUsedAt":"2026-11-03T12:00:00Z"},`, 1))
@@ -129,7 +131,7 @@ func TestAssembler(t *testing.T) {
 			"KeyTwice":   []byte(strings.Replace(string(seqs[1][1]), `"keys":[`, `"keys":[{"id":"`+firstKeyOf(t, seqs[1][0])+`","lastUsedAt":"2026-11-03T12:00:00Z"},`, 1)),
 		} {
 			t.Run(name, func(t *testing.T) {
-				a := NewAssembler()
+				a := NewAssembler(MemoryAgentStore{})
 				_, err := a.Add("agent", seqs[1][0], now)
 				require.NoError(t, err)
 				_, err = a.Add("agent", bad, now)
@@ -140,7 +142,7 @@ func TestAssembler(t *testing.T) {
 		}
 	})
 	t.Run("ExpiryInvalidates", func(t *testing.T) {
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		_, err := a.Add("agent", seqs[1][0], now)
 		require.NoError(t, err)
 		_, err = a.Add("agent", seqs[1][1], now.Add(AssemblyTTL+time.Second))
@@ -151,7 +153,7 @@ func TestAssembler(t *testing.T) {
 	})
 	t.Run("AssemblyCountBoundShedsOldest", func(t *testing.T) {
 		small := smallSequence(t)
-		a := NewAssembler()
+		a := NewAssembler(MemoryAgentStore{})
 		for i := range MaxAssemblies + 50 {
 			_, err := a.Add(fmt.Sprintf("agent-%d", i), small[0], now.Add(time.Duration(i)*time.Millisecond))
 			require.NoError(t, err)
@@ -164,19 +166,60 @@ func TestAssembler(t *testing.T) {
 		assert.NoError(t, err, "the newest is kept")
 	})
 	t.Run("ByteBoundShedsOldest", func(t *testing.T) {
-		a := NewAssembler()
+		store := MemoryAgentStore{}
+		a := NewAssembler(store)
 		// Pages stand in for buffered sizes; shed only reads the sizes.
 		for i := range 600 {
-			cur := &assembly{seq: 1, started: now.Add(time.Duration(i) * time.Millisecond), pages: &merger{size: MaxPageBytes}}
-			a.agents[fmt.Sprintf("agent-%d", i)] = cur
+			a.agents[fmt.Sprintf("agent-%d", i)] = &assembly{seq: 1, started: now.Add(time.Duration(i) * time.Millisecond), pages: &merger{size: MaxPageBytes}}
 			a.bytes += MaxPageBytes
-			a.open++
 			a.shed()
 			b, _ := a.Buffered()
 			require.LessOrEqual(t, b, MaxAssemblyBytes)
 		}
-		assert.True(t, a.agents["agent-0"].invalid, "the oldest went first")
-		assert.False(t, a.agents["agent-599"].invalid)
+		assert.Equal(t, uint64(1), store["agent-0"].Invalidated, "the oldest went first")
+		assert.NotContains(t, a.agents, "agent-0")
+		assert.Contains(t, a.agents, "agent-599")
+	})
+	// Maintainer review of #43: the assembler's memory holds only
+	// assemblies with pages; applied and invalidated markers are in the
+	// backend's persisted per-agent record.
+	t.Run("ManyFinishedAgentsLeaveNoMemory", func(t *testing.T) {
+		small := smallSequence(t)
+		store := MemoryAgentStore{}
+		a := NewAssembler(store)
+		for i := range MaxAssemblies + 1 {
+			agent := fmt.Sprintf("done-%d", i)
+			_, err := a.Add(agent, small[0], now)
+			require.NoError(t, err)
+			r, err := a.Add(agent, small[1], now)
+			require.NoError(t, err)
+			require.NotNil(t, r)
+			a.Applied(agent, 1)
+		}
+		for i := range MaxAssemblies + 1 {
+			agent := fmt.Sprintf("invalid-%d", i)
+			_, err := a.Add(agent, small[0], now)
+			require.NoError(t, err)
+			_, err = a.Add(agent, []byte(strings.Replace(string(small[0]), `"page":1`, `"page":1,"x":1`, 1)), now)
+			require.Error(t, err)
+		}
+		for i := range MaxAssemblies + 1 {
+			_, err := a.Add(fmt.Sprintf("expired-%d", i), small[0], now)
+			require.NoError(t, err)
+		}
+		_, err := a.Add("trigger", small[0], now.Add(AssemblyTTL+time.Second))
+		require.NoError(t, err)
+		b, open := a.Buffered()
+		assert.Equal(t, 1, open, "only the open assembly is held")
+		assert.Equal(t, len(small[0]), b)
+		assert.Len(t, a.agents, 1)
+		assert.Equal(t, AgentRecord{Applied: 1}, store["done-0"])
+		assert.Equal(t, AgentRecord{Invalidated: 1}, store["invalid-0"])
+		assert.Equal(t, AgentRecord{Invalidated: 1}, store["expired-0"], "expiry is recorded in the store")
+		_, err = a.Add("done-0", small[0], now.Add(AssemblyTTL+time.Second))
+		assert.ErrorIs(t, err, ErrAlreadyApplied)
+		_, err = a.Add("invalid-0", small[1], now.Add(AssemblyTTL+time.Second))
+		assert.ErrorIs(t, err, ErrInvalidSequence)
 	})
 }
 
