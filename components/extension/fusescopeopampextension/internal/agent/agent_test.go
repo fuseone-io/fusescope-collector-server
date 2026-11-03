@@ -94,6 +94,8 @@ func TestCacheRevalidatedAgainstNewBase(t *testing.T) {
 // load loads base and activates, as a collector start does.
 func load(t *testing.T, a *Agent, base string) {
 	t.Helper()
+	// Before the state directory is removed: no background work may still write it.
+	t.Cleanup(a.Close)
 	if _, err := a.Load(mustParse(t, base)); err != nil {
 		t.Fatal(err)
 	}
@@ -486,5 +488,31 @@ func TestCloseStopsConfirmRetry(t *testing.T) {
 	defer a.mu.Unlock()
 	if a.retrying {
 		t.Error("the retry loop still runs after Close")
+	}
+}
+
+// Close waits for a queued push being handled after a confirmation, so
+// nothing writes the state once the agent is closed.
+func TestCloseWaitsForQueuedPush(t *testing.T) {
+	for range 50 {
+		dir := t.TempDir()
+		a, err := New(zap.NewNop(), dir, map[component.Type]processor.Factory{logsType: okFactory()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		load(t, a, base)
+		a.SetReloader(func() {}, &recorder{})
+		a.Confirm(revisionOf(a))
+		_ = a.Push(context.Background(), []byte("h1"), []byte(push))                                                 // pending
+		_ = a.Push(context.Background(), []byte("h2"), []byte(strings.Replace(push, "pipeline_a", "pipeline_b", 2))) // queued
+		a.Confirm(revisionOf(a))                                                                                     // h1 applied; h2 handled in the background
+		a.Close()
+		entries, _ := os.ReadDir(dir)
+		before := len(entries)
+		time.Sleep(20 * time.Millisecond)
+		entries, _ = os.ReadDir(dir)
+		if len(entries) != before {
+			t.Fatal("the state changed after Close returned")
+		}
 	}
 }
