@@ -29,8 +29,10 @@ func TestReportShapeIsStrict(t *testing.T) {
 	m.Reject(appA, PackageNotAllowed, "com.example.debug", t0)
 	m.UnknownKey(t0)
 
-	data, err := m.Build(1874, t0.Add(time.Minute), ingestpolicy.Status{Version: 42})
+	pages, err := m.Build(1874, t0.Add(time.Minute), ingestpolicy.Status{Version: 42})
 	require.NoError(t, err)
+	require.Len(t, pages, 1)
+	data := pages[0]
 
 	// Decoding into the report type with unknown fields refused proves no
 	// other field exists (G5).
@@ -39,7 +41,7 @@ func TestReportShapeIsStrict(t *testing.T) {
 	var r Report
 	require.NoError(t, dec.Decode(&r))
 	assert.Equal(t, Report{
-		SchemaVersion: 1, ReportSequence: 1874, GeneratedAt: "2026-11-03T12:01:00Z", WindowSeconds: 300,
+		SchemaVersion: 1, ReportSequence: 1874, Page: 1, Pages: 1, GeneratedAt: "2026-11-03T12:01:00Z", WindowSeconds: 300,
 		Policy: PolicyReport{Version: 42, Status: "ok"},
 		Applications: []ApplicationReport{{
 			ID: appA, FirstSeenAt: "2026-11-03T12:00:00Z",
@@ -57,7 +59,7 @@ func TestReportShapeIsStrict(t *testing.T) {
 
 	var generic map[string]any
 	require.NoError(t, json.Unmarshal(data, &generic))
-	assert.ElementsMatch(t, []string{"schemaVersion", "reportSequence", "generatedAt", "windowSeconds", "policy", "applications", "keys", "unknownKeys", "dropped"}, keys(generic))
+	assert.ElementsMatch(t, []string{"schemaVersion", "reportSequence", "page", "pages", "generatedAt", "windowSeconds", "policy", "applications", "keys", "unknownKeys", "dropped"}, keys(generic))
 }
 
 func TestReportPolicyStatus(t *testing.T) {
@@ -73,10 +75,10 @@ func TestReportPolicyStatus(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTestMonitor(t, 1)
-			data, err := m.Build(1, t0, tc.status)
+			pages, err := m.Build(1, t0, tc.status)
 			require.NoError(t, err)
-			var r Report
-			require.NoError(t, json.Unmarshal(data, &r))
+			r, err := Merge(pages)
+			require.NoError(t, err)
 			assert.Equal(t, tc.want, r.Policy)
 		})
 	}
@@ -132,10 +134,10 @@ func TestReportAck(t *testing.T) {
 					m.Ack(s.ack)
 				}
 			}
-			data, err := m.Build(100, t0.Add(2*time.Minute), ingestpolicy.Status{})
+			pages, err := m.Build(100, t0.Add(2*time.Minute), ingestpolicy.Status{})
 			require.NoError(t, err)
-			var r Report
-			require.NoError(t, json.Unmarshal(data, &r))
+			r, err := Merge(pages)
+			require.NoError(t, err)
 			a := appReport(r, appA)
 			require.NotNil(t, a)
 			assert.Equal(t, tc.wantFirstSeen, a.FirstSeenAt != "")
@@ -157,79 +159,167 @@ func TestReportOutstandingBounded(t *testing.T) {
 	}
 	assert.Len(t, m.sent, maxOutstanding)
 	m.Ack(1) // forgotten: ignored, values stay pending
-	data, err := m.Build(1000, t0, ingestpolicy.Status{})
+	pages, err := m.Build(1000, t0, ingestpolicy.Status{})
 	require.NoError(t, err)
-	assert.Contains(t, string(data), keyOne)
+	assert.Contains(t, string(bytes.Join(pages, nil)), keyOne)
 	m.Ack(1000)
-	data, err = m.Build(1001, t0, ingestpolicy.Status{})
+	pages, err = m.Build(1001, t0, ingestpolicy.Status{})
 	require.NoError(t, err)
-	assert.NotContains(t, string(data), keyOne)
+	assert.NotContains(t, string(bytes.Join(pages, nil)), keyOne)
 }
 
-func TestReportBounds(t *testing.T) {
-	t.Run("AtMost1000Applications_MostRecentFirst", func(t *testing.T) {
-		m, snap := newTestMonitor(t, 1100)
-		for i, a := range snap.Applications() {
-			m.Reject(a.ID, TooLarge, "", t0.Add(time.Duration(i)*time.Millisecond))
+func keyID(i int) string { return fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", i) }
+
+// pagesOf builds report seq and checks the page contract (§10.2-10.4).
+func pagesOf(t *testing.T, m *Monitor, seq uint64, now time.Time) (Report, [][]byte) {
+	t.Helper()
+	pages, err := m.Build(seq, now, ingestpolicy.Status{Version: 1})
+	require.NoError(t, err)
+	require.NotEmpty(t, pages)
+	require.LessOrEqual(t, len(pages), MaxPages)
+	for i, p := range pages {
+		require.LessOrEqual(t, len(p), MaxPageBytes, "page %d", i+1)
+		var r Report
+		require.NoError(t, json.Unmarshal(p, &r))
+		assert.Equal(t, seq, r.ReportSequence)
+		assert.Equal(t, i+1, r.Page)
+		assert.Equal(t, len(pages), r.Pages)
+	}
+	r, err := Merge(pages)
+	require.NoError(t, err)
+	return r, pages
+}
+
+// heavy fills an application with its largest window values.
+func heavy(m *Monitor, a *ingestpolicy.Application, key string, at time.Time) {
+	b := batch()
+	b.SetSDK(strings.Repeat("n", MaxSDKName), strings.Repeat("v", MaxSDKVersion))
+	m.Ingest(a, key, b, at)
+	for reason := range numReasons {
+		observed := ""
+		switch reason {
+		case OriginNotAllowed:
+			observed = "https://" + strings.Repeat("o", 244) + ".com"
+		case PackageNotAllowed:
+			observed = "com." + strings.Repeat("p", 252)
 		}
-		r := build(t, m, t0.Add(time.Second))
-		require.Len(t, r.Applications, MaxApplications)
-		assert.Equal(t, snap.Applications()[1099].ID, r.Applications[0].ID)
-		assert.Equal(t, uint64(100), r.Dropped.Applications)
+		m.Reject(a.ID, reason, observed, at)
+	}
+}
+
+// Maintainer review of #43: one logical report in pages of at most 256 KiB,
+// every application and pending key in exactly one page of every report.
+func TestReportPages(t *testing.T) {
+	t.Run("SmallReport_OnePage", func(t *testing.T) {
+		m, snap := newTestMonitor(t, 1)
+		m.Ingest(snap.Application(appA), keyOne, &Batch{}, t0)
+		_, pages := pagesOf(t, m, 1, t0)
+		assert.Len(t, pages, 1)
 	})
-	t.Run("KeysWithinCountAndSize_NewestFirst", func(t *testing.T) {
-		m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 20_000})
+	t.Run("AllKeysEveryReport_NoneDropped", func(t *testing.T) {
+		m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 10_000})
 		snap := snapshot(t, 1)
 		m.SetPolicy(snap)
-		for i := range 10_005 {
-			m.Ingest(snap.Application(appA), fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", i), &Batch{}, t0.Add(time.Duration(i)*time.Millisecond))
+		for i := range 10_000 {
+			m.Ingest(snap.Application(appA), keyID(i), &Batch{}, t0.Add(time.Duration(i)*time.Millisecond))
 		}
-		data, err := m.Build(1, t0.Add(time.Minute), ingestpolicy.Status{})
-		require.NoError(t, err)
-		assert.LessOrEqual(t, len(data), MaxReportBytes)
-		var r Report
-		require.NoError(t, json.Unmarshal(data, &r))
-		// 10 000 UUID keys need about 700 KiB: the 256 KiB bound binds first.
-		assert.LessOrEqual(t, len(r.Keys), MaxKeys)
-		assert.Greater(t, len(r.Keys), 3000)
-		assert.Equal(t, "0191c5e2-8a1b-7d2e-b0c4-000000010004", r.Keys[0].ID)
-		assert.Equal(t, uint64(10_005-len(r.Keys)), r.Dropped.Keys)
+		r, pages := pagesOf(t, m, 1, t0.Add(time.Minute))
+		assert.Greater(t, len(pages), 1)
+		assert.Len(t, r.Keys, 10_000)
+		assert.Equal(t, keyID(9999), r.Keys[0].ID, "newest first across pages")
+		assert.Zero(t, r.Dropped.Keys, "keys in other pages are not dropped")
+		unique := map[string]bool{}
+		for _, k := range r.Keys {
+			unique[k.ID] = true
+		}
+		assert.Len(t, unique, 10_000, "each key in exactly one page")
 	})
-	t.Run("Over256KiB_KeysDroppedFirstAndStayPending", func(t *testing.T) {
+	t.Run("LargeApplicationsNeverPushKeysOut", func(t *testing.T) {
 		m, snap := newTestMonitor(t, 1000)
 		for i, a := range snap.Applications() {
-			b := batch()
-			b.SetSDK(strings.Repeat("n", MaxSDKName), strings.Repeat("v", MaxSDKVersion))
-			m.Ingest(a, fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", i), b, t0.Add(time.Duration(i)*time.Millisecond))
-			for reason := range numReasons {
-				observed := ""
-				if reason == OriginNotAllowed {
-					observed = "https://" + strings.Repeat("o", 240) + ".com"
-				}
-				m.Reject(a.ID, reason, observed, t0.Add(time.Duration(i)*time.Millisecond))
-			}
+			heavy(m, a, keyID(i), t0.Add(time.Duration(i)*time.Millisecond))
 		}
-		data, err := m.Build(1, t0.Add(time.Second), ingestpolicy.Status{})
-		require.NoError(t, err)
-		assert.LessOrEqual(t, len(data), MaxReportBytes)
-		var r Report
-		require.NoError(t, json.Unmarshal(data, &r))
-		assert.Empty(t, r.Keys, "keys go first")
-		assert.Less(t, len(r.Applications), 1000, "then the least recently active applications")
-		assert.Equal(t, snap.Applications()[999].ID, r.Applications[0].ID)
-		assert.Equal(t, uint64(1000-len(r.Applications)), r.Dropped.Applications)
-		assert.Equal(t, uint64(1000), r.Dropped.Keys)
-
-		m.Ack(1)
-		data, err = m.Build(2, t0.Add(time.Second), ingestpolicy.Status{})
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal(data, &r))
-		dropped := snap.Applications()[0].ID
-		assert.Nil(t, appReport(r, dropped), "still left out")
-		m.mu.Lock()
-		assert.False(t, m.applications[dropped].firstSeen.IsZero(), "a value left out of an acknowledged report stays pending")
-		m.mu.Unlock()
+		r, pages := pagesOf(t, m, 1, t0.Add(time.Second))
+		assert.Greater(t, len(pages), 1)
+		assert.Len(t, r.Applications, 1000)
+		assert.Len(t, r.Keys, 1000)
+		assert.Equal(t, snap.Applications()[999].ID, r.Applications[0].ID, "most recently active first")
+		assert.Zero(t, r.Dropped.Keys)
 	})
+	t.Run("WorstCaseWithinMaxPages", func(t *testing.T) {
+		m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 10_000})
+		snap := snapshot(t, 10_000)
+		m.SetPolicy(snap)
+		for i, a := range snap.Applications() {
+			heavy(m, a, keyID(i), t0.Add(time.Duration(i)*time.Microsecond))
+		}
+		r, pages := pagesOf(t, m, 1, t0.Add(time.Second))
+		t.Logf("worst case: %d pages", len(pages))
+		assert.Len(t, r.Applications, 10_000)
+		assert.Len(t, r.Keys, 10_000)
+	})
+	t.Run("OnlyEvictionCountsAsDropped", func(t *testing.T) {
+		m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 3})
+		snap := snapshot(t, 1)
+		m.SetPolicy(snap)
+		for i := range 5 {
+			m.Ingest(snap.Application(appA), keyID(i), &Batch{}, t0.Add(time.Duration(i)*time.Second))
+		}
+		r, _ := pagesOf(t, m, 1, t0.Add(time.Minute))
+		assert.Len(t, r.Keys, 3)
+		assert.Equal(t, uint64(2), r.Dropped.Keys)
+	})
+	t.Run("MergeRefusesIncompleteOrMixedPages", func(t *testing.T) {
+		m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 10_000})
+		snap := snapshot(t, 1)
+		m.SetPolicy(snap)
+		for i := range 10_000 {
+			m.Ingest(snap.Application(appA), keyID(i), &Batch{}, t0)
+		}
+		_, pages := pagesOf(t, m, 1, t0)
+		_, err := Merge(pages[1:])
+		assert.Error(t, err, "a missing page")
+		_, err = Merge(append([][]byte{pages[0]}, pages...))
+		assert.Error(t, err, "a repeated page")
+		other, err := m.Build(2, t0, ingestpolicy.Status{Version: 1})
+		require.NoError(t, err)
+		_, err = Merge(append([][]byte{other[0]}, pages[1:]...))
+		assert.Error(t, err, "pages of two sequences")
+	})
+}
+
+// Maintainer review of #43: under continuous activity, with old keys still
+// pending, every key is reported and acknowledged; none is starved.
+func TestReportNoStarvationUnderContinuousActivity(t *testing.T) {
+	m := NewMonitor(Config{SessionsPerBucket: 10, PendingKeys: 10_000})
+	snap := snapshot(t, 200)
+	m.SetPolicy(snap)
+	now := t0
+	used := map[string]bool{}
+	for i := range 6000 {
+		m.Ingest(snap.Applications()[i%200], keyID(i), &Batch{}, now)
+		used[keyID(i)] = true
+	}
+	reported := map[string]bool{}
+	for round := range 20 {
+		now = now.Add(time.Minute)
+		// Fresh keys and large applications keep arriving every minute.
+		for i := range 500 {
+			k := keyID(10_000 + round*500 + i)
+			heavy(m, snap.Applications()[i%200], k, now)
+			used[k] = true
+		}
+		r, _ := pagesOf(t, m, uint64(round+1), now)
+		for _, k := range r.Keys {
+			reported[k.ID] = true
+		}
+		m.Ack(uint64(round + 1))
+	}
+	for k := range used {
+		assert.True(t, reported[k], "key %s was never reported", k)
+	}
+	r, _ := pagesOf(t, m, 100, now)
+	assert.Empty(t, r.Keys, "every use acknowledged, none left pending")
 }
 
 // Codex review on #43: client-controlled strings and session maps of an

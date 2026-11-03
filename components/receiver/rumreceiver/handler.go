@@ -291,9 +291,16 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 	if traces {
 		signal = ingestpolicy.SignalTraces
 	}
-	if !k.UsableAt(now) || k.Signals&signal == 0 {
+	if !k.UsableAt(now) {
 		h.acct.Reject(app.ID, report.BadKey, "", now)
 		h.refuse(w, r, refusalKeyExpired)
+		return
+	}
+	// Authorisation, not authentication: the key is valid but may not send
+	// this signal. A public key gains nothing from the difference (§2).
+	if k.Signals&signal == 0 {
+		h.acct.Reject(app.ID, report.SignalNotAllowed, "", now)
+		h.refuse(w, r, refusalSignal)
 		return
 	}
 

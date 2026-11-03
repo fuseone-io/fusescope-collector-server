@@ -5,6 +5,7 @@ package rumreceiver
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,9 +22,9 @@ import (
 
 func maxKey(i int) string { return fmt.Sprintf("rum_pub_%032d", i) }
 
-// maxPolicy is a policy at the count bounds of §11.1 (50 000 keys, 10 000
-// applications), padded with whitespace to exactly max_policy_size. With
-// these IDs it is about 16 MB; a per-key limit on every key would not fit.
+// maxPolicy is a policy at every count bound of §11.1 (50 000 keys, each
+// with a rate limit, 10 000 applications with two origins), padded with
+// whitespace to exactly max_policy_size.
 func maxPolicy(t *testing.T, version uint64) []byte {
 	t.Helper()
 	p := &ingestpolicy.Policy{SchemaVersion: 1, Version: version, IssuedAt: "2026-11-03T12:00:00Z"}
@@ -31,7 +32,7 @@ func maxPolicy(t *testing.T, version uint64) []byte {
 		p.RUMApplications = append(p.RUMApplications, ingestpolicy.RUMApplication{
 			ID: fmt.Sprintf("0191c5e2-7f0a-7c3e-9a51-%012d", i), OrgID: testOrg,
 			Name: fmt.Sprintf("app-%d", i), Environment: "production", Platform: ingestpolicy.PlatformWeb,
-			AllowedOrigins:      []string{fmt.Sprintf("https://*.app-%d.example.com", i)},
+			AllowedOrigins:      []string{fmt.Sprintf("https://app-%d.example.com", i), fmt.Sprintf("https://*.app-%d.example.com", i)},
 			AllowedPackageNames: []string{},
 			PIIPolicy:           ingestpolicy.PIIPolicy{DropQuery: true, QueryAllowlist: []string{"page"}, URLAllowlist: []string{}},
 		})
@@ -41,6 +42,7 @@ func maxPolicy(t *testing.T, version uint64) []byte {
 		p.Keys = append(p.Keys, ingestpolicy.Key{
 			ID: fmt.Sprintf("0191c5e2-8a1b-7d2e-b0c4-%012d", i), SHA256: verifier(maxKey(i)), OrgID: testOrg,
 			Kind: ingestpolicy.KindPublic, Signals: []string{"traces", "logs"}, ApplicationID: ptr(app),
+			Limit: &ingestpolicy.Limit{Rate: 50, Burst: 100},
 		})
 	}
 	data := encodePolicy(t, p)
@@ -103,6 +105,9 @@ func TestMaxSizePolicyAcceptedCachedApplied(t *testing.T) {
 		t.Logf("loaded the cached policy in %v", time.Since(start))
 		require.NotNil(t, restarted.Current())
 		assert.Equal(t, uint64(7), restarted.Current().Version)
+		k := restarted.Current().Key(sha256.Sum256([]byte(maxKey(ingestpolicy.MaxKeys - 1))))
+		require.NotNil(t, k)
+		assert.Equal(t, &ingestpolicy.Limit{Rate: 50, Burst: 100}, k.Limit, "the per-key limits survive the cache")
 		accepts(t, restarted)
 	})
 }

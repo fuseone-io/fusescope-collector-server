@@ -22,6 +22,7 @@ const (
 	refusalKeyInvalid
 	refusalKeyUnknown
 	refusalKeyExpired
+	refusalSignal
 	refusalOrigin
 	refusalRateLimited
 	refusalInvalid
@@ -50,6 +51,7 @@ var refusalSpecs = [numRefusals]refusalSpec{
 	refusalKeyInvalid:        {http.StatusUnauthorized, "", "rum_application_key_invalid", "invalid rum application key", "key_invalid"},
 	refusalKeyUnknown:        {http.StatusUnauthorized, "", "rum_application_key_invalid", "invalid rum application key", "unknown_key"},
 	refusalKeyExpired:        {http.StatusUnauthorized, "", "rum_application_key_invalid", "invalid rum application key", "bad_key"},
+	refusalSignal:            {http.StatusForbidden, "", "rum_signal_not_allowed", "this key may not send this signal", "signal_not_allowed"},
 	refusalOrigin:            {http.StatusForbidden, "", "rum_origin_not_allowed", "origin is not allowed for this application", "origin_not_allowed"},
 	refusalRateLimited:       {http.StatusTooManyRequests, "1", "rum_rate_limited", "rate limit exceeded", "rate_limited"},
 	refusalInvalid:           {http.StatusBadRequest, "", "rum_payload_invalid", "invalid otlp payload, content type or encoding", "invalid_payload"},

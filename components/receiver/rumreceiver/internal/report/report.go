@@ -8,26 +8,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
 )
 
-// Bounds of §10.3.
+// Bounds of §10.3. A report is one logical report sent as pages of at most
+// MaxPageBytes; every active application of the policy (at most 10 000)
+// and every pending key (at most limits.pending_keys, 10 000 by default)
+// is in exactly one page of every report, so none is starved.
 const (
-	MaxApplications = 1000
-	MaxKeys         = 10_000
-	MaxReportBytes  = 256 << 10
+	MaxPageBytes = 256 << 10
+	// MaxPages is what the bounds can need, with room: 10 000 applications
+	// at their largest and 10 000 keys take 58 pages (TestReportPages).
+	MaxPages = 128
 	// maxOutstanding is how many unacknowledged reports remember what they
 	// carried; an older one's values are carried again by every newer report.
 	maxOutstanding = 64
 )
 
-// Report is the `report` message (§10.2). These are the only fields (G5).
+// Report is one page of the `report` message (§10.2). These are the only
+// fields (G5). Every page of a sequence carries the same header fields;
+// applications and keys are split between pages, each in exactly one.
 type Report struct {
 	SchemaVersion  int                 `json:"schemaVersion"`
 	ReportSequence uint64              `json:"reportSequence"`
+	Page           int                 `json:"page"`
+	Pages          int                 `json:"pages"`
 	GeneratedAt    string              `json:"generatedAt"`
 	WindowSeconds  int                 `json:"windowSeconds"`
 	Policy         PolicyReport        `json:"policy"`
@@ -80,9 +90,10 @@ type UnknownKeysReport struct {
 	LastSeenAt string `json:"lastSeenAt,omitempty"`
 }
 
+// DroppedReport counts pending key uses evicted, since start, to keep the
+// pending set within its bound; never entries sent in another page.
 type DroppedReport struct {
-	Applications uint64 `json:"applications"`
-	Keys         uint64 `json:"keys"`
+	Keys uint64 `json:"keys"`
 }
 
 // carried is what a sent report held of the pending durable values, by
@@ -95,11 +106,10 @@ type carried struct {
 // ErrSequence is returned for a reportSequence not above the last one.
 var ErrSequence = errors.New("reportSequence must increase")
 
-// Build encodes the report of sequence seq, at most MaxReportBytes, and
-// remembers what it carried for Ack. The caller persists seq before
-// sending (§10.4). dropped counts keys evicted from the pending set since
-// start plus keys and applications left out of this report.
-func (m *Monitor) Build(seq uint64, now time.Time, policy ingestpolicy.Status) ([]byte, error) {
+// Build encodes the report of sequence seq as its pages, each at most
+// MaxPageBytes, and remembers everything they carried for Ack. The caller
+// persists seq before sending (§10.4) and sends every page.
+func (m *Monitor) Build(seq uint64, now time.Time, policy ingestpolicy.Status) ([][]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if seq <= m.lastSequence {
@@ -107,17 +117,17 @@ func (m *Monitor) Build(seq uint64, now time.Time, policy ingestpolicy.Status) (
 	}
 	m.expire(now)
 
-	r := Report{
+	header := Report{
 		SchemaVersion:  1,
 		ReportSequence: seq,
 		GeneratedAt:    stamp(now),
 		WindowSeconds:  int(Window / time.Second),
 		Policy:         PolicyReport{Version: policy.Version, Status: "ok"},
-		Applications:   []ApplicationReport{},
-		Keys:           []KeyReport{},
+		UnknownKeys:    m.unknownReport(now),
+		Dropped:        DroppedReport{Keys: m.droppedKeys},
 	}
 	if policy.Rejected != "" {
-		r.Policy.Status, r.Policy.Error = "rejected", string(policy.Rejected)
+		header.Policy.Status, header.Policy.Error = "rejected", string(policy.Rejected)
 	}
 
 	type active struct {
@@ -130,71 +140,150 @@ func (m *Monitor) Build(seq uint64, now time.Time, policy ingestpolicy.Status) (
 			apps = append(apps, active{id, app})
 		}
 	}
-	slices.SortFunc(apps, func(a, b active) int { return b.app.lastActive.Compare(a.app.lastActive) })
-	var droppedApps uint64
-	if len(apps) > MaxApplications {
-		droppedApps = uint64(len(apps) - MaxApplications)
-		apps = apps[:MaxApplications]
-	}
-	for _, a := range apps {
-		r.Applications = append(r.Applications, a.app.report(a.id, now))
-	}
-
-	for id, used := range m.keys.newestFirst() {
-		if len(r.Keys) == MaxKeys {
-			break
+	// Most recently active first, then by ID so pages are deterministic.
+	slices.SortFunc(apps, func(a, b active) int {
+		if c := b.app.lastActive.Compare(a.app.lastActive); c != 0 {
+			return c
 		}
-		r.Keys = append(r.Keys, KeyReport{ID: id, LastUsedAt: stamp(used)})
+		return strings.Compare(a.id, b.id)
+	})
+	applications := make([]ApplicationReport, 0, len(apps))
+	for _, a := range apps {
+		applications = append(applications, a.app.report(a.id, now))
 	}
-	droppedKeys := uint64(m.keys.len() - len(r.Keys))
-	r.UnknownKeys = m.unknownReport(now)
+	keys := make([]KeyReport, 0, m.keys.len())
+	for id, used := range m.keys.newestFirst() {
+		keys = append(keys, KeyReport{ID: id, LastUsedAt: stamp(used)})
+	}
 
-	data, err := fit(&r, droppedApps, m.droppedKeys+droppedKeys)
+	pages, err := paginate(header, applications, keys)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &carried{firstSeen: map[string]time.Time{}, keys: map[string]time.Time{}}
-	for _, a := range r.Applications {
+	for _, a := range applications {
 		if app := m.applications[a.ID]; app != nil && a.FirstSeenAt != "" {
 			c.firstSeen[a.ID] = app.firstSeen
 		}
 	}
-	for _, k := range r.Keys {
+	for _, k := range keys {
 		c.keys[k.ID] = m.keys.get(k.ID)
 	}
 	m.remember(seq, c)
-	return data, nil
+	return pages, nil
 }
 
-// fit drops keys first, then the least recently active applications, until
-// the encoded report fits (§10.3).
-func fit(r *Report, droppedApps, droppedKeys uint64) ([]byte, error) {
-	for {
-		r.Dropped = DroppedReport{Applications: droppedApps, Keys: droppedKeys}
+// paginate packs applications, then keys, into as few pages as fit.
+func paginate(header Report, applications []ApplicationReport, keys []KeyReport) ([][]byte, error) {
+	empty := header
+	empty.Page, empty.Pages = MaxPages, MaxPages
+	empty.Applications, empty.Keys = []ApplicationReport{}, []KeyReport{}
+	base, err := json.Marshal(empty)
+	if err != nil {
+		return nil, err
+	}
+	budget := MaxPageBytes - len(base)
+
+	type page struct {
+		apps []ApplicationReport
+		keys []KeyReport
+		used int
+	}
+	pages := []*page{{}}
+	add := func(size int) (*page, error) {
+		if size > budget {
+			return nil, fmt.Errorf("a report entry of %d bytes does not fit a page", size)
+		}
+		cur := pages[len(pages)-1]
+		if cur.used+size > budget {
+			cur = &page{}
+			pages = append(pages, cur)
+		}
+		cur.used += size
+		return cur, nil
+	}
+	for _, a := range applications {
+		pg, err := add(encodedSize(a))
+		if err != nil {
+			return nil, err
+		}
+		pg.apps = append(pg.apps, a)
+	}
+	for _, k := range keys {
+		pg, err := add(encodedSize(k))
+		if err != nil {
+			return nil, err
+		}
+		pg.keys = append(pg.keys, k)
+	}
+	if len(pages) > MaxPages {
+		return nil, fmt.Errorf("a report of %d pages is over the bound of %d", len(pages), MaxPages)
+	}
+
+	out := make([][]byte, 0, len(pages))
+	for i, pg := range pages {
+		r := header
+		r.Page, r.Pages = i+1, len(pages)
+		r.Applications, r.Keys = pg.apps, pg.keys
+		if r.Applications == nil {
+			r.Applications = []ApplicationReport{}
+		}
+		if r.Keys == nil {
+			r.Keys = []KeyReport{}
+		}
 		data, err := json.Marshal(r)
 		if err != nil {
 			return nil, err
 		}
-		excess := len(data) - MaxReportBytes
-		if excess <= 0 {
-			return data, nil
+		if len(data) > MaxPageBytes {
+			return nil, fmt.Errorf("report page %d is %d bytes", i+1, len(data))
 		}
-		// Entries are dropped from the end, a size estimate at a time, so a
-		// large report is re-encoded a few times rather than once per entry.
-		switch {
-		case len(r.Keys) > 0:
-			n := min(len(r.Keys), excess/encodedSize(r.Keys[len(r.Keys)-1])+1)
-			r.Keys = r.Keys[:len(r.Keys)-n]
-			droppedKeys += uint64(n)
-		case len(r.Applications) > 0:
-			n := min(len(r.Applications), excess/encodedSize(r.Applications[len(r.Applications)-1])+1)
-			r.Applications = r.Applications[:len(r.Applications)-n]
-			droppedApps += uint64(n)
-		default:
-			return nil, fmt.Errorf("an empty report is %d bytes", len(data))
-		}
+		out = append(out, data)
 	}
+	return out, nil
+}
+
+// Merge reassembles the pages of one sequence, as the backend does before
+// it applies a report: every page present once, with the same header.
+func Merge(pages [][]byte) (Report, error) {
+	var merged Report
+	seen := map[int]bool{}
+	for i, data := range pages {
+		var r Report
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&r); err != nil {
+			return Report{}, err
+		}
+		if i == 0 {
+			merged = r
+			merged.Applications, merged.Keys = nil, nil
+		}
+		head, first := r, merged
+		head.Applications, head.Keys, head.Page = nil, nil, 0
+		first.Applications, first.Keys, first.Page = nil, nil, 0
+		if !reflect.DeepEqual(head, first) {
+			return Report{}, fmt.Errorf("page %d header differs", r.Page)
+		}
+		if r.Page < 1 || r.Page > r.Pages || seen[r.Page] {
+			return Report{}, fmt.Errorf("page %d of %d is out of range or repeated", r.Page, r.Pages)
+		}
+		seen[r.Page] = true
+		merged.Applications = append(merged.Applications, r.Applications...)
+		merged.Keys = append(merged.Keys, r.Keys...)
+	}
+	if len(seen) != merged.Pages {
+		return Report{}, fmt.Errorf("%d of %d pages", len(seen), merged.Pages)
+	}
+	if merged.Applications == nil {
+		merged.Applications = []ApplicationReport{}
+	}
+	if merged.Keys == nil {
+		merged.Keys = []KeyReport{}
+	}
+	merged.Page = 0
+	return merged, nil
 }
 
 // encodedSize is the size of one entry in the array, its comma included.

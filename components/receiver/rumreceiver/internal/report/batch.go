@@ -25,10 +25,11 @@ const (
 	RateLimited
 	TooLarge
 	InvalidPayload
+	SignalNotAllowed
 	numReasons
 )
 
-var reasonNames = [numReasons]string{"bad_key", "origin_not_allowed", "package_not_allowed", "rate_limited", "too_large", "invalid_payload"}
+var reasonNames = [numReasons]string{"bad_key", "origin_not_allowed", "package_not_allowed", "rate_limited", "too_large", "invalid_payload", "signal_not_allowed"}
 
 func (r Reason) String() string { return reasonNames[r] }
 

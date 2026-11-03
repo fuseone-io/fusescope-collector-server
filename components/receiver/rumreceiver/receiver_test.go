@@ -5,6 +5,7 @@ package rumreceiver
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -213,9 +214,9 @@ func TestReceiverReadiness(t *testing.T) {
 	assert.Equal(t, http.StatusOK, s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey)).StatusCode)
 
 	// The monitors follow the policy.
-	data, err := s.r.monitor.Build(1, time.Now(), store.Status())
+	pages, err := s.r.monitor.Build(1, time.Now(), store.Status())
 	require.NoError(t, err)
-	assert.Contains(t, string(data), testWebApp)
+	assert.Contains(t, string(bytes.Join(pages, nil)), testWebApp)
 }
 
 func TestReceiverReadinessStale(t *testing.T) {
@@ -386,10 +387,10 @@ func TestReceiverExpiresWindowState(t *testing.T) {
 	s.r.monitor.Reject(testWebApp, report.OriginNotAllowed, "https://evil.example.org", time.Now().Add(-time.Hour))
 	before, err := s.r.monitor.Build(1, time.Now().Add(-time.Hour), store.Status())
 	require.NoError(t, err)
-	require.Contains(t, string(before), "evil.example.org")
+	require.Contains(t, string(bytes.Join(before, nil)), "evil.example.org")
 	assert.Eventually(t, func() bool {
-		data, err := s.r.monitor.Build(uint64(time.Now().UnixNano()), time.Now().Add(-time.Hour), store.Status())
-		return err == nil && !strings.Contains(string(data), "evil.example.org")
+		pages, err := s.r.monitor.Build(uint64(time.Now().UnixNano()), time.Now().Add(-time.Hour), store.Status())
+		return err == nil && !strings.Contains(string(bytes.Join(pages, nil)), "evil.example.org")
 	}, 5*time.Second, 50*time.Millisecond)
 }
 

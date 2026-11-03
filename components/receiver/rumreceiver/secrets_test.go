@@ -4,6 +4,7 @@
 package rumreceiver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,8 +97,9 @@ func TestNoSecretInOwnTelemetry(t *testing.T) {
 	send(tracesPath, "", webKey, "", testTraceJSON)                         // rate limited
 	require.Equal(t, 1, sink.SpanCount())
 
-	reportData, err := r.monitor.Build(1, testNow, store.Status())
+	reportPages, err := r.monitor.Build(1, testNow, store.Status())
 	require.NoError(t, err)
+	reportData := bytes.Join(reportPages, nil)
 
 	var dump strings.Builder
 	for _, e := range logs.All() {

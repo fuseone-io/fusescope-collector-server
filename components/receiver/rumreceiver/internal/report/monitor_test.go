@@ -91,10 +91,10 @@ var seq uint64
 func build(t testing.TB, m *Monitor, now time.Time) Report {
 	t.Helper()
 	seq++
-	data, err := m.Build(seq, now, ingestpolicy.Status{Version: 1})
+	pages, err := m.Build(seq, now, ingestpolicy.Status{Version: 1})
 	require.NoError(t, err)
-	var r Report
-	require.NoError(t, json.Unmarshal(data, &r))
+	r, err := Merge(pages)
+	require.NoError(t, err)
 	return r
 }
 

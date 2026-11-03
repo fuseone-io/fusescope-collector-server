@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -79,8 +78,9 @@ func TestGatewayAuthAndCORS(t *testing.T) {
 			events: []event{{kind: "reject", app: testWebApp, reason: report.BadKey}},
 		},
 		{
-			name: "SignalNotAllowed_UnauthorizedBadKey", target: tracesPath, headers: jsonHeaders(logsOnlyKey), status: http.StatusUnauthorized,
-			events: []event{{kind: "reject", app: testWebApp, reason: report.BadKey}},
+			// Maintainer review of #43: authorisation, not authentication.
+			name: "SignalNotAllowed_ForbiddenOwnReason", target: tracesPath, headers: jsonHeaders(logsOnlyKey, "Origin", "https://shop.example.com"), status: http.StatusForbidden,
+			events: []event{{kind: "reject", app: testWebApp, reason: report.SignalNotAllowed}},
 		},
 	}
 
@@ -131,10 +131,11 @@ func TestGatewayUnknownKeysGlobalCounter(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, response.Code)
 			assert.Empty(t, response.Header().Get("Access-Control-Allow-Origin"))
 
-			data, err := f.acct.monitor.Build(1, f.now, ingestpolicy.Status{Version: 1})
+			pages, err := f.acct.monitor.Build(1, f.now, ingestpolicy.Status{Version: 1})
 			require.NoError(t, err)
-			var r report.Report
-			require.NoError(t, json.Unmarshal(data, &r))
+			data := bytes.Join(pages, nil)
+			r, err := report.Merge(pages)
+			require.NoError(t, err)
 			assert.Empty(t, r.Applications, "an unknown key is never attributed to an application")
 			if tc.counted {
 				assert.Equal(t, int64(1), r.UnknownKeys.Count)
@@ -583,8 +584,9 @@ func TestGatewayAccountsBeforeWatcherCatchesUp(t *testing.T) {
 	require.NoError(t, f.store.Apply(encodePolicy(t, p), testNow))
 
 	require.Equal(t, http.StatusOK, f.post(tracesPath, testTraceJSON, jsonHeaders(newKey)).Code)
-	data, err := f.acct.monitor.Build(1, f.now, f.store.Status())
+	pages, err := f.acct.monitor.Build(1, f.now, f.store.Status())
 	require.NoError(t, err)
+	data := bytes.Join(pages, nil)
 	assert.Contains(t, string(data), newApp)
 	assert.Contains(t, string(data), newKeyID)
 }
@@ -633,10 +635,11 @@ func TestGatewayAccountsAcceptedRequests(t *testing.T) {
 	require.Equal(t, http.StatusOK, f.post(tracesPath, body, jsonHeaders(webKey)).Code)
 	require.Equal(t, http.StatusOK, f.post(logsPath, `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"eventName":"browser.web_vital","attributes":[{"key":"session.id","value":{"stringValue":"s1"}}]}]}]}]}`, jsonHeaders(webKey)).Code)
 
-	data, err := f.acct.monitor.Build(1, f.now, ingestpolicy.Status{Version: 1})
+	pages, err := f.acct.monitor.Build(1, f.now, ingestpolicy.Status{Version: 1})
 	require.NoError(t, err)
-	var r report.Report
-	require.NoError(t, json.Unmarshal(data, &r))
+	data := bytes.Join(pages, nil)
+	r, err := report.Merge(pages)
+	require.NoError(t, err)
 	require.Len(t, r.Applications, 1)
 	assert.Equal(t, report.Counts{Sessions: 2, Views: 2, Vitals: 1}, r.Applications[0].Counts)
 	assert.Equal(t, report.SDKReport{Name: "@fusescope/browser", Version: "0.2.0"}, r.Applications[0].SDK)
