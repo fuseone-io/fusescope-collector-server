@@ -237,6 +237,16 @@ func TestMonitorPendingKeysBounded(t *testing.T) {
 	assert.Equal(t, uint64(1), r.Dropped.Keys)
 }
 
+// Codex review on #43: requests can finish out of order; the newest use wins.
+func TestMonitorKeyUseKeepsNewest(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	m, snap := newTestMonitor(t, 1)
+	m.Ingest(snap.Application(appA), keyOne, &Batch{}, now.Add(time.Minute))
+	m.Ingest(snap.Application(appA), keyOne, &Batch{}, now)
+	r := build(t, m, now.Add(time.Minute))
+	assert.Equal(t, []KeyReport{{ID: keyOne, LastUsedAt: "2026-10-21T12:01:00Z"}}, r.Keys)
+}
+
 func TestMonitorUnknownKeys(t *testing.T) {
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 	m, _ := newTestMonitor(t, 1)

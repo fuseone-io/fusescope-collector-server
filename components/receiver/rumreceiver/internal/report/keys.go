@@ -30,7 +30,10 @@ func newPendingKeys(capacity int) pendingKeys {
 // evicted to make room.
 func (p *pendingKeys) use(id string, now time.Time) bool {
 	if k, ok := p.byID[id]; ok {
-		k.used = now
+		// Requests can finish out of order: the newest use wins.
+		if now.After(k.used) {
+			k.used = now
+		}
 		p.unlink(k)
 		p.pushFront(k)
 		return false
