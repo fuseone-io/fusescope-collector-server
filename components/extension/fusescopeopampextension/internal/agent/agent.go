@@ -82,11 +82,12 @@ type Agent struct {
 	queued *queuedPush
 	seq    uint64
 	// retrying is set while a confirmation that could not be recorded is
-	// retried; Close closes done and waits for the retry loop in retries.
-	retrying bool
-	done     chan struct{}
-	closed   bool
-	retries  sync.WaitGroup
+	// retried; Close closes done and waits in background for the retry loop
+	// and any queued push being handled.
+	retrying   bool
+	done       chan struct{}
+	closed     bool
+	background sync.WaitGroup
 	// reportReady is set when the local configuration changed: once its
 	// revision is Ready, the new effective configuration is reported.
 	reportReady bool
@@ -394,10 +395,10 @@ func (a *Agent) retryConfirm(revision string) {
 		return
 	}
 	a.retrying = true
-	a.retries.Add(1)
+	a.background.Add(1)
 	a.mu.Unlock()
 	go func() {
-		defer a.retries.Done()
+		defer a.background.Done()
 		defer func() { a.mu.Lock(); a.retrying = false; a.mu.Unlock() }()
 		delay := confirmRetryStart
 		for {
@@ -422,7 +423,8 @@ func (a *Agent) retryConfirm(revision string) {
 	}()
 }
 
-// Close stops retrying confirmations and waits for the retry loop to end.
+// Close stops retrying confirmations and waits for the retry loop and any
+// queued push being handled to end.
 func (a *Agent) Close() {
 	a.mu.Lock()
 	if !a.closed {
@@ -430,7 +432,7 @@ func (a *Agent) Close() {
 		close(a.done)
 	}
 	a.mu.Unlock()
-	a.retries.Wait()
+	a.background.Wait()
 }
 
 func (a *Agent) confirm(revision string) error {
@@ -475,13 +477,28 @@ func (a *Agent) confirm(revision string) error {
 		}
 	}
 	if next != nil {
-		go func() {
+		a.runBackground(func() {
 			if st := a.push(context.Background(), next.seq, next.hash, next.body); st != nil && reporter != nil {
 				reporter.Report(*st)
 			}
-		}()
+		})
 	}
 	return nil
+}
+
+// runBackground runs fn on its own goroutine, which Close waits for; after Close
+// it does not run fn, so nothing writes the state once the agent is closed.
+func (a *Agent) runBackground(fn func()) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return
+	}
+	a.background.Add(1)
+	go func() {
+		defer a.background.Done()
+		fn()
+	}()
 }
 
 func (a *Agent) mergePush(base merge.Config, body []byte) (merge.Config, error) {
