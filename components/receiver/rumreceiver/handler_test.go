@@ -607,6 +607,48 @@ func TestGatewayConsumerDeadline(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second)
 }
 
+// Codex review on #43: empty resource groups are dropped and the rest are
+// bounded before stamping, so a small body cannot expand into millions of
+// attributes.
+func TestGatewayResourceGroupsBounded(t *testing.T) {
+	groups := func(n int, span bool) string {
+		inner := `{"resource":{},"scopeSpans":[]}`
+		if span {
+			inner = `{"resource":{},"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"x"}]}]}`
+		}
+		return `{"resourceSpans":[` + strings.TrimSuffix(strings.Repeat(inner+",", n), ",") + `]}`
+	}
+	logGroups := `{"resourceLogs":[` + strings.TrimSuffix(strings.Repeat(`{"resource":{},"scopeLogs":[{"logRecords":[{"eventName":"x"}]}]},`, 1001), ",") + `]}`
+	testCases := []struct {
+		name   string
+		path   string
+		body   string
+		status int
+		spans  int
+	}{
+		{name: "ManyEmptyGroups_DroppedAccepted", path: tracesPath, body: groups(200_000, false), status: http.StatusOK},
+		{name: "AtBound_Accepted", path: tracesPath, body: groups(1000, true), status: http.StatusOK, spans: 1000},
+		{name: "OverBound_TooLarge", path: tracesPath, body: groups(1001, true), status: http.StatusRequestEntityTooLarge},
+		{name: "LogsOverBound_TooLarge", path: logsPath, body: logGroups, status: http.StatusRequestEntityTooLarge},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, func(cfg *Config) { cfg.MaxBodySize = 16 << 20 })
+			rec := f.post(tc.path, tc.body, jsonHeaders(webKey))
+			assert.Equal(t, tc.status, rec.Code, rec.Body.String())
+			assert.Equal(t, tc.spans, f.traces.SpanCount())
+			for _, td := range f.traces.AllTraces() {
+				assert.LessOrEqual(t, td.ResourceSpans().Len(), 1000)
+			}
+			events := f.acct.take()
+			require.Len(t, events, 1)
+			if tc.status == http.StatusRequestEntityTooLarge {
+				assert.Equal(t, event{kind: "reject", app: testWebApp, reason: report.TooLarge}, events[0])
+			}
+		})
+	}
+}
+
 func TestGatewayConcurrencyLimit(t *testing.T) {
 	f := newFixture(t, func(cfg *Config) { cfg.Limits.Requests = 1 })
 	blocked := make(chan struct{})

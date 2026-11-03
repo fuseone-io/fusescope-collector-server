@@ -60,6 +60,9 @@ type LimitsConfig struct {
 	WriteTimeout      time.Duration `mapstructure:"write_timeout"`
 	IdleTimeout       time.Duration `mapstructure:"idle_timeout"`
 	MaxHeaderBytes    int           `mapstructure:"max_header_bytes"`
+	// ResourcesPerRequest bounds the resource groups of one request, each
+	// of which processing stamps with several attributes.
+	ResourcesPerRequest int `mapstructure:"resources_per_request"`
 }
 
 const minTLSVersion = "1.3"
@@ -74,16 +77,17 @@ func createDefaultConfig() component.Config {
 			Client: Limit{Rate: 20, Burst: 60},
 		},
 		Limits: LimitsConfig{
-			ClientBuckets:     100_000,
-			SessionsPerBucket: 10_000,
-			PendingKeys:       10_000,
-			Connections:       4096,
-			Requests:          512,
-			HeaderReadTimeout: 10 * time.Second,
-			BodyReadTimeout:   30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       120 * time.Second,
-			MaxHeaderBytes:    64 << 10,
+			ClientBuckets:       100_000,
+			SessionsPerBucket:   10_000,
+			PendingKeys:         10_000,
+			Connections:         4096,
+			Requests:            512,
+			HeaderReadTimeout:   10 * time.Second,
+			BodyReadTimeout:     30 * time.Second,
+			WriteTimeout:        30 * time.Second,
+			IdleTimeout:         120 * time.Second,
+			MaxHeaderBytes:      64 << 10,
+			ResourcesPerRequest: 1000,
 		},
 	}
 }
@@ -127,6 +131,7 @@ func (c *Config) Validate() error {
 		"limits.client_buckets": l.ClientBuckets, "limits.sessions_per_bucket": l.SessionsPerBucket,
 		"limits.pending_keys": l.PendingKeys, "limits.connections": l.Connections,
 		"limits.requests": l.Requests, "limits.max_header_bytes": l.MaxHeaderBytes,
+		"limits.resources_per_request": l.ResourcesPerRequest,
 	} {
 		if v <= 0 {
 			errs = append(errs, fmt.Errorf("%s must be positive", name))

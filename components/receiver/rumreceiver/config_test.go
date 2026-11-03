@@ -26,6 +26,7 @@ func TestConfigDefaults(t *testing.T) {
 		Connections: 4096, Requests: 512,
 		HeaderReadTimeout: 10 * time.Second, BodyReadTimeout: 30 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
+		ResourcesPerRequest: 1000,
 	}, cfg.Limits)
 	assert.Equal(t, "1.3", cfg.TLS.MinVersion)
 }

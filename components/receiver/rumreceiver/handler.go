@@ -87,6 +87,7 @@ type handler struct {
 	proxies       ratelimit.TrustedProxies
 
 	maxBody      int64
+	maxResources int
 	bodyTimeout  time.Duration
 	writeTimeout time.Duration
 	slots        chan struct{}
@@ -366,6 +367,10 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 		h.acct.Reject(app.ID, report.InvalidPayload, "", now)
 		h.refuse(w, r, refused)
 		return
+	case refusalTooLarge:
+		h.acct.Reject(app.ID, report.TooLarge, "", now)
+		h.refuse(w, r, refused)
+		return
 	case refusalPackage:
 		h.acct.Reject(app.ID, report.PackageNotAllowed, report.ObservedPackage(observed), now)
 		h.refuse(w, r, refused)
@@ -396,6 +401,19 @@ func (h *handler) consumeTraces(ctx context.Context, app *ingestpolicy.Applicati
 	if err != nil {
 		return "", refusalInvalid
 	}
+	// Empty groups carry nothing; the rest are bounded before stamping
+	// multiplies their attributes (§7.1).
+	td.ResourceSpans().RemoveIf(func(rs ptrace.ResourceSpans) bool {
+		for i := 0; i < rs.ScopeSpans().Len(); i++ {
+			if rs.ScopeSpans().At(i).Spans().Len() > 0 {
+				return false
+			}
+		}
+		return true
+	})
+	if td.ResourceSpans().Len() > h.maxResources {
+		return "", refusalTooLarge
+	}
 	if name, refused := refusedTracesPackage(app, td); refused {
 		return name, refusalPackage
 	}
@@ -418,6 +436,17 @@ func (h *handler) consumeLogs(ctx context.Context, app *ingestpolicy.Application
 	}
 	if err != nil {
 		return "", refusalInvalid
+	}
+	ld.ResourceLogs().RemoveIf(func(rl plog.ResourceLogs) bool {
+		for i := 0; i < rl.ScopeLogs().Len(); i++ {
+			if rl.ScopeLogs().At(i).LogRecords().Len() > 0 {
+				return false
+			}
+		}
+		return true
+	})
+	if ld.ResourceLogs().Len() > h.maxResources {
+		return "", refusalTooLarge
 	}
 	if name, refused := refusedLogsPackage(app, ld); refused {
 		return name, refusalPackage

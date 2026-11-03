@@ -263,6 +263,7 @@ configuration ([M]):
 | Write timeout | 30 s | connection closed |
 | Idle keep-alive timeout | 120 s | connection closed |
 | Request header bytes | 64 KiB | 431 |
+| Resource groups per request | 1 000, after empty ones are dropped | 413 `too_large`; checked before any attribute is stamped |
 
 Strings longer than their bound are never truncated into a stored value: a truncated origin or
 package name could match or name something else.
@@ -381,7 +382,7 @@ receiver's pipeline, with no extra hop ([ADR10] §6, line 94). The data is count
 | Package name missing or not allowed | 403 | `package_not_allowed` | §5 |
 | Rate limited | 429, `Retry-After: 1` | `rate_limited` | §7 |
 | Unsupported type or encoding, bad gzip, bad OTLP | 400 | `invalid_payload` | §6 |
-| Body over the limit | 413 | `too_large` | §6 |
+| Body over the limit, or over 1 000 non-empty resource groups | 413 | `too_large` | §6, §7.1 |
 | Consumer error, permanent | 400 | none | **Differs**, below |
 | Consumer error, not permanent (memory limiter, full queue, exporter backpressure) | 503, `Retry-After: 5` | none | **Differs**, below |
 | Accepted | 200, empty export response | ingest | §6 |
