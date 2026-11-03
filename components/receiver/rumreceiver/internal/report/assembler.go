@@ -101,8 +101,8 @@ type AgentStore interface {
 	Invalidate(ctx context.Context, agent string, seq uint64) error
 }
 
-// Clock tells the time; a commit is claimed at a fresh reading of it,
-// immediately before it starts.
+// Clock is the assembler's only source of time: deadlines, claims,
+// expiry and backoff each read it when they decide.
 type Clock interface {
 	Now() time.Time
 }
@@ -170,21 +170,19 @@ type entry struct {
 	inFlight bool
 }
 
+// NewAssembler is an Assembler reading the system clock.
 func NewAssembler(store AgentStore) *Assembler {
+	return NewAssemblerWithClock(store, systemClock{})
+}
+
+// NewAssemblerWithClock is an Assembler reading clock, for tests.
+func NewAssemblerWithClock(store AgentStore, clock Clock) *Assembler {
 	return &Assembler{
-		store: store, clock: systemClock{}, agents: map[string]*entry{},
+		store: store, clock: clock, agents: map[string]*entry{},
 		maxBytes: MaxAssemblyBytes, maxHeld: MaxAssemblies, maxPending: MaxPendingInvalidations,
 		batch: RetryBatch, maxDecoding: MaxCommitDecodeBytes, maxCommits: MaxCommitsInFlight,
 		callTimeout: StoreCallTimeout,
 	}
-}
-
-// since returns the time now for a call that began at now, as read by the
-// clock: now plus the clock's progress since start. A pass or a commit
-// reads it again immediately before each claim, so a store call that took
-// long cannot let a later claim pass a deadline it has passed.
-func (a *Assembler) since(now, start time.Time) time.Time {
-	return now.Add(a.clock.Now().Sub(start))
 }
 
 func (a *Assembler) callCtx() (context.Context, context.CancelFunc) {
@@ -196,12 +194,13 @@ func (a *Assembler) callCtx() (context.Context, context.CancelFunc) {
 // only its page bytes until Commit. Nothing is acknowledged before a
 // commit. Each call also runs one bounded retry pass, whose commits are
 // returned for acknowledgement.
-func (a *Assembler) Add(agent string, page []byte, now time.Time) (*Report, []Committed, error) {
-	r, perr := a.add(agent, page, now)
-	return r, a.Retry(now), perr
+func (a *Assembler) Add(agent string, page []byte) (*Report, []Committed, error) {
+	r, perr := a.add(agent, page)
+	return r, a.Retry(), perr
 }
 
-func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, error) {
+func (a *Assembler) add(agent string, page []byte) (*Report, error) {
+	now := a.clock.Now()
 	a.mu.Lock()
 	a.expire(now)
 	a.mu.Unlock()
@@ -222,6 +221,8 @@ func (a *Assembler) add(agent string, page []byte, now time.Time) (*Report, erro
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	now = a.clock.Now() // the record read may have taken long
+	a.expire(now)
 	switch {
 	case seq <= rec.Applied:
 		return nil, ErrAlreadyApplied
@@ -298,10 +299,9 @@ func exactCopy(b []byte) []byte {
 // compare-and-apply. Only a nil error lets the backend acknowledge. On a
 // failure the sequence stays awaiting commit and the retrier tries again
 // with backoff, until CommitDeadline.
-func (a *Assembler) Commit(agent string, seq uint64, now time.Time) error {
-	start := a.clock.Now()
+func (a *Assembler) Commit(agent string, seq uint64) error {
 	a.mu.Lock()
-	now = a.since(now, start) // fresh, immediately before the claim
+	now := a.clock.Now() // immediately before the claim
 	cur := a.agents[agent]
 	if cur == nil || cur.state != applying || cur.seq != seq || cur.inFlight {
 		a.mu.Unlock()
@@ -312,7 +312,7 @@ func (a *Assembler) Commit(agent string, seq uint64, now time.Time) error {
 		return err
 	}
 	a.mu.Unlock()
-	return a.commit(agent, cur, now)
+	return a.commit(agent, cur)
 }
 
 // claimCommit starts a commit attempt of cur, under the lock, immediately
@@ -335,7 +335,7 @@ func (a *Assembler) claimCommit(agent string, cur *entry, now time.Time) error {
 // commit runs one claimed attempt, outside the lock. Only Applied and
 // AlreadyApplied let the backend acknowledge; any other answer, or an
 // error, fails closed and keeps the entry for a retry, until the deadline.
-func (a *Assembler) commit(agent string, cur *entry, now time.Time) error {
+func (a *Assembler) commit(agent string, cur *entry) error {
 	var result ApplyResult
 	report, err := mergePages(cur.raw) // decoded again for this attempt only
 	if err == nil {
@@ -353,7 +353,7 @@ func (a *Assembler) commit(agent string, cur *entry, now time.Time) error {
 	a.commits--
 	a.decoding -= cur.size
 	if err != nil {
-		a.backoff(cur, now) // past the deadline, the next pass invalidates it
+		a.backoff(cur, a.clock.Now()) // past the deadline, the next pass invalidates it
 		return fmt.Errorf("commit: %w", err)
 	}
 	a.drop(agent, cur)
@@ -368,16 +368,15 @@ func (a *Assembler) commit(agent string, cur *entry, now time.Time) error {
 // and invalidations, at most the batch, each one store call outside the
 // lock. The backend also calls it from a ticker. It returns the sequences
 // it committed, which the backend acknowledges.
-func (a *Assembler) Retry(start time.Time) []Committed {
+func (a *Assembler) Retry() []Committed {
 	var done []Committed
-	began := a.clock.Now()
 	// One job at a time: each is chosen, revalidated and claimed under the
 	// lock immediately before it runs, at a fresh reading of the clock, so a
 	// job never outlives a deadline or an invalidation that came while an
 	// earlier one was running.
 	for range a.batch {
 		a.mu.Lock()
-		now := a.since(start, began)
+		now := a.clock.Now()
 		a.expire(now)
 		agent, cur := a.nextJob(now)
 		a.mu.Unlock()
@@ -385,7 +384,7 @@ func (a *Assembler) Retry(start time.Time) []Committed {
 			break
 		}
 		if cur.state == applying {
-			if a.commit(agent, cur, now) == nil {
+			if a.commit(agent, cur) == nil {
 				done = append(done, Committed{agent, cur.seq})
 			}
 			continue
@@ -398,7 +397,7 @@ func (a *Assembler) Retry(start time.Time) []Committed {
 		if err == nil {
 			a.drop(agent, cur)
 		} else {
-			a.backoff(cur, now)
+			a.backoff(cur, a.clock.Now())
 		}
 		a.mu.Unlock()
 	}
