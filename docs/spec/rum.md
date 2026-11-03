@@ -28,6 +28,7 @@ Every rule cites one of:
 - **[M]**: a maintainer decision recorded in ADR 0006 or on PR #41, with no other source.
   **[M43]**: a maintainer decision in the review of PR #43 (step 2).
   **[M44]**: a maintainer decision in the review of PR #44 (step 3).
+  **[M45]**: a maintainer decision on PR #45: the backend imports the shared modules.
 
 A rule marked **Differs** is a deliberate change from the backend, listed again in §12.
 
@@ -623,9 +624,10 @@ can carry identifiers. Only these fields exist; anything else is a schema violat
   persists `(agentID, reportSequence)`, where `agentID` is the OpAMP instance UID, and only
   then sends the ack. No ack for a partial, invalid or unpersisted sequence. A report whose
   sequence is not above the persisted one for that agent changes nothing and is acknowledged
-  again. Acknowledging the same sequence twice changes nothing. `report.Merge` and
-  `report.Assembler` in `rumreceiver` implement these rules, as a reference model and for
-  tests.
+  again. Acknowledging the same sequence twice changes nothing. `Merge` and
+  `Assembler` in the module `components/pkg/ingestreport` implement these rules; the backend
+  imports that module rather than reimplement them, with the policy types and `Validate` of
+  `components/pkg/ingestpolicy`, so both sides run one contract ([M45]).
 - **Backend, per-agent markers** ([M43]): the last sequence applied and the highest sequence
   invalidated live in the backend's persisted per-agent record, with `(agentID,
   reportSequence)`, bounded by the agents it knows; never in assembly memory, which holds only

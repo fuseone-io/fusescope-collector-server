@@ -75,6 +75,7 @@ providers:
 # fixed version itself; `make vuln` lists what is still needed.
 replaces:
   - golang.org/x/net => golang.org/x/net v0.62.0
-  # The ingest policy store shared by rumreceiver and ingestauth (ADR 0006);
-  # relative to output_path.
+  # The ingest policy and report contracts, shared with ingestauth and the
+  # backend (ADR 0006); relative to output_path.
   - github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy => ../components/pkg/ingestpolicy
+  - github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestreport => ../components/pkg/ingestreport

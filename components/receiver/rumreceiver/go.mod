@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy v0.0.0
+	github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestreport v0.0.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/client v1.70.0
 	go.opentelemetry.io/collector/component v1.70.0
@@ -180,3 +181,5 @@ require (
 )
 
 replace github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy => ../../pkg/ingestpolicy
+
+replace github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestreport => ../../pkg/ingestreport
