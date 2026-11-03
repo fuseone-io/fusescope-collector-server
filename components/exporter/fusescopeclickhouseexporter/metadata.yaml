@@ -10,7 +10,7 @@ sending_queue:
     num_consumers: 4
     batch:
       enabled: true
-      flush_timeout: 1s
+      flush_timeout: 10s
       sizer: items
       min_size: 20000
       max_size: 100000

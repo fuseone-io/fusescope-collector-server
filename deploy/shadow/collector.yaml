@@ -49,6 +49,8 @@ exporters:
     endpoint: clickhouse-shadow:9000
     tls:
       insecure: true
+    # The exporter's default since it was found here (docs/spec/clickhouse-traces.md §1, Insert batches).
+        flush_timeout: 10s
 
 extensions:
   healthcheckv2:

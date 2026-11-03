@@ -26,7 +26,7 @@ func NewDefaultSendingQueueConfig() configoptional.Optional[exporterhelper.Queue
 	cfg := exporterhelper.NewDefaultQueueConfig()
 	cfg.NumConsumers = 4
 	batchCfg := *cfg.Batch.GetOrInsertDefault()
-	batchCfg.FlushTimeout = 1000000000
+	batchCfg.FlushTimeout = 10000000000
 	batchCfg.Sizer = exporterhelper.RequestSizerTypeItems
 	batchCfg.MinSize = 20000
 	batchCfg.MaxSize = 100000
