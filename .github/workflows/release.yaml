@@ -1,8 +1,8 @@
 name: release
 
-# Publishes the container image to GHCR: every push to main as :main and
-# :sha-<commit>, and every vX.Y.Z tag as :X.Y.Z, :X.Y and :latest, for
-# linux/amd64 and linux/arm64, with provenance and an SBOM.
+# Publishes the container image to GHCR for linux/amd64 and linux/arm64, with
+# provenance and an SBOM: every push to main as :sha-<commit>, then :main if
+# that commit is still main's head; every vX.Y.Z tag as :X.Y.Z, :X.Y, :latest.
 on:
   push:
     branches:
@@ -14,28 +14,29 @@ permissions:
   contents: read
   packages: write
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/fusescope-collector
 
 jobs:
+  # No concurrency group: each commit gets its own image, none is cancelled.
   image:
     runs-on: ubuntu-latest
-    env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/fusescope-collector
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
       - name: Tags and version
         id: meta
         run: |
           sha=$(git rev-parse --short=12 HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             v=${GITHUB_REF_NAME#v}
             echo "version=$v" >> "$GITHUB_OUTPUT"
             echo "tags=-t $IMAGE:$v -t $IMAGE:${v%.*} -t $IMAGE:latest -t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
           else
             echo "version=0.1.0-dev+$sha" >> "$GITHUB_OUTPUT"
-            echo "tags=-t $IMAGE:main -t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
+            echo "tags=-t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
           fi
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -50,3 +51,21 @@ jobs:
             --label org.opencontainers.image.version=${{ steps.meta.outputs.version }} \
             --label org.opencontainers.image.licenses=Apache-2.0 \
             ${{ steps.meta.outputs.tags }} .
+
+  # Moves :main to this commit's image, one at a time, and only while the commit
+  # is still main's head, so a slower older run never moves it back.
+  main-tag:
+    if: github.ref == 'refs/heads/main'
+    needs: image
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-main-tag
+      cancel-in-progress: false
+    steps:
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Point :main at this commit
+        run: |
+          head=$(git ls-remote "${{ github.server_url }}/${{ github.repository }}" refs/heads/main | cut -c1-40)
+          if [ "$head" != "${{ github.sha }}" ]; then echo "main moved on to $head; leaving :main to its run"; exit 0; fi
+          docker buildx imagetools create -t "$IMAGE:main" "$IMAGE:sha-${{ needs.image.outputs.sha }}"
