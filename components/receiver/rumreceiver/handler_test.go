@@ -626,7 +626,9 @@ func TestGatewayResourceGroupsBounded(t *testing.T) {
 		status int
 		spans  int
 	}{
-		{name: "ManyEmptyGroups_DroppedAccepted", path: tracesPath, body: groups(200_000, false), status: http.StatusOK},
+		// Maintainer review of #43: empty groups count, before decoding.
+		{name: "ManyEmptyGroups_TooLarge", path: tracesPath, body: groups(200_000, false), status: http.StatusRequestEntityTooLarge},
+		{name: "EmptyGroupsAtBound_AcceptedNothingForwarded", path: tracesPath, body: groups(1000, false), status: http.StatusOK},
 		{name: "AtBound_Accepted", path: tracesPath, body: groups(1000, true), status: http.StatusOK, spans: 1000},
 		{name: "OverBound_TooLarge", path: tracesPath, body: groups(1001, true), status: http.StatusRequestEntityTooLarge},
 		{name: "LogsOverBound_TooLarge", path: logsPath, body: logGroups, status: http.StatusRequestEntityTooLarge},

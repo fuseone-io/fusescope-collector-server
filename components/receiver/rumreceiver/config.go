@@ -60,9 +60,31 @@ type LimitsConfig struct {
 	WriteTimeout      time.Duration `mapstructure:"write_timeout"`
 	IdleTimeout       time.Duration `mapstructure:"idle_timeout"`
 	MaxHeaderBytes    int           `mapstructure:"max_header_bytes"`
-	// ResourcesPerRequest bounds the resource groups of one request, each
-	// of which processing stamps with several attributes.
+	// The structural budget of one request (§7.1), checked before pdata
+	// decodes it. Each is a maximum (maxStructure) the operator may only
+	// lower.
 	ResourcesPerRequest int `mapstructure:"resources_per_request"`
+	ScopesPerResource   int `mapstructure:"scopes_per_resource"`
+	ItemsPerRequest     int `mapstructure:"items_per_request"`
+	EventsPerSpan       int `mapstructure:"events_per_span"`
+	LinksPerSpan        int `mapstructure:"links_per_span"`
+	AttributesPerEntity int `mapstructure:"attributes_per_entity"`
+	ElementsPerRequest  int `mapstructure:"elements_per_request"`
+	ValueDepth          int `mapstructure:"attribute_value_depth"`
+}
+
+// Maxima of report state: the report's page bound depends on them (§10.3).
+const (
+	maxPendingKeys       = 10_000
+	maxSessionsPerBucket = 10_000
+)
+
+func (l LimitsConfig) structure() structureLimits {
+	return structureLimits{
+		resources: l.ResourcesPerRequest, scopesPerResource: l.ScopesPerResource, items: l.ItemsPerRequest,
+		eventsPerSpan: l.EventsPerSpan, linksPerSpan: l.LinksPerSpan, attributes: l.AttributesPerEntity,
+		elements: l.ElementsPerRequest, valueDepth: l.ValueDepth,
+	}
 }
 
 const minTLSVersion = "1.3"
@@ -87,7 +109,14 @@ func createDefaultConfig() component.Config {
 			WriteTimeout:        30 * time.Second,
 			IdleTimeout:         120 * time.Second,
 			MaxHeaderBytes:      64 << 10,
-			ResourcesPerRequest: 1000,
+			ResourcesPerRequest: maxStructure.resources,
+			ScopesPerResource:   maxStructure.scopesPerResource,
+			ItemsPerRequest:     maxStructure.items,
+			EventsPerSpan:       maxStructure.eventsPerSpan,
+			LinksPerSpan:        maxStructure.linksPerSpan,
+			AttributesPerEntity: maxStructure.attributes,
+			ElementsPerRequest:  maxStructure.elements,
+			ValueDepth:          maxStructure.valueDepth,
 		},
 	}
 }
@@ -128,13 +157,31 @@ func (c *Config) Validate() error {
 	}
 	l := c.Limits
 	for name, v := range map[string]int{
-		"limits.client_buckets": l.ClientBuckets, "limits.sessions_per_bucket": l.SessionsPerBucket,
-		"limits.pending_keys": l.PendingKeys, "limits.connections": l.Connections,
+		"limits.client_buckets": l.ClientBuckets, "limits.connections": l.Connections,
 		"limits.requests": l.Requests, "limits.max_header_bytes": l.MaxHeaderBytes,
-		"limits.resources_per_request": l.ResourcesPerRequest,
 	} {
 		if v <= 0 {
 			errs = append(errs, fmt.Errorf("%s must be positive", name))
+		}
+	}
+	m := maxStructure
+	for _, b := range []struct {
+		name     string
+		v, limit int
+	}{
+		{"limits.pending_keys", l.PendingKeys, maxPendingKeys},
+		{"limits.sessions_per_bucket", l.SessionsPerBucket, maxSessionsPerBucket},
+		{"limits.resources_per_request", l.ResourcesPerRequest, m.resources},
+		{"limits.scopes_per_resource", l.ScopesPerResource, m.scopesPerResource},
+		{"limits.items_per_request", l.ItemsPerRequest, m.items},
+		{"limits.events_per_span", l.EventsPerSpan, m.eventsPerSpan},
+		{"limits.links_per_span", l.LinksPerSpan, m.linksPerSpan},
+		{"limits.attributes_per_entity", l.AttributesPerEntity, m.attributes},
+		{"limits.elements_per_request", l.ElementsPerRequest, m.elements},
+		{"limits.attribute_value_depth", l.ValueDepth, m.valueDepth},
+	} {
+		if b.v < 1 || b.v > b.limit {
+			errs = append(errs, fmt.Errorf("%s must be between 1 and %d: it can only be lowered", b.name, b.limit))
 		}
 	}
 	for name, v := range map[string]time.Duration{

@@ -23,7 +23,7 @@ import (
 const (
 	attributeApplicationID         = "fusescope.rum.application.id"
 	attributePlatform              = "fusescope.rum.platform"
-	attributeKeyID                 = "fusescope.ingest.key_id"
+	attributeKeyID                 = ingestpolicy.AuthKeyID
 	attributeViewRoute             = "fusescope.rum.view.route"
 	attributeSessionID             = "session.id"
 	attributeEventName             = "event.name"

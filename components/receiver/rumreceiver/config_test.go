@@ -26,7 +26,8 @@ func TestConfigDefaults(t *testing.T) {
 		Connections: 4096, Requests: 512,
 		HeaderReadTimeout: 10 * time.Second, BodyReadTimeout: 30 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
-		ResourcesPerRequest: 1000,
+		ResourcesPerRequest: 1000, ScopesPerResource: 100, ItemsPerRequest: 10_000, EventsPerSpan: 128,
+		LinksPerSpan: 128, AttributesPerEntity: 128, ElementsPerRequest: 100_000, ValueDepth: 8,
 	}, cfg.Limits)
 	assert.Equal(t, "1.3", cfg.TLS.MinVersion)
 }
@@ -82,6 +83,21 @@ func TestConfigValidate(t *testing.T) {
 		{name: "NegativeStaleness", edit: func(c *Config) { c.MaxStaleness = -time.Second }, err: "max_staleness"},
 		{name: "NoRequestLimit", edit: func(c *Config) { c.Limits.Requests = 0 }, err: "limits.requests"},
 		{name: "NoBucketCap", edit: func(c *Config) { c.Limits.ClientBuckets = 0 }, err: "limits.client_buckets"},
+		// Maintainer review of #43: report and structure bounds only go down.
+		{name: "PendingKeysOverMax", edit: func(c *Config) { c.Limits.PendingKeys = 10_001 }, err: "limits.pending_keys must be between 1 and 10000"},
+		{name: "PendingKeysLowered", edit: func(c *Config) { c.Limits.PendingKeys = 100 }},
+		{name: "PendingKeysZero", edit: func(c *Config) { c.Limits.PendingKeys = 0 }, err: "limits.pending_keys"},
+		{name: "SessionsOverMax", edit: func(c *Config) { c.Limits.SessionsPerBucket = 10_001 }, err: "limits.sessions_per_bucket must be between 1 and 10000"},
+		{name: "ResourcesOverMax", edit: func(c *Config) { c.Limits.ResourcesPerRequest = 1001 }, err: "limits.resources_per_request must be between 1 and 1000"},
+		{name: "ResourcesLowered", edit: func(c *Config) { c.Limits.ResourcesPerRequest = 10 }},
+		{name: "ScopesOverMax", edit: func(c *Config) { c.Limits.ScopesPerResource = 101 }, err: "limits.scopes_per_resource"},
+		{name: "ItemsOverMax", edit: func(c *Config) { c.Limits.ItemsPerRequest = 10_001 }, err: "limits.items_per_request"},
+		{name: "EventsOverMax", edit: func(c *Config) { c.Limits.EventsPerSpan = 129 }, err: "limits.events_per_span"},
+		{name: "LinksOverMax", edit: func(c *Config) { c.Limits.LinksPerSpan = 129 }, err: "limits.links_per_span"},
+		{name: "AttributesOverMax", edit: func(c *Config) { c.Limits.AttributesPerEntity = 129 }, err: "limits.attributes_per_entity"},
+		{name: "ElementsOverMax", edit: func(c *Config) { c.Limits.ElementsPerRequest = 100_001 }, err: "limits.elements_per_request"},
+		{name: "ValueDepthOverMax", edit: func(c *Config) { c.Limits.ValueDepth = 9 }, err: "limits.attribute_value_depth"},
+		{name: "ValueDepthZero", edit: func(c *Config) { c.Limits.ValueDepth = 0 }, err: "limits.attribute_value_depth"},
 		{name: "NoHeaderTimeout", edit: func(c *Config) { c.Limits.HeaderReadTimeout = 0 }, err: "limits.header_read_timeout"},
 		{name: "NoWriteTimeout", edit: func(c *Config) { c.Limits.WriteTimeout = 0 }, err: "limits.write_timeout"},
 	}

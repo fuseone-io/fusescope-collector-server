@@ -98,7 +98,7 @@ func newHandler(cfg *Config, source ingestpolicy.Source, acct accounting, proxie
 		clientLimit:   ratelimit.Limit{Rate: cfg.RateLimit.Client.Rate, Burst: cfg.RateLimit.Client.Burst},
 		proxies:       ratelimit.TrustedProxies(proxies),
 		maxBody:       cfg.MaxBodySize,
-		maxResources:  cfg.Limits.ResourcesPerRequest,
+		structure:     cfg.Limits.structure(),
 		bodyTimeout:   cfg.Limits.BodyReadTimeout,
 		writeTimeout:  cfg.Limits.WriteTimeout,
 		slots:         make(chan struct{}, cfg.Limits.Requests),

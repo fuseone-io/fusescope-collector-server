@@ -87,7 +87,7 @@ type handler struct {
 	proxies       ratelimit.TrustedProxies
 
 	maxBody      int64
-	maxResources int
+	structure    structureLimits
 	bodyTimeout  time.Duration
 	writeTimeout time.Duration
 	slots        chan struct{}
@@ -391,6 +391,9 @@ func (h *handler) post(w http.ResponseWriter, r *http.Request, traces bool) {
 }
 
 func (h *handler) consumeTraces(ctx context.Context, app *ingestpolicy.Application, keyID string, wk *work, enc encoding) (string, refusal) {
+	if r := h.checkStructure(wk.body.Bytes(), enc, msgTracesRequest); r != refusalNone {
+		return "", r
+	}
 	var td ptrace.Traces
 	var err error
 	if enc == encodingJSON {
@@ -401,8 +404,7 @@ func (h *handler) consumeTraces(ctx context.Context, app *ingestpolicy.Applicati
 	if err != nil {
 		return "", refusalInvalid
 	}
-	// Empty groups carry nothing; the rest are bounded before stamping
-	// multiplies their attributes (§7.1).
+	// Empty groups, already counted, carry nothing to stamp.
 	td.ResourceSpans().RemoveIf(func(rs ptrace.ResourceSpans) bool {
 		for i := 0; i < rs.ScopeSpans().Len(); i++ {
 			if rs.ScopeSpans().At(i).Spans().Len() > 0 {
@@ -411,9 +413,6 @@ func (h *handler) consumeTraces(ctx context.Context, app *ingestpolicy.Applicati
 		}
 		return true
 	})
-	if td.ResourceSpans().Len() > h.maxResources {
-		return "", refusalTooLarge
-	}
 	if name, refused := refusedTracesPackage(app, td); refused {
 		return name, refusalPackage
 	}
@@ -427,6 +426,9 @@ func (h *handler) consumeTraces(ctx context.Context, app *ingestpolicy.Applicati
 }
 
 func (h *handler) consumeLogs(ctx context.Context, app *ingestpolicy.Application, keyID string, wk *work, enc encoding) (string, refusal) {
+	if r := h.checkStructure(wk.body.Bytes(), enc, msgLogsRequest); r != refusalNone {
+		return "", r
+	}
 	var ld plog.Logs
 	var err error
 	if enc == encodingJSON {
@@ -445,9 +447,6 @@ func (h *handler) consumeLogs(ctx context.Context, app *ingestpolicy.Application
 		}
 		return true
 	})
-	if ld.ResourceLogs().Len() > h.maxResources {
-		return "", refusalTooLarge
-	}
 	if name, refused := refusedLogsPackage(app, ld); refused {
 		return name, refusalPackage
 	}
@@ -458,6 +457,24 @@ func (h *handler) consumeLogs(ctx context.Context, app *ingestpolicy.Application
 	err = h.logs.ConsumeLogs(ctx, ld)
 	h.obsLogs.EndLogsOp(ctx, format(enc), records, err)
 	return "", consumerRefusal(err)
+}
+
+// checkStructure applies the structural budget to the encoded body, before
+// pdata allocates anything for it (§7.1).
+func (h *handler) checkStructure(body []byte, enc encoding, root msg) refusal {
+	var s structure
+	if enc == encodingJSON {
+		s = scanJSON(body, root, h.structure)
+	} else {
+		s = scanProto(body, root, h.structure)
+	}
+	switch s {
+	case structureOverBudget:
+		return refusalTooLarge
+	case structureMalformed:
+		return refusalInvalid
+	}
+	return refusalNone
 }
 
 // consumerRefusal maps a consumer error the way upstream OTLP receivers do:
@@ -511,6 +528,10 @@ func (wk *work) readBody(r *http.Request, limit int64) refusal {
 	var err error
 	switch enc := strings.TrimSpace(r.Header.Get("Content-Encoding")); {
 	case enc == "", strings.EqualFold(enc, "identity"):
+		if r.ContentLength > 0 {
+			// One allocation of the announced size, not a series of doublings.
+			wk.body.Grow(int(r.ContentLength) + bytes.MinRead)
+		}
 		_, err = wk.body.ReadFrom(&wk.wire)
 	case strings.EqualFold(enc, "gzip"):
 		if wk.gzip == nil {
@@ -543,7 +564,7 @@ type authData struct {
 
 func (a authData) GetAttribute(name string) any {
 	switch name {
-	case "fusescope.org.id":
+	case ingestpolicy.AuthOrgID:
 		return a.orgID
 	case attributeKeyID:
 		return a.keyID
@@ -552,5 +573,5 @@ func (a authData) GetAttribute(name string) any {
 }
 
 func (a authData) GetAttributeNames() []string {
-	return []string{"fusescope.org.id", attributeKeyID}
+	return []string{ingestpolicy.AuthOrgID, attributeKeyID}
 }
