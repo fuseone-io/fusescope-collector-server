@@ -163,6 +163,8 @@ allowed (ADR 0005), but nothing needs them.
   with **403**, reason `package_not_allowed`, observing the first refused value (empty when
   missing) ([B] `impl/otlp.go:115-129`, `impl/gateway_otlp.go:109-116`; tests
   `impl/otlp_mobile_test.go:136-139`, `impl/gateway_test.go:378-380`).
+- A resource that names `app.package.name` more than once is refused like a missing one: a
+  decoder keeps both, and a later reader may take the one never checked.
 - Matching ([B] `rumtypes/application.go:155-170`): an empty name never matches; `*` matches
   any; an exact entry matches itself; an entry `com.example.*` matches names starting with
   `com.example.` and longer than it, never `com.example` itself.

@@ -192,9 +192,22 @@ func refusedLogsPackage(app *ingestpolicy.Application, logs plog.Logs) (string, 
 	return "", false
 }
 
+// refusedPackage also refuses a resource that names its package more than
+// once: pdata keeps duplicate keys, Get sees the first and a later reader
+// may take the last, which would never have been checked.
 func refusedPackage(app *ingestpolicy.Application, resource pcommon.Resource) (string, bool) {
-	packageName, _ := resource.Attributes().Get(attributePackageName)
-	if !app.AllowsPackageName(packageName.Str()) {
+	var packageName pcommon.Value
+	n := 0
+	resource.Attributes().Range(func(k string, v pcommon.Value) bool {
+		if k == attributePackageName {
+			packageName, n = v, n+1
+		}
+		return n < 2
+	})
+	switch {
+	case n != 1:
+		return "", true
+	case !app.AllowsPackageName(packageName.Str()):
 		return packageName.Str(), true
 	}
 	return "", false

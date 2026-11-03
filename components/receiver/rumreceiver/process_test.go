@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy"
@@ -180,6 +181,29 @@ func TestProcessDuplicateIdentityAttributes(t *testing.T) {
 	raw := attrs.AsRaw()
 	assert.Equal(t, application.ID, raw[attributeApplicationID])
 	assert.Equal(t, webKeyID, raw[attributeKeyID])
+}
+
+// Codex review on #43: a resource naming its package twice is refused,
+// whatever the order of an allowed and a forbidden value.
+func TestDuplicatePackageNameRefused(t *testing.T) {
+	_, android := testApplications(t)
+	kv := func(k, v string) []byte {
+		return msgField(msgField(nil, 1, []byte(k)), 2, msgField(nil, 1, []byte(v)))
+	}
+	for _, order := range [][2]string{{"com.example.shop", "com.evil.app"}, {"com.evil.app", "com.example.shop"}, {"com.example.shop", "com.example.shop"}} {
+		resource := msgField(msgField(nil, 1, kv(attributePackageName, order[0])), 1, kv(attributePackageName, order[1]))
+		record := msgField(nil, 12, []byte("e"))
+		body := msgField(nil, 1, msgField(msgField(nil, 1, resource), 2, msgField(nil, 2, record)))
+		req := plogotlp.NewExportRequest()
+		require.NoError(t, req.UnmarshalProto(body))
+		name, refused := refusedLogsPackage(android, req.Logs())
+		assert.True(t, refused, "%v", order)
+		assert.Empty(t, name, "no single value to observe")
+	}
+	single := plog.NewLogs()
+	single.ResourceLogs().AppendEmpty().Resource().Attributes().PutStr(attributePackageName, "com.example.shop")
+	_, refused := refusedLogsPackage(android, single)
+	assert.False(t, refused)
 }
 
 func TestProcessTracesBatch(t *testing.T) {
