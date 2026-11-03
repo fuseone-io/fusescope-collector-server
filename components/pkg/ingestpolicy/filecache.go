@@ -27,7 +27,13 @@ const (
 // together; the OpAMP extension only chooses the directory.
 type FileCache struct {
 	dir string
+	// crash, set by tests, stops a write at a named step as a process death
+	// would: nothing after it runs, temporary files are left behind.
+	crash func(step string) bool
 }
+
+// errCrash is returned when a test stops a write midway.
+var errCrash = errors.New("simulated crash")
 
 var (
 	_ Cache   = (*FileCache)(nil)
@@ -75,19 +81,18 @@ func (c *FileCache) Load() ([]byte, *Floor, time.Time, error) {
 	return data, floor, written, nil
 }
 
-// Save writes the policy, then the state, each atomically with mode 0600.
-func (c *FileCache) Save(data []byte, floor Floor) error {
-	if err := os.MkdirAll(c.dir, 0o700); err != nil {
-		return err
-	}
-	if err := c.write(PolicyFile, data); err != nil {
-		return err
-	}
+// SaveFloor writes the state file, atomically with mode 0600.
+func (c *FileCache) SaveFloor(floor Floor) error {
 	st, err := json.Marshal(stateFile{Version: floor.Version, SHA256: hex.EncodeToString(floor.SHA256[:])})
 	if err != nil {
 		return err
 	}
 	return c.write(StateFile, st)
+}
+
+// SavePolicy writes the policy file, atomically with mode 0600.
+func (c *FileCache) SavePolicy(data []byte) error {
+	return c.write(PolicyFile, data)
 }
 
 // Touch sets the cached policy's modification time, which Load returns as
@@ -98,12 +103,19 @@ func (c *FileCache) Touch(received time.Time) error {
 
 // write replaces name atomically: a synced temporary file renamed over it,
 // then the directory synced.
-func (c *FileCache) write(name string, b []byte) error {
+func (c *FileCache) write(name string, b []byte) (err error) {
+	if err := os.MkdirAll(c.dir, 0o700); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(c.dir, name+".*.tmp")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		if !errors.Is(err, errCrash) {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return err
@@ -119,6 +131,9 @@ func (c *FileCache) write(name string, b []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if c.crash != nil && c.crash(name+" tmp") {
+		return errCrash
+	}
 	if err := os.Rename(tmp.Name(), filepath.Join(c.dir, name)); err != nil {
 		return err
 	}
@@ -127,7 +142,13 @@ func (c *FileCache) write(name string, b []byte) error {
 		return err
 	}
 	defer d.Close()
-	return d.Sync()
+	if err := d.Sync(); err != nil {
+		return err
+	}
+	if c.crash != nil && c.crash(name+" renamed") {
+		return errCrash
+	}
+	return nil
 }
 
 // readCapped reads at most limit bytes and fails on more, so a corrupt or

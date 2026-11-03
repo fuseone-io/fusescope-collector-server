@@ -6,6 +6,7 @@ package ingestpolicy
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -181,7 +182,7 @@ func TestFileCacheStart(t *testing.T) {
 				p := testPolicy(3)
 				p.Keys[1].OrgID = orgB
 				data := encode(t, p)
-				require.NoError(t, NewFileCache(dir).Save(data, Floor{Version: 3, SHA256: sha256.Sum256(data)}))
+				saveBoth(t, NewFileCache(dir), data, Floor{Version: 3, SHA256: sha256.Sum256(data)})
 			},
 			floor: 3,
 		},
@@ -189,7 +190,7 @@ func TestFileCacheStart(t *testing.T) {
 			name: "CachedVersionNotFloor_NoPolicy",
 			prepare: func(t *testing.T, dir string) {
 				data := encode(t, testPolicy(2))
-				require.NoError(t, NewFileCache(dir).Save(data, Floor{Version: 3, SHA256: sha256.Sum256(data)}))
+				saveBoth(t, NewFileCache(dir), data, Floor{Version: 3, SHA256: sha256.Sum256(data)})
 			},
 			floor: 3,
 		},
@@ -271,22 +272,9 @@ func TestFileCacheWritesAtomicallyWithMode0600(t *testing.T) {
 	assert.Equal(t, uint64(2), restarted.Current().Version)
 }
 
-type failingCache struct{}
-
-func (failingCache) Load() ([]byte, *Floor, time.Time, error) { return nil, nil, time.Time{}, nil }
-func (failingCache) Save([]byte, Floor) error                 { return errors.New("disk full") }
-
-func TestStoreAppliesWhenCacheFails(t *testing.T) {
-	core, logs := observer.New(zap.InfoLevel)
-	s := NewStore(zap.New(core), failingCache{})
-	require.NoError(t, s.Apply(encode(t, testPolicy(1)), t0))
-	require.NotNil(t, s.Current(), "a policy that cannot be cached still replaces the one held")
-	assert.Len(t, logs.FilterMessage("Ingest policy applied but not cached").All(), 1)
-}
-
 func saveFile(t *testing.T, dir string, data []byte) {
 	t.Helper()
-	require.NoError(t, NewFileCache(dir).Save(data, Floor{Version: mustParse(t, data).Version, SHA256: sha256.Sum256(data)}))
+	saveBoth(t, NewFileCache(dir), data, Floor{Version: mustParse(t, data).Version, SHA256: sha256.Sum256(data)})
 }
 
 func mustParse(t *testing.T, data []byte) *Policy {
@@ -317,28 +305,6 @@ func TestZeroTimeExpiryIsExpired(t *testing.T) {
 	assert.True(t, s.Current().Key(sha256.Sum256([]byte(webKey))).UsableAt(t0), "absent expiresAt never expires")
 }
 
-// Codex review on #43: a policy applied but not cached is cached again on
-// the next identical push, so a restart cannot bring back an older one.
-func TestStoreRetriesFailedCache(t *testing.T) {
-	cache := &flakyCache{FileCache: NewFileCache(t.TempDir()), fail: true}
-	s := NewStore(zap.NewNop(), cache)
-	require.NoError(t, s.Apply(encode(t, testPolicy(1)), t0))
-	v2 := encode(t, testPolicy(2))
-	require.NoError(t, s.Apply(v2, t0))
-	assert.Equal(t, uint64(2), s.Current().Version)
-
-	cache.fail = false
-	require.NoError(t, s.Apply(v2, t0.Add(time.Minute)))
-	assert.Equal(t, 1, cache.saves, "the identical push saves what failed")
-	require.NoError(t, s.Apply(v2, t0.Add(2*time.Minute)))
-	assert.Equal(t, 1, cache.saves, "once saved, identical pushes write nothing")
-
-	restarted := NewStore(zap.NewNop(), cache.FileCache)
-	restarted.Start()
-	require.NotNil(t, restarted.Current())
-	assert.Equal(t, uint64(2), restarted.Current().Version)
-}
-
 // Codex review on #43: an identical push refreshes freshness on disk too,
 // so a restart does not see the policy as stale under max_staleness.
 func TestIdenticalPushFreshnessSurvivesRestart(t *testing.T) {
@@ -361,18 +327,173 @@ func TestIdenticalPushFreshnessSurvivesRestart(t *testing.T) {
 	assert.True(t, refreshed.Equal(restarted.LastReceived()), "%v", restarted.LastReceived())
 }
 
-type flakyCache struct {
-	*FileCache
-	fail  bool
-	saves int
+func saveBoth(t *testing.T, c *FileCache, data []byte, floor Floor) {
+	t.Helper()
+	require.NoError(t, c.SaveFloor(floor))
+	require.NoError(t, c.SavePolicy(data))
 }
 
-func (c *flakyCache) Save(data []byte, floor Floor) error {
-	if c.fail {
+// scriptedCache fails the writes it is told to.
+type scriptedCache struct {
+	*FileCache
+	failFloor, failPolicy bool
+	policySaves           int
+}
+
+func (c *scriptedCache) SaveFloor(f Floor) error {
+	if c.failFloor {
 		return errors.New("disk full")
 	}
-	c.saves++
-	return c.FileCache.Save(data, floor)
+	return c.FileCache.SaveFloor(f)
+}
+
+func (c *scriptedCache) SavePolicy(data []byte) error {
+	if c.failPolicy {
+		return errors.New("disk full")
+	}
+	c.policySaves++
+	return c.FileCache.SavePolicy(data)
+}
+
+// revoking is testPolicy(version) without the web key: a revocation.
+func revoking(t *testing.T, version uint64) []byte {
+	p := testPolicy(version)
+	p.Keys = p.Keys[1:]
+	return encode(t, p)
+}
+
+func webKeyUsable(s *Store) bool {
+	snap := s.Current()
+	return snap != nil && snap.Key(sha256.Sum256([]byte(webKey))) != nil
+}
+
+// Maintainer review of #43 (P1): a revision whose floor cannot be persisted
+// is not accepted; the policy held stays in force and a restart restores it.
+func TestStoreFloorNotPersistedIsNotAccepted(t *testing.T) {
+	for _, held := range []bool{true, false} {
+		t.Run(fmt.Sprintf("held=%v", held), func(t *testing.T) {
+			core, logs := observer.New(zap.InfoLevel)
+			cache := &scriptedCache{FileCache: NewFileCache(t.TempDir())}
+			s := NewStore(zap.New(core), cache)
+			if held {
+				require.NoError(t, s.Apply(encode(t, testPolicy(1)), t0))
+			}
+			cache.failFloor = true
+			err := s.Apply(revoking(t, 2), t0)
+			assert.Equal(t, CodePersistError, codeOf(t, err))
+			assert.NotEmpty(t, logs.FilterMessage("Ingest policy floor not persisted; revision not accepted").All())
+			if held {
+				assert.Equal(t, Status{Version: 1, Rejected: CodePersistError}, s.Status())
+				assert.Equal(t, uint64(1), s.Current().Version, "the policy held stays in force")
+				assert.True(t, webKeyUsable(s), "v2 was not accepted, so nothing was revoked yet")
+				assert.Equal(t, uint64(1), s.Floor().Version)
+			} else {
+				assert.Equal(t, Status{Rejected: CodePersistError}, s.Status())
+				assert.Nil(t, s.Current(), "nothing published: still not ready")
+				assert.Nil(t, s.Floor())
+			}
+
+			cache.failFloor = false
+			require.NoError(t, s.Apply(revoking(t, 2), t0))
+			assert.False(t, webKeyUsable(s))
+			restarted := NewStore(zap.NewNop(), cache.FileCache)
+			restarted.Start()
+			require.NotNil(t, restarted.Current())
+			assert.Equal(t, uint64(2), restarted.Current().Version)
+			assert.False(t, webKeyUsable(restarted))
+		})
+	}
+}
+
+// Maintainer review of #43 (P1): with the floor durable but the policy file
+// not written, the revision is in force; a restart before the retry starts
+// with no policy and refuses the older one, and the retry restores service.
+func TestStorePolicyFileNotWrittenFailsClosedOnRestart(t *testing.T) {
+	cache := &scriptedCache{FileCache: NewFileCache(t.TempDir())}
+	s := NewStore(zap.NewNop(), cache)
+	v1 := encode(t, testPolicy(1))
+	require.NoError(t, s.Apply(v1, t0))
+	cache.failPolicy = true
+	v2 := revoking(t, 2)
+	require.NoError(t, s.Apply(v2, t0))
+	assert.False(t, webKeyUsable(s), "the revocation is in force")
+
+	restarted := NewStore(zap.NewNop(), cache.FileCache)
+	restarted.Start()
+	assert.Nil(t, restarted.Current(), "floor and policy files mismatch: fail closed")
+	assert.Equal(t, CodeLowerVersion, codeOf(t, restarted.Apply(v1, t0)), "the older revision is never replayed")
+	assert.False(t, webKeyUsable(restarted))
+
+	cache.failPolicy = false
+	saves := cache.policySaves
+	require.NoError(t, s.Apply(v2, t0.Add(time.Minute)))
+	assert.Equal(t, saves+1, cache.policySaves, "the identical push writes the missing policy file")
+	require.NoError(t, s.Apply(v2, t0.Add(2*time.Minute)))
+	assert.Equal(t, saves+1, cache.policySaves, "once written, identical pushes write nothing")
+	again := NewStore(zap.NewNop(), cache.FileCache)
+	again.Start()
+	require.NotNil(t, again.Current())
+	assert.Equal(t, uint64(2), again.Current().Version)
+	assert.False(t, webKeyUsable(again))
+}
+
+// Maintainer review of #43 (P1): a process death after each write step of
+// a revocation, then a restart, never re-authorises the revoked key.
+func TestCacheCrashNeverReauthorisesRevokedKey(t *testing.T) {
+	testCases := []struct {
+		step string
+		// restart is the revision a restart holds, 0 for none (fail closed).
+		restart uint64
+	}{
+		// Before the floor is durable: v2 was never accepted nor published,
+		// so the key was never revoked; v1 is the policy in force.
+		{step: StateFile + " tmp", restart: 1},
+		{step: StateFile + " renamed", restart: 0},
+		{step: PolicyFile + " tmp", restart: 0},
+		{step: PolicyFile + " renamed", restart: 2},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.step, func(t *testing.T) {
+			dir := t.TempDir()
+			fc := NewFileCache(dir)
+			s := NewStore(zap.NewNop(), fc)
+			v1 := encode(t, testPolicy(1))
+			require.NoError(t, s.Apply(v1, t0))
+			require.True(t, webKeyUsable(s))
+
+			// The process dies at the step: the disk stays as it is then,
+			// and the store's later memory is discarded with the process.
+			crashed := false
+			fc.crash = func(step string) bool {
+				crashed = crashed || step == tc.step
+				return step == tc.step
+			}
+			_ = s.Apply(revoking(t, 2), t0)
+			require.True(t, crashed)
+
+			restarted := NewStore(zap.NewNop(), NewFileCache(dir))
+			restarted.Start()
+			if tc.restart == 0 {
+				assert.Nil(t, restarted.Current())
+			} else {
+				require.NotNil(t, restarted.Current())
+				assert.Equal(t, tc.restart, restarted.Current().Version)
+			}
+			if tc.restart != 1 {
+				assert.False(t, webKeyUsable(restarted), "the revoked key is not authorised after the restart")
+				assert.Equal(t, CodeLowerVersion, codeOf(t, restarted.Apply(v1, t0)), "nor by a replay of v1")
+				assert.False(t, webKeyUsable(restarted))
+			}
+			// The backend pushes v2 again; from then on the key never comes back.
+			require.NoError(t, restarted.Apply(revoking(t, 2), t0))
+			assert.False(t, webKeyUsable(restarted))
+			final := NewStore(zap.NewNop(), NewFileCache(dir))
+			final.Start()
+			require.NotNil(t, final.Current())
+			assert.False(t, webKeyUsable(final))
+			assert.Equal(t, CodeLowerVersion, codeOf(t, final.Apply(v1, t0)))
+		})
+	}
 }
 
 func hexSum(b []byte) string {

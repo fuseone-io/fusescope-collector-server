@@ -47,12 +47,15 @@ type Floor struct {
 	SHA256  [32]byte
 }
 
-// Cache persists accepted policies and the floor. Save writes the policy,
-// then the floor. Load returns the cached policy (nil if absent), the floor
-// (nil if absent) and when the cached policy was written.
+// Cache persists the floor and the accepted policy (§11.3). The Store
+// writes the floor first: a revision counts as accepted only once its floor
+// is durable, so no restart can bring back an older one. Load returns the
+// cached policy (nil if absent), the floor (nil if absent) and when the
+// cached policy was last received.
 type Cache interface {
 	Load() (data []byte, floor *Floor, written time.Time, err error)
-	Save(data []byte, floor Floor) error
+	SaveFloor(floor Floor) error
+	SavePolicy(data []byte) error
 }
 
 // Store holds the policy. Apply is serialised; readers never lock.
@@ -62,8 +65,9 @@ type Store struct {
 
 	mu    sync.Mutex
 	floor *Floor
-	// unsaved is the accepted policy whose caching failed, retried on the
-	// next identical push so a restart cannot load an older revision.
+	// unsaved is the accepted policy whose floor is durable but whose own
+	// file could not be written; until a retry succeeds a restart fails
+	// closed on the mismatch. It is retried on the next identical push.
 	unsaved []byte
 
 	current  atomic.Pointer[Snapshot]
@@ -156,9 +160,9 @@ func (s *Store) Start() {
 }
 
 // Apply handles one `policy` message (§11.2, §11.3). A rejection returns a
-// *RejectionError and leaves the policy held, if any, in force. An accepted
-// policy is published even if caching it fails: refusing it would keep
-// revoked keys working; that failure is logged.
+// *RejectionError and leaves the policy held, if any, in force. A revision
+// whose floor cannot be persisted is rejected as persist_error: accepting
+// it in memory only would let a restart restore the older revision.
 func (s *Store) Apply(data []byte, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,7 +198,7 @@ func (s *Store) apply(data []byte, now time.Time) error {
 		case p.Version == s.floor.Version && s.current.Load() != nil:
 			// The same revision again: only its freshness changes.
 			s.received.Store(now.UnixNano())
-			s.save(data, *s.floor)
+			s.savePolicy(p.Version)
 			s.touch(now)
 			return nil
 		}
@@ -203,22 +207,30 @@ func (s *Store) apply(data []byte, now time.Time) error {
 		return err
 	}
 	floor := Floor{Version: p.Version, SHA256: sum}
-	s.unsaved = data
-	s.save(data, floor)
+	if s.cache != nil {
+		if err := s.cache.SaveFloor(floor); err != nil {
+			s.logger.Error("Ingest policy floor not persisted; revision not accepted", zap.Uint64("version", p.Version), zap.Error(err))
+			return reject(CodePersistError, "")
+		}
+	}
 	s.floor = &floor
+	s.unsaved = data
+	s.savePolicy(p.Version)
 	s.publish(compile(p, sum), now)
 	s.logger.Info("Ingest policy applied", zap.Uint64("version", p.Version),
 		zap.Int("keys", len(p.Keys)), zap.Int("rum_applications", len(p.RUMApplications)))
 	return nil
 }
 
-// save caches data if it is the accepted policy not cached yet.
-func (s *Store) save(data []byte, floor Floor) {
+// savePolicy writes the accepted policy after its floor. A failure is
+// logged and retried on the next identical push; meanwhile a restart finds
+// the floor and policy files mismatched and starts with no policy.
+func (s *Store) savePolicy(version uint64) {
 	if s.cache == nil || s.unsaved == nil {
 		return
 	}
-	if err := s.cache.Save(data, floor); err != nil {
-		s.logger.Error("Ingest policy applied but not cached", zap.Uint64("version", floor.Version), zap.Error(err))
+	if err := s.cache.SavePolicy(s.unsaved); err != nil {
+		s.logger.Error("Ingest policy applied but not cached; a restart before the next push starts with no policy", zap.Uint64("version", version), zap.Error(err))
 		return
 	}
 	s.unsaved = nil

@@ -10,8 +10,10 @@ package ingestpolicy // import "github.com/fuseone-io/fusescope-collector-server
 // SchemaVersion is the only schema this package accepts (§11.1).
 const SchemaVersion = 1
 
-// MaxSize is max_policy_size (§11.2, resolved 1).
-const MaxSize = 16 << 20
+// MaxSize is max_policy_size (§11.2): a global cap, independent of the
+// count bounds, which a policy at every count bound with a limit on every
+// key fits (about 18 MB). The backend enforces the same cap.
+const MaxSize = 24 << 20
 
 // Bounds of §11.1.
 const (
@@ -118,13 +120,16 @@ const (
 	CodeDanglingReference Code = "dangling_reference"
 	CodeOrgMismatch       Code = "org_mismatch"
 	CodeInvalidValue      Code = "invalid_value"
+	// CodePersistError is a valid revision whose floor could not be
+	// persisted (§11.3): not accepted, the policy held stays in force.
+	CodePersistError Code = "persist_error"
 )
 
 // Codes lists every rejection code, for report validation (§10.3).
 var Codes = []Code{
 	CodeTooLarge, CodeParseError, CodeSchemaVersion, CodeUnknownField, CodeLowerVersion,
 	CodeVersionConflict, CodeDuplicateID, CodeDuplicateVerifier, CodeDanglingReference,
-	CodeOrgMismatch, CodeInvalidValue,
+	CodeOrgMismatch, CodeInvalidValue, CodePersistError,
 }
 
 // RejectionError is a rejected snapshot. Path names where, never what: the
