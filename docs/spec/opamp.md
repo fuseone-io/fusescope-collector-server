@@ -36,9 +36,17 @@ OpAMP specification.
 - A push is a `RemoteConfig` with one file under `collector.yaml`, content type
   `application/x-yaml`: the reported configuration with the backend's edits
   (`model/constants.go:3-4`, `model/agent.go:367-382`, `agentConf/manager.go:102-161`).
-- `ConfigHash` is not a content hash: it is `<feature>:<version>` per feature, joined by
-  commas, and SHA-256 only when no feature is registered (`manager.go:129-158`). The collector
-  echoes it byte for byte in `RemoteConfigStatus.last_remote_config_hash`.
+- `ConfigHash` is not a content hash. It joins one part per feature with commas
+  (`agentConf/manager.go`, `RecommendAgentConfig`):
+  - a versioned feature (log pipelines) gives `{<element type>}:<version>`, braces included,
+    for example `{log_pipelines}:3`;
+  - span attribute mapping and LLM pricing are not versioned. Since fuseone-io/fusescope#318
+    they give `<feature type>:<SHA-256 of their settings, hex>`; before it, the constant
+    `{}:-1`;
+  - with no feature registered, the hash is the raw SHA-256 of the configuration.
+
+  The collector echoes the hash byte for byte in `RemoteConfigStatus.last_remote_config_hash`
+  and never parses it.
 - `$` in log pipeline values is escaped as `$$` (`logparsingpipeline/collector_config.go:214-233`);
   the collector's confmap resolves it back.
 
@@ -101,13 +109,21 @@ The processors' own behaviour is specified per processor in `docs/spec/`.
 
 Recorded so it is not mistaken for collector bugs ([fuseone-io/fusescope#261](https://github.com/fuseone-io/fusescope/issues/261)):
 
-- the settings broadcast stops at the first agent whose configuration is unchanged
-  (`model/agents.go:121-166`);
-- an agent that reconnects with a non-`UNSET` status gets no push until the next settings
-  change (`model/agent.go:187-189`);
-- the span mapping and LLM pricing features have no element type, so their part of the hash
-  is `:<version>` and their status rows are likely never updated
-  (`pkg/types/opamptypes/agent.go:126-138`, `manager.go:112-133`).
+- The settings broadcast stopped at the first agent whose configuration was unchanged. Fixed
+  in fuseone-io/fusescope#317.
+- An agent that reconnected with a non-`UNSET` status got no push until the next settings
+  change. Since fuseone-io/fusescope#318, once it reports its effective configuration, that
+  configuration is compared with the recommendation as YAML documents, and it is pushed only
+  if they differ.
+- Span mapping and LLM pricing had a constant part in the hash, so their edits did not change
+  it. Fixed in fuseone-io/fusescope#318 (§3).
+- Since fuseone-io/fusescope#318 a push whose send is still blocked after 10 s disconnects the
+  collector, which reconnects; the reconnect reconciliation above then pushes what it lacks.
+  While the backend cannot record a pushed deployment, it leaves the collector's
+  `RemoteConfigStatus` unhandled and asks for `ReportFullState`, so the collector reports it
+  again.
+- The OpAMP listener on 4320 has no TLS. Ingress collectors use the TLS listener on 4321
+  (ADR 0006).
 
 ## 8. Running it
 
