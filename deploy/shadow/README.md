@@ -204,26 +204,35 @@ hotrod, telemetrygen, RUM (via fusescope) ──► fusescope-collector ──�
 | File | What |
 |---|---|
 | `primary.yaml` | this collector's configuration as the demo's: `collector.yaml` writing `clickhouse:9000`, plus the ghost's copy |
-| `compose.swap.yaml` | override after `compose.shadow.yaml`: adds `fusescope-collector`, points the senders and the backend's RUM forward at it, turns `fusescope-collector-shadow` off and points the ghost's ClickHouse DSN at `clickhouse-shadow` |
+| `compose.swap.yaml` | override after `compose.shadow.yaml`: adds `fusescope-collector`, points the senders and the backend's RUM forward at it, turns `fusescope-collector-shadow` off, and moves the ghost to the shadow network only, where `clickhouse` is an alias of `clickhouse-shadow` |
 
 - **The ghost's path never fails the demo.** The ghost's pipelines start from the same `otlp` receiver with a
   `batch/ghost` processor and no memory limiter: they never refuse, and a full or failing 32 MiB queue drops copies.
   Only the demo's pipelines have the memory limiter; a request it refuses, retried by the sender, may store a copy
   twice in the ghost, which `compare.py` notes there.
-- **The ghost's destination** is its environment's `SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN`, as its migrator's. Its
-  configuration is not read to confirm the file uses it (ADR 0002): the swap checks where its data lands, and a ghost
-  still writing the demo's ClickHouse shows as duplicates there, which fail `compare.py`.
+- **The ghost's destination** is moved by its network, since its configuration is not read (ADR 0002): it is on the
+  shadow network only, where `clickhouse` is an alias of `clickhouse-shadow`, so whatever its configuration names
+  `clickhouse` is the shadow's. This collector, on both networks, reaches the demo's ClickHouse by its container name,
+  `fusescope-demo-clickhouse-1`, which only the demo's network has, and so does `compare.py`. Setting the ghost's
+  `SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN` alone does not move its exporters: the first attempt, on 2026-11-04, left it
+  writing the demo's ClickHouse, which `compare.py`'s duplicates check is there to catch.
 - **No OpAMP**, as the existing collector on the demo runs without it (above).
 
 ### Switch
 
-On the demo host, in `/opt/fusescope`, with this directory copied as in "Install" and the shadow green:
+On the demo host, in `/opt/fusescope`, with this directory copied as in "Install" and the shadow green, one step at a
+time, each checked before the next:
 
 ```sh
 set -e
 C="docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml"
-# 1. The existing collector stops sending its copy to the shadow collector, which goes away: the shadow's keys are
-#    removed from its configuration, without reading it (the "Install" block, reversed).
+# 0. clickhouse-shadow takes the `clickhouse` alias on the shadow network; the demo's ClickHouse is not touched.
+$C up -d --no-deps --force-recreate --wait clickhouse-shadow
+res() { docker run --rm --network "$1" python:3.12-alpine python3 -c "import socket,sys; print(sorted({a[4][0] for a in socket.getaddrinfo(sys.argv[1], None, socket.AF_INET)}))" "$2"; }
+res fusescope-shadow clickhouse                     # clickhouse-shadow's address on fusescope-shadow, nothing else
+res fusescope-demo fusescope-demo-clickhouse-1      # the demo's ClickHouse
+# 1. The existing collector stops sending its copy to the shadow collector: the shadow's keys are removed from its
+#    configuration, without reading it (the "Install" block, reversed).
 cd otel-collector
 cp -p config.yaml config.yaml.bak-pre-swap
 yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w \
@@ -232,25 +241,30 @@ yq 'del(.exporters."otlp/shadow") | del(.processors."batch/shadow") | del(.servi
 [ "$(yq '.exporters | has("otlp/shadow")' /w/stripped.yaml)" = false ]
 mv stripped.yaml config.yaml
 cd ..
-# 2. This collector starts as the demo's; the shadow collector stops.
+# 2. This collector starts as the demo's ("Everything is ready" in its log); the shadow collector stops.
 $C up -d --no-deps fusescope-collector
 $C rm -sf fusescope-collector-shadow
-# 3. The existing collector restarts as the ghost, writing clickhouse-shadow.
+# 3. The existing collector restarts as the ghost, on the shadow network only. This collector's copy reconnects
+#    to it within a minute (its warnings about the ghost's old address stop).
 $C up -d --no-deps --force-recreate otel-collector
 # 4. The senders and the backend's RUM forward move to this collector.
 $C --profile generators up -d --no-deps hotrod logs-checkout logs-payment-error traces-payment-errors
 $C up -d --no-deps fusescope
 ```
 
-Between steps 3 and 4 the senders still reach the ghost, which writes only the shadow's ClickHouse: the demo misses
-those seconds, which is preferred to the duplicates the other order would write. Check, within a few minutes:
+Between steps 3 and 4 the senders reach no collector, since the ghost has left their network, and that time is lost;
+run them back to back. It is preferred to the duplicates the other order would write.
 
-- the demo's UI keeps showing new data, and `docker logs fusescope-demo-fusescope-collector-1` shows no export errors;
-- both databases get new spans, the demo's from this collector and the shadow's from the ghost:
-  `docker exec fusescope-demo-clickhouse-1 clickhouse-client -q "SELECT count() FROM signoz_traces.signoz_index_v3 WHERE timestamp > now() - 60"`,
-  and the same on `fusescope-demo-clickhouse-shadow-1`;
-- after the first settled hour, `$C run --rm shadow-compare` is green; duplicates in `fusescope` mean the ghost still
-  writes the demo's ClickHouse: roll back.
+Check every minute for the first few: rows and unique spans per minute must be equal on each side, and the two sides
+equal to each other:
+
+```sh
+for c in fusescope-demo-clickhouse-1 fusescope-demo-clickhouse-shadow-1; do
+  docker exec $c clickhouse-client --readonly 1 -q "SELECT toStartOfMinute(timestamp) m, count(), uniqExact(traceID, spanID) FROM signoz_traces.signoz_index_v3 WHERE timestamp > now() - INTERVAL 5 MINUTE GROUP BY m ORDER BY m"
+done
+```
+
+More rows than unique spans in the demo's ClickHouse mean the ghost still writes there: swap back at once.
 
 The hourly comparison takes the swap's override:
 
@@ -261,17 +275,20 @@ The hourly comparison takes the swap's override:
 ### Swap back
 
 This collector goes first: while it runs it sends the ghost copies, which the existing collector would write into
-the demo's ClickHouse once restored, as duplicates. The senders retry for the seconds in between.
+the demo's ClickHouse once restored, as duplicates. The shadow collector starts before the existing collector, so its
+copy has a destination from its first request: after the first attempt's swap back, the existing collector, started
+first, stored the same spans hundreds of times until it ran out of memory. The senders retry for the seconds in between.
 
 ```sh
 set -e
 S="docker compose -f compose.yaml -f shadow/compose.shadow.yaml"
 docker rm -f fusescope-demo-fusescope-collector-1
 cp -p otel-collector/config.yaml.bak-pre-swap otel-collector/config.yaml
-$S up -d --no-deps --force-recreate otel-collector      # the demo's collector again, writing clickhouse, with its copy to the shadow
+$S up -d --no-deps --force-recreate --wait clickhouse-shadow   # without the alias
+$S up -d --no-deps fusescope-collector-shadow
+$S up -d --no-deps --force-recreate otel-collector             # the demo's collector again, on the demo's network
 $S --profile generators up -d --no-deps hotrod logs-checkout logs-payment-error traces-payment-errors
 $S up -d --no-deps fusescope
-$S up -d --no-deps fusescope-collector-shadow
 ```
 
 Then the cron line without `compose.swap.yaml`.
