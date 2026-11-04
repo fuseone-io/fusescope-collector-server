@@ -41,6 +41,15 @@ class DuplicatesTest(unittest.TestCase):
         self.assertTrue(failed)
         self.assertTrue(lines[0].startswith("DIFF  duplicate logs in the shadow"))
 
+    def test_after_the_swap(self):
+        labels = {"demo": "fusescope", "shadow": "fork"}
+        failed, lines = compare.duplicates("duplicate spans", [("frontend", "m", 2)], [("route", "m", 1)], ours="demo", labels=labels)
+        self.assertTrue(failed, "this collector writes the demo's side after the swap")
+        self.assertTrue(lines[0].startswith("DIFF  duplicate spans in the fusescope: 2 extra"))
+        self.assertTrue(any(line.startswith("note  duplicate spans in the fork") for line in lines))
+        failed, _ = compare.duplicates("duplicate spans", [], [("route", "m", 1)], ours="demo", labels=labels)
+        self.assertFalse(failed, "the ghost's duplicates are not this collector's")
+
 
 class LogIdentityTest(unittest.TestCase):
     def test_every_field_the_sender_sets(self):
