@@ -27,8 +27,9 @@ project does not read (ADR 0002), so TLS on that receiver is not ours to add.
 2. The exception covers that exporter only. The RUM and OTLP listeners, OpAMP (TLS for ingress
    collectors, the token only over TLS), ClickHouse (ADR 0007) and every other exporter keep their
    rules.
-3. The chart sets it, with a NetworkPolicy that admits to the existing collector's OTLP port only
-   this collector, the backend and the in-cluster agents that already send there.
+3. The chart sets it. The hop stays inside the cluster, as the backend's does today; the existing
+   collector still takes other ingest on that port (its ingress, the in-cluster agents), so who
+   may reach it is the operator's to restrict, with the chart's optional NetworkPolicy.
 4. It ends with phase 6: once this collector writes every signal itself, the existing collector is
    gone and so is this hop. The chart then drops the value; no release ships it by default after.
 
