@@ -24,16 +24,26 @@ import (
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/plog"
-	"go.uber.org/zap"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter/internal/metadata"
 )
+
+// nopTraces is the traces exporter with no-op telemetry.
+func nopTraces(t testing.TB, cfg *Config) *signalExporter[*tracesEncoder, ptrace.Traces] {
+	t.Helper()
+	x, err := newTracesExporter(cfg, componenttest.NewNopTelemetrySettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return x
+}
 
 func TestTLSMinimumIsAlways13(t *testing.T) {
 	cfg := createDefaultConfig()
 	cfg.Endpoint = "clickhouse:9440"
 	cfg.TLS.MinVersion = ""
-	opts, err := newTracesExporter(cfg, zap.NewNop()).clientOptions(context.Background())
+	opts, err := nopTraces(t, cfg).clientOptions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +69,7 @@ func TestPasswordFileChangeRecreatesThePool(t *testing.T) {
 	cfg := createDefaultConfig()
 	cfg.Endpoint = "testing.invalid:9440"
 	cfg.PasswordFile = path
-	x := newTracesExporter(cfg, zap.NewNop())
+	x := nopTraces(t, cfg)
 	ctx := context.Background()
 	if err := x.start(ctx, nil); err != nil {
 		t.Fatal(err)
@@ -162,14 +172,23 @@ func TestTableTokens(t *testing.T) {
 // of ClickHouse, and with the default sending queue only if queued.
 func helperLogs(t *testing.T, cfg *Config, queued bool, do func(context.Context, ch.Query) error) exporter.Logs {
 	t.Helper()
+	return helperLogsWith(t, exportertest.NewNopSettings(metadata.Type), cfg, queued, do)
+}
+
+// helperLogsWith is helperLogs with the given exporter settings.
+func helperLogsWith(t *testing.T, set exporter.Settings, cfg *Config, queued bool, do func(context.Context, ch.Query) error) exporter.Logs {
+	t.Helper()
 	cfg.Endpoint = "testing.invalid:9440"
 	if !queued {
 		cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
 	}
-	x := newLogsExporter(cfg, zap.NewNop())
+	x, err := newLogsExporter(cfg, set.TelemetrySettings)
+	if err != nil {
+		t.Fatal(err)
+	}
 	x.do = do
 	ctx := context.Background()
-	exp, err := newLogs(ctx, exportertest.NewNopSettings(metadata.Type), cfg, x)
+	exp, err := newLogs(ctx, set, cfg, x)
 	if err != nil {
 		t.Fatal(err)
 	}

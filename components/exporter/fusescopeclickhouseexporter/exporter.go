@@ -17,7 +17,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.uber.org/zap"
 )
 
 // permanentCodes are data errors that no retry can fix. Schema and
@@ -68,6 +67,8 @@ type signalExporter[E attempter, D any] struct {
 	bodies   []string
 	encoders sync.Pool
 	encode   func(E, D, func() error) error
+	// telemetry records each insert attempt, indexed like tables.
+	telemetry *insertTelemetry
 	// stopping is closed when the exporter shuts down, to end waits between retries.
 	stopping chan struct{}
 	stopOnce sync.Once
@@ -79,43 +80,49 @@ type attempter interface {
 	setAttempt(now time.Time, random func([]byte))
 }
 
-func newSignalExporter[E attempter, D any](cfg *Config, database string, logger *zap.Logger, tables []table[E],
+func newSignalExporter[E attempter, D any](cfg *Config, database string, set component.TelemetrySettings, tables []table[E],
 	newEncoder func() E, encode func(E, D, func() error) error,
-) *signalExporter[E, D] {
+) (*signalExporter[E, D], error) {
 	x := &signalExporter[E, D]{
-		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: logger},
+		clickhouseClient: &clickhouseClient{cfg: cfg, database: database, logger: set.Logger},
 		tables:           tables,
 		encode:           encode,
 		stopping:         make(chan struct{}),
 	}
 	x.encoders.New = func() any { return newEncoder() }
 	enc := newEncoder()
-	for _, t := range tables {
+	names := make([]string, len(tables))
+	for i, t := range tables {
+		names[i] = t.name
 		x.bodies = append(x.bodies, fmt.Sprintf("INSERT INTO %s.%s %s VALUES", database, t.name, t.input(enc).Columns()))
 	}
-	return x
+	var err error
+	if x.telemetry, err = newInsertTelemetry(set, names); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
 
-func newTracesExporter(cfg *Config, logger *zap.Logger) *signalExporter[*tracesEncoder, ptrace.Traces] {
+func newTracesExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*tracesEncoder, ptrace.Traces], error) {
 	newEncoder := func() *tracesEncoder {
 		e := newTracesEncoder()
-		e.logger = logger
+		e.logger = set.Logger
 		return e
 	}
-	return newSignalExporter(cfg, cfg.Traces.Database, logger, tracesTables, newEncoder, (*tracesEncoder).encode)
+	return newSignalExporter(cfg, cfg.Traces.Database, set, tracesTables, newEncoder, (*tracesEncoder).encode)
 }
 
-func newLogsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*logsEncoder, plog.Logs] {
-	return newSignalExporter(cfg, cfg.Logs.Database, logger, logsTables, newLogsEncoder, (*logsEncoder).encode)
+func newLogsExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*logsEncoder, plog.Logs], error) {
+	return newSignalExporter(cfg, cfg.Logs.Database, set, logsTables, newLogsEncoder, (*logsEncoder).encode)
 }
 
-func newMetricsExporter(cfg *Config, logger *zap.Logger) *signalExporter[*metricsEncoder, pmetric.Metrics] {
+func newMetricsExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*metricsEncoder, pmetric.Metrics], error) {
 	newEncoder := func() *metricsEncoder {
 		e := newMetricsEncoder()
-		e.logger = logger
+		e.logger = set.Logger
 		return e
 	}
-	return newSignalExporter(cfg, cfg.Metrics.Database, logger, metricsTables, newEncoder, (*metricsEncoder).encode)
+	return newSignalExporter(cfg, cfg.Metrics.Database, set, metricsTables, newEncoder, (*metricsEncoder).encode)
 }
 
 // randomShards are the tables whose Distributed engine shards by rand(): a
@@ -182,11 +189,19 @@ func (x *signalExporter[E, D]) export(ctx context.Context, data D, id requestID)
 	insert := func() error {
 		for i, t := range x.tables {
 			input := t.input(enc)
-			if input[0].Data.Rows() == 0 {
+			rows := input[0].Data.Rows()
+			if rows == 0 {
 				continue
 			}
-			if err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, tableToken(token, t.name, chunk)); err != nil {
-				return classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
+			// One observation per attempt, recorded with the error as returned.
+			start := time.Now()
+			err := x.insert(ctx, ch.Query{Body: x.bodies[i], Input: input}, tableToken(token, t.name, chunk))
+			if err != nil {
+				err = classify(fmt.Errorf("insert into %s.%s: %w", x.database, t.name, err))
+			}
+			x.telemetry.record(ctx, i, time.Since(start), rows, err)
+			if err != nil {
+				return err
 			}
 		}
 		chunk++

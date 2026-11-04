@@ -27,3 +27,60 @@ tests:
     endpoint: "testing.invalid:9440"
     password_file: "testdata/password"
   skip_lifecycle: true
+
+attributes:
+  error_outcome:
+    name_override: outcome
+    description: The class of the failed attempt's error, as the exporter returns it.
+    type: string
+    enum: [retryable, permanent]
+  outcome:
+    description: The result of the attempt, as the exporter returns it.
+    type: string
+    enum: [ok, retryable, permanent]
+  table:
+    description: The table inserted into, without its database.
+    type: string
+    enum:
+      - distributed_traces_v3_resource
+      - distributed_tag_attributes_v2
+      - distributed_span_attributes_keys
+      - distributed_signoz_error_index_v2
+      - distributed_signoz_index_v3
+      - distributed_logs_v2_resource
+      - distributed_logs_attribute_keys
+      - distributed_logs_resource_keys
+      - distributed_logs_v2
+      - distributed_metadata
+      - distributed_time_series_v4
+      - distributed_samples_v4
+
+telemetry:
+  metrics:
+    exporter_fusescope_clickhouse_insert_duration:
+      enabled: true
+      stability: development
+      description: Duration of each INSERT attempt into a table, retries included.
+      unit: s
+      histogram:
+        value_type: double
+        bucket_boundaries: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30]
+      attributes: [table, outcome]
+    exporter_fusescope_clickhouse_insert_errors:
+      enabled: true
+      stability: development
+      description: Failed INSERT attempts, by table and by whether the error is retryable or permanent.
+      unit: "{attempt}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [table, error_outcome]
+    exporter_fusescope_clickhouse_inserted_rows:
+      enabled: true
+      stability: development
+      description: Rows in confirmed inserts, by table. With ClickHouse insert deduplication, a confirmed retry may add no new physical rows.
+      unit: "{row}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [table]

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/confmap/confmaptest"
-	"go.uber.org/zap"
 )
 
 func loadConfig(t *testing.T, name string) *Config {
@@ -67,7 +66,7 @@ func TestClientOptions(t *testing.T) {
 	cfg := loadConfig(t, "fusescope_clickhouse/full")
 	cfg.PasswordFile = filepath.Join("testdata", "password")
 	cfg.TLS.CAFile = ""
-	opts, err := newTracesExporter(cfg, zap.NewNop()).clientOptions(context.Background())
+	opts, err := nopTraces(t, cfg).clientOptions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +81,7 @@ func TestClientOptions(t *testing.T) {
 	}
 
 	cfg.PasswordFile = filepath.Join("testdata", "missing")
-	if _, err := newTracesExporter(cfg, zap.NewNop()).clientOptions(context.Background()); err == nil {
+	if _, err := nopTraces(t, cfg).clientOptions(context.Background()); err == nil {
 		t.Error("missing password_file accepted")
 	}
 }
@@ -90,7 +89,7 @@ func TestClientOptions(t *testing.T) {
 func TestInsertBodiesUseConfiguredDatabase(t *testing.T) {
 	cfg := createDefaultConfig()
 	cfg.Traces.Database = "shadow_traces"
-	for _, body := range newTracesExporter(cfg, zap.NewNop()).bodies {
+	for _, body := range nopTraces(t, cfg).bodies {
 		if !strings.HasPrefix(body, "INSERT INTO shadow_traces.distributed_") || !strings.HasSuffix(body, " VALUES") {
 			t.Errorf("body = %q", body)
 		}

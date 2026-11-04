@@ -4,10 +4,15 @@
 package fusescopeclickhouseexporter
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ClickHouse/ch-go"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
@@ -69,6 +74,35 @@ func BenchmarkEncodeMetrics(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/point")
+}
+
+func BenchmarkExportMetrics(b *testing.B) {
+	benchExport(b, newMetricsExporter, syntheticMetrics(10_000), 10_000, "point")
+}
+
+// benchExport runs one export attempt per iteration with ClickHouse replaced by
+// a no-op, reporting the cost per record. Telemetry records into the SDK, so
+// the benchmark pays its real cost.
+func benchExport[E attempter, D any](b *testing.B, newExporter func(*Config, component.TelemetrySettings) (*signalExporter[E, D], error),
+	data D, records int, unit string,
+) {
+	tel := componenttest.NewTelemetry()
+	b.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
+	x, err := newExporter(createDefaultConfig(), tel.NewTelemetrySettings())
+	if err != nil {
+		b.Fatal(err)
+	}
+	x.do = func(context.Context, ch.Query) error { return nil }
+	ctx := context.Background()
+	id := newRequestID(time.Now())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := x.export(ctx, data, id); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*records), "ns/"+unit)
 }
 
 // A shared 64 KiB resource over 10,000 points of 10 series: the cost per point
