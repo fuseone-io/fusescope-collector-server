@@ -5,6 +5,7 @@ package rumreceiver
 
 import (
 	"bytes"
+	"math"
 	"net/http"
 	"runtime"
 	"strings"
@@ -30,18 +31,30 @@ func emptyGroupsProto(n int) []byte {
 	return b
 }
 
+// allocatedRuns is how many times allocated serves the request. TotalAlloc
+// counts the whole process, so a run can include another goroutine's
+// allocations; they only add, so the smallest run is the request's (#52).
+const allocatedRuns = 3
+
 // allocated is the bytes allocated while serving one request.
 func allocated(t *testing.T, f *fixture, contentType string, body []byte) (int, uint64) {
 	t.Helper()
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	req := httptestRequest(tracesPath, "", jsonHeaders(webKey, "Content-Type", contentType))
-	req.Body = readCloser{bytes.NewReader(body)}
-	req.ContentLength = int64(len(body))
-	rec := serve(f, req)
-	runtime.ReadMemStats(&after)
-	return rec.Code, after.TotalAlloc - before.TotalAlloc
+	code, least := 0, uint64(math.MaxUint64)
+	for run := range allocatedRuns {
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		req := httptestRequest(tracesPath, "", jsonHeaders(webKey, "Content-Type", contentType))
+		req.Body = readCloser{bytes.NewReader(body)}
+		req.ContentLength = int64(len(body))
+		rec := serve(f, req)
+		runtime.ReadMemStats(&after)
+		if run > 0 {
+			require.Equal(t, code, rec.Code, "the same request, run %d", run+1)
+		}
+		code, least = rec.Code, min(least, after.TotalAlloc-before.TotalAlloc)
+	}
+	return code, least
 }
 
 type readCloser struct{ *bytes.Reader }
