@@ -1,0 +1,99 @@
+# Override for the FuseScope demo, after compose.shadow.yaml: swaps the roles
+# (README, "Swap"). The senders point at this collector, which writes the
+# demo's ClickHouse and sends a copy to the existing collector, now the ghost
+# writing clickhouse-shadow. Use
+#   docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml ...
+# Paths are relative to the demo directory.
+
+x-swap-logging: &swap-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  # The demo's collector.
+  fusescope-collector:
+    <<: *swap-logging
+    image: ${SHADOW_COLLECTOR_IMAGE:-fusescope-collector:shadow}
+    command: [--config=/etc/fusescope-collector/config.yaml]
+    # Host UTS namespace and root, as the existing collector, for host metrics.
+    uts: host
+    volumes:
+      - ./shadow/primary.yaml:/etc/fusescope-collector/config.yaml:ro
+      - /:/hostfs:ro
+    networks: [default]
+    depends_on:
+      telemetrystore-migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 0.5
+
+  # The shadow collector's place is taken by fusescope-collector.
+  fusescope-collector-shadow:
+    profiles: [unswapped]
+
+  # The ghost. Its ClickHouse is the environment's DSN, which its own
+  # configuration is not read to confirm (ADR 0002): the swap checks where
+  # its data lands instead (README).
+  otel-collector:
+    environment:
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: tcp://clickhouse-shadow:9000
+    networks: [default, shadow]
+
+  hotrod:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://fusescope-collector:4318
+
+  logs-checkout:
+    command:
+      - logs
+      - --otlp-endpoint=fusescope-collector:4317
+      - --otlp-insecure
+      - --duration=inf
+      - --rate=0.5
+      - --service=checkout
+      - --otlp-attributes=deployment.environment="demo"
+      - --body=order placed
+      - --severity-text=Info
+      - --severity-number=9
+
+  logs-payment-error:
+    command:
+      - logs
+      - --otlp-endpoint=fusescope-collector:4317
+      - --otlp-insecure
+      - --duration=inf
+      - --rate=0.1
+      - --service=payment
+      - --otlp-attributes=deployment.environment="demo"
+      - --body=card declined - insufficient funds
+      - --severity-text=Error
+      - --severity-number=17
+
+  traces-payment-errors:
+    command:
+      - traces
+      - --otlp-endpoint=fusescope-collector:4317
+      - --otlp-insecure
+      - --duration=inf
+      - --rate=0.1
+      - --service=payment
+      - --otlp-attributes=deployment.environment="demo"
+      - --child-spans=2
+      - --span-duration=250ms
+      - --status-code=Error
+
+  # RUM still goes through the backend's gateway until the release that moves
+  # it into this collector.
+  fusescope:
+    environment:
+      SIGNOZ_RUM_COLLECTOR__ENDPOINT: http://fusescope-collector:4318
+
+  shadow-compare:
+    environment:
+      DEMO_LABEL: fusescope
+      SHADOW_LABEL: fork
+      OURS: demo

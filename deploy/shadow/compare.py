@@ -8,8 +8,8 @@ attribute keys must match. Exits 1 on a difference.
 
 Spans and logs are counted once each: an item can be stored twice on one
 side, by a retried write or a sender's retry the other side refused (README,
-Risks). Duplicates are a check of their own: in the shadow they fail the run,
-in the demo they are noted, since they are not this collector's.
+Risks). Duplicates are a check of their own: on this collector's side (OURS,
+the shadow's unless swapped) they fail the run, on the other they are noted.
 """
 
 import json
@@ -25,6 +25,12 @@ SHADOW = os.environ.get("SHADOW_CLICKHOUSE", "http://clickhouse-shadow:8123")
 # Settled window: minutes that ended at least SETTLE_MINUTES ago.
 WINDOW_MINUTES = int(os.environ.get("WINDOW_MINUTES", "60"))
 SETTLE_MINUTES = int(os.environ.get("SETTLE_MINUTES", "5"))
+# Names in the report. After the swap (README) this collector writes the
+# demo's ClickHouse and the existing collector the shadow's.
+DEMO_LABEL = os.environ.get("DEMO_LABEL", "demo")
+SHADOW_LABEL = os.environ.get("SHADOW_LABEL", "shadow")
+# The side whose duplicates fail the run: this collector's.
+OURS = os.environ.get("OURS", "shadow")
 # The demo collector scrapes its own telemetry; the shadow collector does not.
 SELF_METRICS = "metric_name NOT LIKE 'otelcol\\_%' AND metric_name NOT LIKE 'exporter\\_%' " \
     "AND metric_name NOT LIKE 'scrape\\_%' AND metric_name NOT LIKE 'promhttp\\_%' AND metric_name != 'up'"
@@ -140,16 +146,19 @@ def query(base, sql):
         raise SystemExit(f"{base}: {e.read().decode(errors='replace').strip()}") from None
 
 
-def duplicates(name, demo, shadow):
-    """Reports duplicates: the shadow's fail, the demo's are noted. Returns (failed, lines)."""
+def duplicates(name, demo, shadow, ours=OURS, labels=None):
+    """Reports duplicates: this collector's side fails, the other's is noted. Returns (failed, lines)."""
+    labels = labels or {"demo": DEMO_LABEL, "shadow": SHADOW_LABEL}
+    rows = {"demo": demo, "shadow": shadow}
     lines = []
-    for side, rows, word in (("shadow", shadow, "DIFF "), ("demo", demo, "note ")):
-        if rows:
-            lines.append(f"{word} {name} in the {side}: {sum(r[2] for r in rows)} extra in {len(rows)} service-minutes")
-            lines += [f"        {side:<6} {row}" for row in rows[:10]]
+    for side in sorted(rows, key=lambda side: side != ours):
+        if rows[side]:
+            word = "DIFF " if side == ours else "note "
+            lines.append(f"{word} {name} in the {labels[side]}: {sum(r[2] for r in rows[side])} extra in {len(rows[side])} service-minutes")
+            lines += [f"        {labels[side]:<6} {row}" for row in rows[side][:10]]
     if not lines:
         lines.append(f"ok    {name} (none)")
-    return bool(shadow), lines
+    return bool(rows[ours]), lines
 
 
 def main():
@@ -167,11 +176,11 @@ def main():
             print(f"ok    {name} ({len(demo)} rows)")
             continue
         failed += 1
-        print(f"DIFF  {name}: {len(demo - shadow)} only in demo, {len(shadow - demo)} only in shadow")
+        print(f"DIFF  {name}: {len(demo - shadow)} only in {DEMO_LABEL}, {len(shadow - demo)} only in {SHADOW_LABEL}")
         for row in sorted(demo - shadow, key=str)[:10]:
-            print(f"        demo   {row}")
+            print(f"        {DEMO_LABEL:<6} {row}")
         for row in sorted(shadow - demo, key=str)[:10]:
-            print(f"        shadow {row}")
+            print(f"        {SHADOW_LABEL:<6} {row}")
     return 1 if failed else 0
 
 

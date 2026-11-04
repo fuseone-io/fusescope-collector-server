@@ -1,0 +1,125 @@
+# The FuseScope collector as the demo's collector (README, "Swap"): the
+# senders point at it, it writes the demo's ClickHouse, and it sends a copy of
+# what its OTLP receiver accepts to the existing collector, now the ghost
+# writing clickhouse-shadow. What it does is collector.yaml's; only the
+# destinations change.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  host_metrics:
+    collection_interval: 60s
+    root_path: ${env:HOST_ROOT_PATH:-/hostfs}
+    scrapers:
+      # Per logical CPU, and no logical count: the demo writes system.cpu.time
+      # with a cpu label and no system.cpu.logical.count.
+      cpu:
+        metrics:
+          system.cpu.time:
+            attributes: [cpu, state]
+          system.cpu.logical.count:
+            enabled: false
+      load: {}
+      # The demo writes no series for the optical drive.
+      disk:
+        exclude:
+          devices: [sr0]
+          match_type: strict
+      filesystem: {}
+      memory: {}
+
+processors:
+  # On the demo's pipelines only. The ghost's never refuse, so a ghost
+  # problem never fails a demo request; a demo refusal the sender retries
+  # may store a copy twice in the ghost, which compare.py notes there.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  # The ghost's copy is accepted here and exported on its own: a full or
+  # failing ghost queue drops copies and never fails a demo request.
+  batch/ghost: {}
+  resourcedetection/system:
+    detectors: [system]
+    system:
+      hostname_sources: [os]
+
+connectors:
+  fusescope_spanmetrics:
+
+exporters:
+  fusescope_clickhouse:
+    endpoint: clickhouse:9000
+    tls:
+      insecure: true
+    # 10 s, as the reference inserts: the service map joins parent and child
+    # spans only within one insert (docs/spec/clickhouse-traces.md §1, Insert
+    # batches). Also the exporter's default from the release that found it.
+    sending_queue:
+      batch:
+        flush_timeout: 10s
+
+  # Plaintext inside the demo's network, as the demo collector's own copy to
+  # the shadow was (demo-collector-shadow.yaml); demo only, never shipped.
+  otlp/ghost:
+    endpoint: dns:///otel-collector:4317
+    tls:
+      insecure: true
+    timeout: 5s
+    keepalive:
+      time: 10s
+      timeout: 5s
+      permit_without_stream: true
+    sending_queue:
+      enabled: true
+      sizer: bytes
+      queue_size: 33554432   # 32 MiB per signal
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 30s
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+      status:
+        enabled: true
+        path: /health/status
+      config:
+        enabled: false
+
+service:
+  extensions: [healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [fusescope_clickhouse, fusescope_spanmetrics]
+    traces/ghost:
+      receivers: [otlp]
+      processors: [batch/ghost]
+      exporters: [otlp/ghost]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [fusescope_clickhouse]
+    logs/ghost:
+      receivers: [otlp]
+      processors: [batch/ghost]
+      exporters: [otlp/ghost]
+    metrics:
+      receivers: [otlp, fusescope_spanmetrics]
+      processors: [memory_limiter]
+      exporters: [fusescope_clickhouse]
+    metrics/ghost:
+      receivers: [otlp]
+      processors: [batch/ghost]
+      exporters: [otlp/ghost]
+    metrics/host:
+      receivers: [host_metrics]
+      processors: [resourcedetection/system]
+      exporters: [fusescope_clickhouse]
