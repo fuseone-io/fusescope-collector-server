@@ -13,12 +13,6 @@ x-shadow-logging: &shadow-logging
       max-file: "3"
 
 services:
-  # Headroom for the copy it sends to the shadow: the demo collector ran close
-  # to its 384 MiB limit on its own (README.md, Risks).
-  otel-collector:
-    mem_limit: 768m
-    cpus: 0.5
-
   clickhouse-shadow:
     <<: *shadow-logging
     image: clickhouse/clickhouse-server:25.12.5

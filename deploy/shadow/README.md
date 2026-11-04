@@ -196,17 +196,24 @@ Once the shadow has run green, the roles swap: the senders point at this collect
 ClickHouse, and the existing collector becomes the ghost, fed a copy by this collector and writing
 `clickhouse-shadow`. The demo's UI then shows this collector's data, and the comparison runs the other way.
 
+Since FuseScope 0.159.0 the demo kit itself runs `fusescope-collector` as its collector and RUM ingress
+(`deploy/demo` in the fusescope repo), with no `otel-collector`: the swap is the demo's steady state, and
+`compose.swap.yaml` defines the ghost instead of moving the kit's collector. On the demo host, update with all
+three files, `docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml up -d`: the
+kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost.
+
 ```
-hotrod, telemetrygen, RUM (via fusescope) ──► fusescope-collector ──► clickhouse                (demo)
-                                                   └─ otlp/ghost ──► otel-collector ──► clickhouse-shadow   (ghost)
+hotrod, telemetrygen ──► fusescope-collector (otlp) ──► clickhouse                (demo)
+RUM (via Caddy) ───────► fusescope-collector (rum)  ─┘
+                              └─ otlp/ghost ──► otel-collector ──► clickhouse-shadow   (ghost)
 ```
 
 | File | What |
 |---|---|
-| `primary.yaml` | this collector's configuration as the demo's: `collector.yaml` writing `clickhouse:9000`, plus the ghost's copy |
-| `compose.swap.yaml` | override after `compose.shadow.yaml`: adds `fusescope-collector`, points the senders and the backend's RUM forward at it, turns `fusescope-collector-shadow` off, and moves the ghost to the shadow network only, where `clickhouse` is an alias of `clickhouse-shadow` |
+| `ghost-copy.yaml` | merged over the kit's `collector/config.yaml`: the copy of what the `otlp` and `rum` receivers accept, to the ghost |
+| `compose.swap.yaml` | override after `compose.shadow.yaml`: merges `ghost-copy.yaml` into `fusescope-collector` and puts it on both networks, turns `fusescope-collector-shadow` off, and defines the ghost on the shadow network only, where `clickhouse` is an alias of `clickhouse-shadow`, with its configuration from the kit (`otel-collector/config.yaml`) |
 
-- **The ghost's path never fails the demo.** The ghost's pipelines start from the same `otlp` receiver with a
+- **The ghost's path never fails the demo.** The ghost's pipelines start from the same `otlp` and `rum` receivers with a
   `batch/ghost` processor and no memory limiter: they never refuse, and a full or failing 32 MiB queue drops copies.
   Only the demo's pipelines have the memory limiter; a request it refuses, retried by the sender, may store a copy
   twice in the ghost, which `compare.py` notes there.
