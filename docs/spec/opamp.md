@@ -117,6 +117,11 @@ Recorded so it is not mistaken for collector bugs ([fuseone-io/fusescope#261](ht
   if they differ.
 - Span mapping and LLM pricing had a constant part in the hash, so their edits did not change
   it. Fixed in fuseone-io/fusescope#318 (§3).
+- Since fuseone-io/fusescope#318 a push whose send is still blocked after 10 s disconnects the
+  collector, which reconnects; the reconnect reconciliation above then pushes what it lacks.
+  While the backend cannot record a pushed deployment, it leaves the collector's
+  `RemoteConfigStatus` unhandled and asks for `ReportFullState`, so the collector reports it
+  again.
 - The OpAMP listener on 4320 has no TLS. Ingress collectors use the TLS listener on 4321
   (ADR 0006).
 
