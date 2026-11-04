@@ -52,7 +52,10 @@ connectors:
 
 exporters:
   fusescope_clickhouse:
-    endpoint: clickhouse:9000
+    # The demo's ClickHouse by its container name, which only the demo
+    # network has: on the shadow network, which this collector also joins,
+    # `clickhouse` is clickhouse-shadow (compose.swap.yaml).
+    endpoint: fusescope-demo-clickhouse-1:9000
     tls:
       insecure: true
     # 10 s, as the reference inserts: the service map joins parent and child
