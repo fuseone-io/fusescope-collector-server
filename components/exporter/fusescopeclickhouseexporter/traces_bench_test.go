@@ -75,7 +75,29 @@ func BenchmarkEncodeTraces(b *testing.B) {
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/span")
 }
 
+// The export benchmarks run one attempt of push against a no-op ClickHouse:
+// encoding plus the exporter's per-insert work, telemetry included.
+func BenchmarkExportTraces(b *testing.B) {
+	benchExport(b, newTracesExporter, syntheticTraces(10_000), 10_000, "span")
+}
+
+func BenchmarkExportLogs(b *testing.B) {
+	benchExport(b, newLogsExporter, syntheticLogs(), 10_000, "record")
+}
+
 func BenchmarkEncodeLogs(b *testing.B) {
+	ld := syntheticLogs()
+	enc := newLogsEncoder()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = enc.encode(ld, nil)
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/record")
+}
+
+// syntheticLogs is 10 resources of 1,000 records, 3 attributes per record.
+func syntheticLogs() plog.Logs {
 	ld := plog.NewLogs()
 	for r := range 10 {
 		rl := ld.ResourceLogs().AppendEmpty()
@@ -93,13 +115,7 @@ func BenchmarkEncodeLogs(b *testing.B) {
 			lr.Attributes().PutStr("tenant.id", fmt.Sprintf("t-%d", i%20))
 		}
 	}
-	enc := newLogsEncoder()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		_ = enc.encode(ld, nil)
-	}
-	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*10_000), "ns/record")
+	return ld
 }
 
 // TestEncodeMaxBatch encodes a batch at the default sending_queue max_size and

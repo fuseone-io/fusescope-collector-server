@@ -31,17 +31,29 @@ func NewFactory() exporter.Factory {
 
 func createTraces(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Traces, error) {
 	c := cfg.(*Config)
-	return newTraces(ctx, set, c, newTracesExporter(c, set.Logger))
+	x, err := newTracesExporter(c, set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	return newTraces(ctx, set, c, x)
 }
 
 func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Logs, error) {
 	c := cfg.(*Config)
-	return newLogs(ctx, set, c, newLogsExporter(c, set.Logger))
+	x, err := newLogsExporter(c, set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	return newLogs(ctx, set, c, x)
 }
 
 func createMetrics(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Metrics, error) {
 	c := cfg.(*Config)
-	return newMetrics(ctx, set, c, newMetricsExporter(c, set.Logger))
+	x, err := newMetricsExporter(c, set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	return newMetrics(ctx, set, c, x)
 }
 
 func newTraces(ctx context.Context, set exporter.Settings, c *Config, x *signalExporter[*tracesEncoder, ptrace.Traces]) (exporter.Traces, error) {
