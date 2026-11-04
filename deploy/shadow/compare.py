@@ -5,6 +5,11 @@ Real traffic batches differently in each collector, so rows are not compared
 one by one as in test/parity: counts per service and minute must match for
 spans and logs, per service for APM calls, and the sets of metric series and
 attribute keys must match. Exits 1 on a difference.
+
+Spans and logs are counted once each: an item can be stored twice on one
+side, by a retried write or a sender's retry the other side refused (README,
+Risks). Duplicates are a check of their own: in the shadow they fail the run,
+in the demo they are noted, since they are not this collector's.
 """
 
 import json
@@ -30,24 +35,30 @@ WINDOW = (f"toDateTime({_end - WINDOW_MINUTES * 60}, 'UTC')", f"toDateTime({_end
 # Each collector stamps span metrics with its own identity (apm-metrics spec §6).
 COLLECTOR_KEYS = ("signoz.collector.id", "resource_signoz.collector.id")
 
+# What identifies a log: each collector generates its own log IDs, so a
+# retried log gets a new one.
+LOG_KEY = "timestamp, body, trace_id, span_id, attributes_string, attributes_number, attributes_bool, resources_string"
+LOGS_IN_WINDOW = f"""timestamp >= toUnixTimestamp64Nano(toDateTime64({WINDOW[0]}, 9))
+          AND timestamp < toUnixTimestamp64Nano(toDateTime64({WINDOW[1]}, 9))"""
+
 CHECKS = {
     "spans per service and minute": f"""
-        SELECT serviceName, toString(toStartOfMinute(timestamp)) AS m, count()
+        SELECT serviceName, toString(toStartOfMinute(timestamp)) AS m, uniqExact(traceID, spanID)
         FROM signoz_traces.signoz_index_v3
         WHERE timestamp >= {WINDOW[0]} AND timestamp < {WINDOW[1]}
         GROUP BY serviceName, m ORDER BY serviceName, m""",
     "error spans per service": f"""
-        SELECT serviceName, count() FROM signoz_traces.signoz_error_index_v2
+        SELECT serviceName, uniqExact(traceID, spanID) FROM signoz_traces.signoz_error_index_v2
         WHERE timestamp >= {WINDOW[0]} AND timestamp < {WINDOW[1]}
         GROUP BY serviceName ORDER BY serviceName""",
     "span resource keys": f"""
         SELECT DISTINCT arrayJoin(mapKeys(resources_string)) AS k FROM signoz_traces.signoz_index_v3
         WHERE timestamp >= {WINDOW[0]} AND timestamp < {WINDOW[1]} ORDER BY k""",
     "logs per service and minute": f"""
-        SELECT resources_string['service.name'] AS s, toString(toStartOfMinute(fromUnixTimestamp64Nano(toInt64(timestamp)))) AS m, count()
+        SELECT resources_string['service.name'] AS s, toString(toStartOfMinute(fromUnixTimestamp64Nano(toInt64(timestamp)))) AS m,
+               uniqExact({LOG_KEY})
         FROM signoz_logs.logs_v2
-        WHERE timestamp >= toUnixTimestamp64Nano(toDateTime64({WINDOW[0]}, 9))
-          AND timestamp < toUnixTimestamp64Nano(toDateTime64({WINDOW[1]}, 9))
+        WHERE {LOGS_IN_WINDOW}
         GROUP BY s, m ORDER BY s, m""",
     "log attribute keys": f"""
         SELECT DISTINCT arrayJoin(arrayConcat(mapKeys(attributes_string), mapKeys(resources_string))) AS k
@@ -73,6 +84,21 @@ CHECKS = {
             SELECT fingerprint FROM signoz_metrics.samples_v4
             WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000
               AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000)""",
+}
+
+# Items stored more than once, per service and minute: (service, minute, extra copies).
+DUPLICATES = {
+    "duplicate spans": f"""
+        SELECT serviceName, toString(toStartOfMinute(timestamp)) AS m, count() - uniqExact(traceID, spanID) AS extra
+        FROM signoz_traces.signoz_index_v3
+        WHERE timestamp >= {WINDOW[0]} AND timestamp < {WINDOW[1]}
+        GROUP BY serviceName, m HAVING extra > 0 ORDER BY serviceName, m""",
+    "duplicate logs": f"""
+        SELECT resources_string['service.name'] AS s, toString(toStartOfMinute(fromUnixTimestamp64Nano(toInt64(timestamp)))) AS m,
+               count() - uniqExact({LOG_KEY}) AS extra
+        FROM signoz_logs.logs_v2
+        WHERE {LOGS_IN_WINDOW}
+        GROUP BY s, m HAVING extra > 0 ORDER BY s, m""",
 }
 
 
@@ -108,8 +134,24 @@ def query(base, sql):
         raise SystemExit(f"{base}: {e.read().decode(errors='replace').strip()}") from None
 
 
+def duplicates(name, demo, shadow):
+    """Reports duplicates: the shadow's fail, the demo's are noted. Returns (failed, lines)."""
+    lines = []
+    for side, rows, word in (("shadow", shadow, "DIFF "), ("demo", demo, "note ")):
+        if rows:
+            lines.append(f"{word} {name} in the {side}: {sum(r[2] for r in rows)} extra in {len(rows)} service-minutes")
+            lines += [f"        {side:<6} {row}" for row in rows[:10]]
+    if not lines:
+        lines.append(f"ok    {name} (none)")
+    return bool(shadow), lines
+
+
 def main():
     failed = 0
+    for name, sql in DUPLICATES.items():
+        bad, lines = duplicates(name, query(DEMO, sql), query(SHADOW, sql))
+        failed += bad
+        print("\n".join(lines))
     for name, sql in CHECKS.items():
         demo, shadow = query(DEMO, sql), query(SHADOW, sql)
         if name == "metric series":

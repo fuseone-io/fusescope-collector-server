@@ -27,5 +27,20 @@ class AnonymizeTest(unittest.TestCase):
         self.assertEqual(len(demo - shadow), 1, "a series lost in the shadow must show as a difference")
 
 
+class DuplicatesTest(unittest.TestCase):
+    def test_none(self):
+        self.assertEqual(compare.duplicates("duplicate spans", [], []), (False, ["ok    duplicate spans (none)"]))
+
+    def test_demo_noted(self):
+        failed, lines = compare.duplicates("duplicate spans", [("frontend", "2026-11-04 00:00:00", 13)], [])
+        self.assertFalse(failed, "the demo's duplicates are not this collector's")
+        self.assertTrue(lines[0].startswith("note  duplicate spans in the demo: 13 extra"))
+
+    def test_shadow_fails(self):
+        failed, lines = compare.duplicates("duplicate logs", [], [("payment", "2026-11-04 00:00:00", 1)])
+        self.assertTrue(failed)
+        self.assertTrue(lines[0].startswith("DIFF  duplicate logs in the shadow"))
+
+
 if __name__ == "__main__":
     unittest.main()
