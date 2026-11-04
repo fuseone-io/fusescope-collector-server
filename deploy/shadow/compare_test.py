@@ -42,5 +42,18 @@ class DuplicatesTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("DIFF  duplicate logs in the shadow"))
 
 
+class LogIdentityTest(unittest.TestCase):
+    def test_every_field_the_sender_sets(self):
+        # Two logs equal in all but severity, trace flags or scope are two logs.
+        for column in ("trace_flags", "severity_text", "severity_number", "scope_name", "scope_version", "scope_string",
+                       "timestamp", "body", "trace_id", "span_id", "attributes_string", "attributes_number",
+                       "attributes_bool", "resources_string"):
+            self.assertIn(column, compare.LOG_IDENTITY)
+
+    def test_not_what_each_collector_sets(self):
+        for column in ("id", "observed_timestamp"):
+            self.assertNotIn(column, compare.LOG_IDENTITY, "a retried log gets a new one")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,9 +35,15 @@ WINDOW = (f"toDateTime({_end - WINDOW_MINUTES * 60}, 'UTC')", f"toDateTime({_end
 # Each collector stamps span metrics with its own identity (apm-metrics spec §6).
 COLLECTOR_KEYS = ("signoz.collector.id", "resource_signoz.collector.id")
 
-# What identifies a log: each collector generates its own log IDs, so a
-# retried log gets a new one.
-LOG_KEY = "timestamp, body, trace_id, span_id, attributes_string, attributes_number, attributes_bool, resources_string"
+# What identifies a log: every field the sender sets. Not the log ID or the
+# observed time, which each collector sets on receipt, so a retried log gets
+# new ones; not body_v2 and body_promoted, derived from the body.
+LOG_IDENTITY = (
+    "timestamp", "trace_id", "span_id", "trace_flags", "severity_text", "severity_number", "body",
+    "attributes_string", "attributes_number", "attributes_bool", "resources_string",
+    "scope_name", "scope_version", "scope_string",
+)
+LOG_KEY = ", ".join(LOG_IDENTITY)
 LOGS_IN_WINDOW = f"""timestamp >= toUnixTimestamp64Nano(toDateTime64({WINDOW[0]}, 9))
           AND timestamp < toUnixTimestamp64Nano(toDateTime64({WINDOW[1]}, 9))"""
 
