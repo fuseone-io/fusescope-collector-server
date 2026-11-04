@@ -27,5 +27,33 @@ class AnonymizeTest(unittest.TestCase):
         self.assertEqual(len(demo - shadow), 1, "a series lost in the shadow must show as a difference")
 
 
+class DuplicatesTest(unittest.TestCase):
+    def test_none(self):
+        self.assertEqual(compare.duplicates("duplicate spans", [], []), (False, ["ok    duplicate spans (none)"]))
+
+    def test_demo_noted(self):
+        failed, lines = compare.duplicates("duplicate spans", [("frontend", "2026-11-04 00:00:00", 13)], [])
+        self.assertFalse(failed, "the demo's duplicates are not this collector's")
+        self.assertTrue(lines[0].startswith("note  duplicate spans in the demo: 13 extra"))
+
+    def test_shadow_fails(self):
+        failed, lines = compare.duplicates("duplicate logs", [], [("payment", "2026-11-04 00:00:00", 1)])
+        self.assertTrue(failed)
+        self.assertTrue(lines[0].startswith("DIFF  duplicate logs in the shadow"))
+
+
+class LogIdentityTest(unittest.TestCase):
+    def test_every_field_the_sender_sets(self):
+        # Two logs equal in all but severity, trace flags or scope are two logs.
+        for column in ("trace_flags", "severity_text", "severity_number", "scope_name", "scope_version", "scope_string",
+                       "timestamp", "body", "trace_id", "span_id", "attributes_string", "attributes_number",
+                       "attributes_bool", "resources_string"):
+            self.assertIn(column, compare.LOG_IDENTITY)
+
+    def test_not_what_each_collector_sets(self):
+        for column in ("id", "observed_timestamp"):
+            self.assertNotIn(column, compare.LOG_IDENTITY, "a retried log gets a new one")
+
+
 if __name__ == "__main__":
     unittest.main()
