@@ -2,8 +2,9 @@
 
 - Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest authentication, the
   ingest policy over OpAMP, security gates),
-  [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in) and
-  [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport)
+  [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in),
+  [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport) and
+  [ADR 0009](0009-plaintext-to-existing-collector.md) (plaintext OTLP to the existing collector, until phase 6)
 - Date: 2026-10-31
 
 ## Decision
