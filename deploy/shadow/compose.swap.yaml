@@ -1,6 +1,6 @@
-# Override for the FuseScope demo, after compose.shadow.yaml: swaps the roles
-# (README, "Swap"). The senders point at this collector, which writes the
-# demo's ClickHouse and sends a copy to the existing collector, now the ghost
+# Override for the FuseScope demo, after compose.shadow.yaml (README, "Swap").
+# The demo kit's collector, fusescope-collector, writes the demo's ClickHouse
+# and sends a copy of what it accepts to the existing collector, now the ghost
 # writing clickhouse-shadow. The ghost is moved by its network, not by its
 # configuration, which is not read (ADR 0002): it sees only the shadow
 # network, where `clickhouse` is clickhouse-shadow. Use
@@ -15,25 +15,16 @@ x-swap-logging: &swap-logging
       max-file: "3"
 
 services:
-  # The demo's collector.
+  # The demo's collector, with the copy to the ghost merged over its
+  # configuration. It reaches the demo's ClickHouse by its container name,
+  # which only the default network has.
   fusescope-collector:
-    <<: *swap-logging
-    image: ${SHADOW_COLLECTOR_IMAGE:-fusescope-collector:shadow}
-    command: [--config=/etc/fusescope-collector/config.yaml]
-    # Host UTS namespace and root, as the existing collector, for host metrics.
-    uts: host
+    command:
+      - --config=fusescopeopamp:/etc/fusescope-collector/config.yaml
+      - --config=file:/etc/fusescope-collector/ghost-copy.yaml
     volumes:
-      - ./shadow/primary.yaml:/etc/fusescope-collector/config.yaml:ro
-      - /:/hostfs:ro
-    # The demo's ClickHouse by its container name, which only the default
-    # network has; the ghost as otel-collector, on shadow only.
+      - ./shadow/ghost-copy.yaml:/etc/fusescope-collector/ghost-copy.yaml:ro
     networks: [default, shadow]
-    depends_on:
-      telemetrystore-migrator:
-        condition: service_completed_successfully
-    restart: unless-stopped
-    mem_limit: 768m
-    cpus: 0.5
 
   # The shadow collector's place is taken by fusescope-collector.
   fusescope-collector-shadow:
@@ -50,56 +41,33 @@ services:
   # `clickhouse` is clickhouse-shadow there. Its environment's DSN alone does
   # not move its exporters (the attempt of 2026-11-04).
   otel-collector:
-    networks: !override [shadow]
-
-  hotrod:
+    <<: *swap-logging
+    image: ghcr.io/fuseone-io/fusescope-otel-collector:${COLLECTOR_VERSION:-0.145.0}
+    entrypoint: [/bin/sh]
+    command:
+      - -c
+      - |
+        /fusescope-otel-collector migrate sync check &&
+        /fusescope-otel-collector --config=/etc/otel-collector-config.yaml
+    uts: host
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel-collector-config.yaml:ro
+      - /:/hostfs:ro
+      - /proc:/hostfs/proc:ro
+      - /sys:/hostfs/sys:ro
     environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://fusescope-collector:4318
-
-  logs-checkout:
-    command:
-      - logs
-      - --otlp-endpoint=fusescope-collector:4317
-      - --otlp-insecure
-      - --duration=inf
-      - --rate=0.5
-      - --service=checkout
-      - --otlp-attributes=deployment.environment="demo"
-      - --body=order placed
-      - --severity-text=Info
-      - --severity-number=9
-
-  logs-payment-error:
-    command:
-      - logs
-      - --otlp-endpoint=fusescope-collector:4317
-      - --otlp-insecure
-      - --duration=inf
-      - --rate=0.1
-      - --service=payment
-      - --otlp-attributes=deployment.environment="demo"
-      - --body=card declined - insufficient funds
-      - --severity-text=Error
-      - --severity-number=17
-
-  traces-payment-errors:
-    command:
-      - traces
-      - --otlp-endpoint=fusescope-collector:4317
-      - --otlp-insecure
-      - --duration=inf
-      - --rate=0.1
-      - --service=payment
-      - --otlp-attributes=deployment.environment="demo"
-      - --child-spans=2
-      - --span-duration=250ms
-      - --status-code=Error
-
-  # RUM still goes through the backend's gateway until the release that moves
-  # it into this collector.
-  fusescope:
-    environment:
-      SIGNOZ_RUM_COLLECTOR__ENDPOINT: http://fusescope-collector:4318
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: tcp://clickhouse:9000
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER: cluster
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION: "true"
+      SIGNOZ_OTEL_COLLECTOR_TIMEOUT: 10m
+      LOW_CARDINAL_EXCEPTION_GROUPING: "false"
+    networks: [shadow]
+    depends_on:
+      migrator-shadow:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 0.5
 
   shadow-compare:
     environment:
