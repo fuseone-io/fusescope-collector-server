@@ -45,6 +45,14 @@ Images are published to `ghcr.io/fuseone-io/fusescope-collector` for linux/amd64
 and an SBOM: `:sha-<commit>` for every commit on `main` and `:main` for its head, `:X.Y.Z`, `:X.Y` and `:latest` for every
 `vX.Y.Z` tag, each only once `ci` has passed on that commit (`.github/workflows/release.yaml`).
 
+Each image is signed keyless with cosign by its multi-arch digest, the index and every platform's manifest:
+
+```sh
+cosign verify ghcr.io/fuseone-io/fusescope-collector:0.1.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/fuseone-io/fusescope-collector-server/\.github/workflows/release\.yaml@refs/(heads/main|tags/v[0-9.]+)$'
+```
+
 ## Configurations
 
 | File | Mode |

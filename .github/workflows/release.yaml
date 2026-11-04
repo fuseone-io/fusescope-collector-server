@@ -1,7 +1,9 @@
 name: release
 
 # Publishes the container image to GHCR for linux/amd64 and linux/arm64, with
-# provenance and an SBOM, only for commits whose ci run succeeded: each commit
+# provenance and an SBOM, signed keyless with cosign by its multi-arch digest
+# (the index and each platform's manifest), only for commits whose ci run
+# succeeded: each commit
 # on main as :sha-<commit>, then :main at main's head; each vX.Y.Z tag as
 # :X.Y.Z, :X.Y and :latest.
 on:
@@ -26,6 +28,11 @@ jobs:
   image:
     if: github.event_name == 'push' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+      id-token: write   # keyless signing: the workflow's OIDC identity
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
     steps:
@@ -60,9 +67,11 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build and push
+        id: build
         run: |
           docker buildx create --use --name release
           docker buildx build --push --platform linux/amd64,linux/arm64 \
+            --metadata-file build-metadata.json \
             --provenance=mode=max --sbom=true \
             --build-arg VERSION=${{ steps.meta.outputs.version }} \
             --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
@@ -70,6 +79,18 @@ jobs:
             --label org.opencontainers.image.version=${{ steps.meta.outputs.version }} \
             --label org.opencontainers.image.licenses=Apache-2.0 \
             ${{ steps.meta.outputs.tags }} .
+          digest=$(jq -er '."containerimage.digest"' build-metadata.json)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign
+        # By digest, never by tag; --recursive also signs each platform's manifest.
+        run: cosign sign --yes --recursive "$IMAGE@${{ steps.build.outputs.digest }}"
+      - name: Verify the signature
+        run: |
+          cosign verify "$IMAGE@${{ steps.build.outputs.digest }}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "${{ github.server_url }}/${{ github.repository }}/.github/workflows/release.yaml@$GITHUB_REF" \
+            >/dev/null
 
   # Points :main at main's current head, one at a time. Each run promotes the
   # head's image, not its own commit's, so a pending run that replaces another
