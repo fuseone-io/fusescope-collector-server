@@ -38,6 +38,7 @@ make build      # installs ocb and builds _build/fusescope-collector
 make validate   # validates every file in config/
 make licenses   # checks dependency licenses against the allow-list
 make vuln       # govulncheck
+make forbid-fork  # fails if any module depends on the AGPL collector fork or SigNoz's
 docker build -t fusescope-collector .
 ```
 

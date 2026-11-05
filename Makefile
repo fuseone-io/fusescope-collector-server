@@ -14,7 +14,7 @@ VALIDATE_ENV := INGEST_TOKENS_FILE=/dev/null ENGINE_TOKEN_FILE=/dev/null GATEWAY
 	GATEWAY_ENDPOINT=gateway:4317 GATEWAY_CA_FILE=/dev/null AGENT_CERT_FILE=/dev/null \
 	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node HOST_ROOT_PATH=/ KUBELET_AUTH_TYPE=none
 
-.PHONY: build validate licenses vuln clean install-ocb components components-gen
+.PHONY: build validate licenses vuln forbid-fork clean install-ocb components components-gen
 
 install-ocb:
 	go install go.opentelemetry.io/collector/cmd/builder@$(OCB_VERSION)
@@ -33,6 +33,12 @@ licenses: $(BINARY)
 
 vuln: $(BINARY)
 	scripts/govulncheck.sh $(BINARY)
+
+# No module of the distribution or its components may depend on the AGPL
+# collector fork or SigNoz's collector (ADR 0002, ADR 0005).
+forbid-fork: $(BINARY)
+	scripts/forbid-fork_test.sh
+	scripts/forbid-fork.sh $(BUILD_DIR) $(COMPONENTS)
 
 components:
 	@for d in $(COMPONENTS); do echo ">> $$d"; \

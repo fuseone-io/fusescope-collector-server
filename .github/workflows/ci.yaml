@@ -29,6 +29,8 @@ jobs:
         run: make licenses 2> licenses.err || { grep -E 'Not allowed|unknown|Failed' licenses.err | sed -E 's#(library [^/]+/[^/]+/[^/ ]+)[^ ]*#\1#' | sort -u | head -9 | sed 's/^/::error::/'; exit 1; }
       - name: Check known vulnerabilities
         run: make vuln
+      - name: Check no module depends on the AGPL collector fork
+        run: make forbid-fork
 
   image:
     runs-on: ubuntu-latest
