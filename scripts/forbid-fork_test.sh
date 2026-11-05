@@ -35,12 +35,20 @@ module indirect $'\nrequire example.com/lib v0.1.0\n'
 # The fork only on the right side of a replace.
 module replaced $'\nrequire example.com/dependency v0.1.0\n\nreplace example.com/dependency => github.com/SigNoz/signoz-otel-collector v0.1.0\n'
 
-export GOPROXY="file://$dir/proxy" GOSUMDB=off GOFLAGS=-mod=mod GOMODCACHE="$dir/cache" GONOSUMCHECK=1 GOTOOLCHAIN=local
+export GOPROXY="file://$dir/proxy" GOSUMDB=off GOFLAGS=-mod=mod GOMODCACHE="$dir/cache" GOTOOLCHAIN=local
 fail=0
+# A forbidden case must fail on detection: a broken proxy or go list
+# failing would also fail the guard, and would hide a guard that misses.
 expect() {
-	local want=$1 name=$2
-	if "$guard" "$dir/$name" >/dev/null 2>&1; then got=pass; else got=fail; fi
-	if [ "$got" != "$want" ]; then echo "forbid-fork: $name: want $want, got $got"; fail=1; fi
+	local want=$1 name=$2 output
+	if output=$("$guard" "$dir/$name" 2>&1); then got=pass; else got=fail; fi
+	if [ "$got" != "$want" ]; then
+		echo "forbid-fork: $name: want $want, got $got: $output"
+		fail=1
+	elif [ "$want" = fail ] && { ! grep -q 'depends on' <<<"$output" || grep -q 'go list -m all failed' <<<"$output"; }; then
+		echo "forbid-fork: $name: failed, but not on detection: $output"
+		fail=1
+	fi
 }
 expect pass clean
 expect fail direct
