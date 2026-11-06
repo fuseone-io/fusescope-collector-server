@@ -66,7 +66,17 @@ string form. An int `1` and the string `"1"` give the same row [obs `obs-fp`: `f
 **Deliberate, tested, not observed:** values of the other kinds are converted with the
 OpenTelemetry `AnyValue` string form (pdata `Value.AsString`: decimal numbers, `true`/`false`,
 JSON for arrays and maps, base64 for bytes). Only int and string were observed; the tests cover
-every kind.
+every kind. The conversion is bounded: it writes into the row's
+remaining byte budget and stops as soon as the budget is spent, and refuses maps and lists
+nested deeper than 16 levels, so it never builds a whole value first as `AsString` does; a
+refused value drops the row as `row_bytes`. Within the budget its output is byte for byte
+`AsString`'s as built with Go 1.26, the toolchain of `go.mod`, which is the canonical form:
+encoding/json with `SetEscapeHTML(false)`, so `<`, `>` and `&` stay raw, invalid UTF-8 inside a
+map or list becomes the escape `\ufffd`, U+2028 and U+2029 are escaped, and a map or list that
+holds NaN or an infinity gives the empty string. A golden test pins it, so a later toolchain
+whose encoding/json differs does not change the rows. The budget also bounds the work: a
+string stops as soon as its escaped form passes it, and a map's keys stop being collected
+once they alone cannot fit, before they are sorted.
 
 A key that is absent and a key present with an empty value are different sets.
 
@@ -133,7 +143,9 @@ A key that is absent and a key present with an empty value are different sets.
   `max_attributes_per_row` (256) entries across both maps, or costing more than
   `max_row_bytes` (16 KiB), is not written; it is not truncated, since a cut set would be a
   wrong suggestion. The entry count is checked before sorting or hashing, so an oversized row
-  costs one pass over its maps. Rows waiting for insert are bounded by both `max_queue_rows`
+  costs one pass over its maps. With the defaults the entry costs alone reach `max_row_bytes` at about
+  250 entries, so the byte limit usually refuses first; the count still bounds the work done
+  before any conversion. Rows waiting for insert are bounded by both `max_queue_rows`
   (20 000) and `max_queue_bytes` (8 MiB) of cost; at the 256-byte minimum the bytes alone
   would allow 32 768 rows, so with the defaults the row limit binds first for small rows. The
   deduplication state holds fingerprints and the window, a fixed size per key, plus the
@@ -149,7 +161,8 @@ A key that is absent and a key present with an empty value are different sets.
   its window expires because the quota stays full. An insert that fails releases the keys of
   its rows, which are then dropped, so a later occurrence in the same window writes them again.
 - **Only metadata is lost.** Every refusal drops only the metadata row and increments
-  `fusescope_attributes_metadata_dropped` (unit `{row}`, attributes `signal` and `reason`),
+  `exporter_fusescope_clickhouse_attributes_metadata_dropped` (`otelcol_…` on the collector's
+  metrics endpoint; unit `{row}`, attributes `signal` and `reason`),
   with `reason` one of `window` (`max_sets_per_window`), `resource`
   (`max_sets_per_resource`), `row_bytes` (`max_row_bytes` or `max_attributes_per_row`),
   `queue` (`max_queue_rows` or `max_queue_bytes`), `state_bytes`, `too_old` (§3) and `insert`; the data itself is always written.
@@ -170,3 +183,31 @@ A key that is absent and a key present with an empty value are different sets.
 - Value kinds other than int and string (§2.1) and logs without a timestamp (§3): decided
   above and covered by tests.
 - The reference's behaviour at its limits, and its memory over long runs.
+
+## 7. Exporter option
+
+`fusescope_clickhouse` records the metadata of each signal it writes when
+`attributes_metadata.enabled` is set; mode `meter` refuses it. The hook runs once the request's
+export has succeeded whole, every table and every retry included, in the exporter's queue
+consumer, never per attempt or per table. Rows are inserted every `flush_interval` from their
+own connection to `database`, once, without retry: a failed insert releases the keys (§5). On
+shutdown the queue is inserted within the shutdown's deadline; an insert stuck past it, even one
+that ignores its context, is abandoned, and the connection is closed once it returns. Shutdown
+may be called again.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | record attribute metadata |
+| `database` | `signoz_metadata` | |
+| `flush_interval` | `1s` | how often queued rows are inserted |
+| `max_windows` | `4` | §3 |
+| `max_sets_per_window` | `100000` | §5 |
+| `max_sets_per_resource` | `1000` | §5 |
+| `max_attributes_per_row` | `256` | §5 |
+| `max_row_bytes` | `16384` | §5 |
+| `max_queue_rows` | `20000` | §5 |
+| `max_queue_bytes` | `8388608` | §5 |
+| `max_state_bytes` | `33554432` | §5 |
+
+The limits, the queue and the state are per signal: an exporter that writes traces, logs and
+metrics holds up to three times each budget.

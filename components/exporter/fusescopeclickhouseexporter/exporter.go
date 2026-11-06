@@ -5,6 +5,7 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -72,6 +73,10 @@ type signalExporter[E attempter, D any] struct {
 	// stopping is closed when the exporter shuts down, to end waits between retries.
 	stopping chan struct{}
 	stopOnce sync.Once
+	// meta, when enabled, gets every request whose export succeeded whole,
+	// through observe (attributes-metadata §5).
+	meta    *attrsMetadata
+	observe func(D)
 }
 
 // attempter is an encoder that takes the ingest time and the ID generator of
@@ -109,11 +114,27 @@ func newTracesExporter(cfg *Config, set component.TelemetrySettings) (*signalExp
 		e.logger = set.Logger
 		return e
 	}
-	return newSignalExporter(cfg, cfg.Traces.Database, set, tracesTables, newEncoder, (*tracesEncoder).encode)
+	x, err := newSignalExporter(cfg, cfg.Traces.Database, set, tracesTables, newEncoder, (*tracesEncoder).encode)
+	if err != nil || !cfg.AttributesMetadata.Enabled {
+		return x, err
+	}
+	if x.meta, err = newAttrsMetadata(cfg, "traces", set); err != nil {
+		return nil, err
+	}
+	x.observe = x.meta.observeTraces
+	return x, nil
 }
 
 func newLogsExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*logsEncoder, plog.Logs], error) {
-	return newSignalExporter(cfg, cfg.Logs.Database, set, logsTables, newLogsEncoder, (*logsEncoder).encode)
+	x, err := newSignalExporter(cfg, cfg.Logs.Database, set, logsTables, newLogsEncoder, (*logsEncoder).encode)
+	if err != nil || !cfg.AttributesMetadata.Enabled {
+		return x, err
+	}
+	if x.meta, err = newAttrsMetadata(cfg, "logs", set); err != nil {
+		return nil, err
+	}
+	x.observe = x.meta.observeLogs
+	return x, nil
 }
 
 func newMetricsExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*metricsEncoder, pmetric.Metrics], error) {
@@ -122,7 +143,15 @@ func newMetricsExporter(cfg *Config, set component.TelemetrySettings) (*signalEx
 		e.logger = set.Logger
 		return e
 	}
-	return newSignalExporter(cfg, cfg.Metrics.Database, set, metricsTables, newEncoder, (*metricsEncoder).encode)
+	x, err := newSignalExporter(cfg, cfg.Metrics.Database, set, metricsTables, newEncoder, (*metricsEncoder).encode)
+	if err != nil || !cfg.AttributesMetadata.Enabled {
+		return x, err
+	}
+	if x.meta, err = newAttrsMetadata(cfg, "metrics", set); err != nil {
+		return nil, err
+	}
+	x.observe = x.meta.observeMetrics
+	return x, nil
 }
 
 func newMeterExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*meterEncoder, pmetric.Metrics], error) {
@@ -158,7 +187,22 @@ func tableToken(request, table string, chunk int) string {
 }
 
 func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) error {
-	return x.clickhouseClient.start(ctx)
+	if err := x.clickhouseClient.start(ctx); err != nil {
+		return err
+	}
+	if x.meta != nil {
+		x.meta.start(ctx)
+	}
+	return nil
+}
+
+// shutdown inserts the queued metadata, then closes the connection.
+func (x *signalExporter[E, D]) shutdown(ctx context.Context) error {
+	var err error
+	if x.meta != nil {
+		err = x.meta.shutdown(ctx)
+	}
+	return errors.Join(err, x.clickhouseClient.shutdown(ctx))
 }
 
 // stopRetries ends the retries of requests in flight. It must run before the
@@ -171,7 +215,7 @@ func (x *signalExporter[E, D]) stopRetries() {
 // shares the request's identity, bounded by timeout.
 func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 	id := newRequestID(time.Now())
-	return retry(ctx, x.cfg.RetryConfig, x.logger, x.stopping, func(ctx context.Context) error {
+	err := retry(ctx, x.cfg.RetryConfig, x.logger, x.stopping, func(ctx context.Context) error {
 		if x.cfg.Timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, x.cfg.Timeout)
@@ -182,6 +226,12 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 		}
 		return x.export(ctx, data, id)
 	})
+	// Only once every table of every attempt is confirmed: never per attempt
+	// or per table.
+	if err == nil && x.observe != nil {
+		x.observe(data)
+	}
+	return err
 }
 
 // export encodes and inserts one attempt of request id. Its token identifies

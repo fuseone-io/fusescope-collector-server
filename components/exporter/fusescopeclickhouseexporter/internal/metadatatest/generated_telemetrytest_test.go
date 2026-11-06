@@ -19,9 +19,13 @@ func TestSetupTelemetry(t *testing.T) {
 	tb, err := metadata.NewTelemetryBuilder(testTel.NewTelemetrySettings())
 	require.NoError(t, err)
 	defer tb.Shutdown()
+	tb.ExporterFusescopeClickhouseAttributesMetadataDropped.Add(context.Background(), 1)
 	tb.ExporterFusescopeClickhouseInsertDuration.Record(context.Background(), 1)
 	tb.ExporterFusescopeClickhouseInsertErrors.Add(context.Background(), 1)
 	tb.ExporterFusescopeClickhouseInsertedRows.Add(context.Background(), 1)
+	AssertEqualExporterFusescopeClickhouseAttributesMetadataDropped(t, testTel,
+		[]metricdata.DataPoint[int64]{{Value: 1}},
+		metricdatatest.IgnoreTimestamp())
 	AssertEqualExporterFusescopeClickhouseInsertDuration(t, testTel,
 		[]metricdata.HistogramDataPoint[float64]{{}}, metricdatatest.IgnoreValue(),
 		metricdatatest.IgnoreTimestamp())

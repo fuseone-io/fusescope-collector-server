@@ -38,6 +38,14 @@ attributes:
     description: The result of the attempt, as the exporter returns it.
     type: string
     enum: [ok, retryable, permanent]
+  reason:
+    description: Why an attribute metadata row was dropped (docs/spec/attributes-metadata.md §5).
+    type: string
+    enum: [window, resource, row_bytes, queue, state_bytes, too_old, insert]
+  signal:
+    description: The signal of the attribute metadata row.
+    type: string
+    enum: [traces, logs, metrics]
   table:
     description: The table inserted into, without its database.
     type: string
@@ -55,9 +63,19 @@ attributes:
       - distributed_time_series_v4
       - distributed_samples_v4
       - distributed_samples
+      - distributed_attributes_metadata
 
 telemetry:
   metrics:
+    exporter_fusescope_clickhouse_attributes_metadata_dropped:
+      enabled: true
+      stability: development
+      description: Attribute metadata rows dropped by a limit or a failed insert; the data itself is written.
+      unit: "{row}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [signal, reason]
     exporter_fusescope_clickhouse_insert_duration:
       enabled: true
       stability: development
