@@ -227,6 +227,63 @@ func TestReceiverServesOverTLS(t *testing.T) {
 	}
 }
 
+// With TLS 1.2 opted in, only ECDHE with AEAD is accepted: a client offering
+// only CBC suites fails, the AES-GCM and ChaCha20 suites of Android 6-9
+// succeed. The default stays TLS 1.3 only (ADR 0009).
+func TestReceiverTLS12Suites(t *testing.T) {
+	store := newStore(t, testPolicy(1))
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
+	s := startReceiver(t, func(c *Config) { c.TLS.MinVersion = "1.2" }, host)
+	roots := s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+	post := func(suite uint16) (*http.Response, error) {
+		client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs: roots, MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12, CipherSuites: []uint16{suite},
+		}}}
+		defer client.CloseIdleConnections()
+		req, err := http.NewRequest(http.MethodPost, s.url+tracesPath, strings.NewReader(testTraceJSON))
+		require.NoError(t, err)
+		for k, v := range jsonHeaders(webKey) {
+			req.Header.Set(k, v)
+		}
+		return client.Do(req)
+	}
+	for _, suite := range []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+	} {
+		resp, err := post(suite)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		require.Error(t, err, "%s must be refused", tls.CipherSuiteName(suite))
+	}
+	for _, suite := range []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	} {
+		resp, err := post(suite)
+		require.NoError(t, err, tls.CipherSuiteName(suite))
+		resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, suite, resp.TLS.CipherSuite)
+	}
+}
+
+func TestReceiverTLSDefaultIsStrict(t *testing.T) {
+	store := newStore(t, testPolicy(1))
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
+	def := createDefaultConfig().(*Config).TLS.MinVersion
+	s := startReceiver(t, func(c *Config) { c.TLS.MinVersion = def }, host)
+	roots := s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MaxVersion: tls.VersionTLS12}}}
+	defer client.CloseIdleConnections()
+	resp, err := client.Post(s.url+tracesPath, "application/json", strings.NewReader(testTraceJSON))
+	if resp != nil {
+		resp.Body.Close()
+	}
+	require.Error(t, err, "the default listener refuses TLS 1.2")
+}
+
 func TestReceiverReadiness(t *testing.T) {
 	store := newStore(t, nil)
 	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})

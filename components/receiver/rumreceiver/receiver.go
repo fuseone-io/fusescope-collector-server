@@ -168,7 +168,7 @@ func (r *rumReceiver) Start(ctx context.Context, host component.Host) error {
 			reporter.Release()
 		}
 	}
-	tlsCfg, err := r.cfg.TLS.LoadTLSConfig(ctx)
+	tlsCfg, err := r.cfg.serverTLS().LoadTLSConfig(ctx)
 	if err != nil {
 		release()
 		return fmt.Errorf("rum receiver TLS: %w", err)

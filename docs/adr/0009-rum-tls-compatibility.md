@@ -1,26 +1,44 @@
-# 0009 · TLS 1.2 compatibility on RUM ingress
+# 0009 · TLS 1.2 opt-in on RUM ingress
 
-- Status: proposed (2026-11-06), implementation submitted for review with this amendment.
+- Status: accepted (2026-11-06)
 - Issue: [#62](https://github.com/fuseone-io/fusescope-collector-server/issues/62); Android delivery: [FuseScope #337](https://github.com/fuseone-io/fusescope/issues/337), [#189](https://github.com/fuseone-io/fusescope/issues/189).
 - Amends: [ADR 0004](0004-security-baseline.md), transport floor for the RUM listener only.
 - Deciders: FuseOne maintainers.
 
 ## Context
 
-The Android SDK retains API 23+ support. Stock Android 6–9 cannot negotiate the collector's TLS-1.3-only RUM listener. Bundling another native TLS implementation in every consuming application would add binary size, ABI packaging and maintenance obligations. The user chose compatibility at collector ingress instead of that SDK dependency.
+The Android SDK supports API 23+. Stock Android 6–9 (API 23–28) cannot negotiate TLS 1.3, which
+the RUM listener requires. Bundling another TLS implementation in every consuming application
+would add binary size, ABI packaging and maintenance obligations, so compatibility is provided
+at collector ingress instead.
 
 ## Decision
 
-The `rumreceiver` listener accepts TLS 1.2 and TLS 1.3 by default. A capable client negotiates TLS 1.3. Operators can retain a TLS-1.3-only listener by setting `tls.min_version: "1.3"`; such deployments do not provide direct compatibility with stock API 23–28.
-
-TLS 1.0, TLS 1.1 and plaintext remain refused. Certificate/key files, certificate validation, authentication, origin/package checks, tenant isolation, ingestion limits and fail-closed policy behavior retain their contracts. Do not enable obsolete ciphers, static RSA key exchange or certificate-verification bypasses to obtain compatibility; use the pinned Go runtime's supported default cipher suites.
-
-This exception applies only to public RUM client ingress. OpAMP, ClickHouse, agent/gateway transports, exporters and unrelated receivers retain their existing transport policy. No remote policy message can change the local TLS configuration.
-
-A terminating proxy must also accept TLS 1.2 and TLS 1.3 on the RUM public endpoint for old clients. Keep certificate verification and preferably mTLS on the proxy-to-collector hop; that hop may remain TLS 1.3. Do not lower a shared non-RUM public listener implicitly: split endpoints or configure an explicitly reviewed RUM ingress. The deployment's public handshake, not just the collector binary, defines compatibility.
+- **TLS 1.3 stays the default** of the `rumreceiver` listener. TLS 1.2 is an explicit opt-in
+  with `tls.min_version: "1.2"`, for deployments that serve older Android clients; capable
+  clients still negotiate TLS 1.3.
+- **With TLS 1.2 enabled, only ECDHE with AEAD is accepted:** AES-GCM and ChaCha20-Poly1305
+  (`TLS_ECDHE_{ECDSA,RSA}_WITH_AES_{128_GCM_SHA256,256_GCM_SHA384}`,
+  `TLS_ECDHE_{ECDSA,RSA}_WITH_CHACHA20_POLY1305_SHA256`). This is the receiver's suite list when
+  `tls.cipher_suites` is unset, and validation refuses any configured suite outside it: CBC,
+  SHA-1, static RSA key exchange and all others. Go's default TLS 1.2 list is not enough on its
+  own: it also accepts ECDHE with AES-CBC-SHA. TLS 1.3 uses Go's own suites.
+- TLS 1.0, TLS 1.1 and plaintext remain refused. Certificate and key files, authentication,
+  origin and package checks, tenant isolation, limits and fail-closed policy behaviour keep their
+  contracts.
+- The exception applies only to public RUM client ingress. OpAMP, ClickHouse, agent and gateway
+  transports, exporters and other receivers keep TLS 1.3. No remote policy message can change the
+  local TLS configuration.
+- A terminating proxy in front of the collector must accept TLS 1.2 with the same AEAD suites on
+  the RUM public endpoint for old clients. The proxy-to-collector hop may stay TLS 1.3, with
+  certificate verification and preferably mTLS. A shared non-RUM public listener is not lowered
+  implicitly: split the endpoints or configure an explicitly reviewed RUM ingress.
 
 ## Consequences
 
-The SDK gains no TLS provider dependency or global provider changes. A collector update alone does not change existing explicit minimums or proxy policies: chart configuration, deployment and actual Android acceptance must be reconciled before declaring the compatibility gate complete.
-
-Receiver tests cover traces and logs with a TLS-1.2-only client, modern TLS 1.3 negotiation, older-version rejection and the strict 1.3 override. Real API 23/28 and modern Android validation, including consent cycles, remains a release gate in #337. No claim of support for Android-native crash APIs unavailable on older Android versions is implied.
+Deployments that do not opt in are unchanged. The SDK gains no TLS provider dependency. Serving
+Android 6–9 takes three steps: a collector with this change, `min_version: "1.2"` in its RUM
+configuration (the chart's `fusescopeCollector.rum.tlsMinVersion`), and a public proxy that
+accepts TLS 1.2. Receiver tests cover traces and logs with TLS 1.2 clients, refusal of a
+CBC-only client, the AEAD suites, TLS 1.3 negotiation, refusal of 1.0 and 1.1, and the strict
+default. Device acceptance on API 23 and 28 remains a release gate in FuseScope #337.
