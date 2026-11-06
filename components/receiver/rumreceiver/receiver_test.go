@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -182,22 +183,48 @@ func (s *started) post(t *testing.T, path, body string, headers map[string]strin
 }
 
 func TestReceiverServesOverTLS(t *testing.T) {
-	store := newStore(t, testPolicy(1))
-	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
-	s := startReceiver(t, nil, host)
-
-	resp := s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, uint16(tls.VersionTLS13), resp.TLS.Version)
-	resp = s.post(t, logsPath, testLogJSON, jsonHeaders(webKey))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 1, s.traces.SpanCount())
-	assert.Equal(t, 1, s.logs.LogRecordCount())
-
-	old := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs, MaxVersion: tls.VersionTLS12}}}
-	defer old.CloseIdleConnections()
-	_, err := old.Post(s.url+tracesPath, "application/json", strings.NewReader(testTraceJSON))
-	assert.Error(t, err, "TLS 1.2 is refused (ADR 0004)")
+	for _, minimum := range []string{"1.2", "1.3"} {
+		t.Run(minimum, func(t *testing.T) {
+			store := newStore(t, testPolicy(1))
+			host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
+			s := startReceiver(t, func(c *Config) { c.TLS.MinVersion = minimum }, host)
+			roots := s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+			for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11, tls.VersionTLS12, tls.VersionTLS13} {
+				t.Run(fmt.Sprintf("client_%x", version), func(t *testing.T) {
+					client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: version, MaxVersion: version}}}
+					defer client.CloseIdleConnections()
+					for _, signal := range []struct{ path, body string }{{tracesPath, testTraceJSON}, {logsPath, testLogJSON}} {
+						req, err := http.NewRequest(http.MethodPost, s.url+signal.path, strings.NewReader(signal.body))
+						require.NoError(t, err)
+						for k, v := range jsonHeaders(webKey) {
+							req.Header.Set(k, v)
+						}
+						resp, err := client.Do(req)
+						if version < tls.VersionTLS12 || (minimum == "1.3" && version == tls.VersionTLS12) {
+							if resp != nil {
+								resp.Body.Close()
+							}
+							require.Error(t, err, "unsupported TLS must fail before ingest")
+							continue
+						}
+						require.NoError(t, err)
+						resp.Body.Close()
+						assert.Equal(t, http.StatusOK, resp.StatusCode)
+						assert.Equal(t, version, resp.TLS.Version)
+					}
+				})
+			}
+			resp := s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey))
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, uint16(tls.VersionTLS13), resp.TLS.Version, "modern clients prefer TLS 1.3")
+			want := 3
+			if minimum == "1.3" {
+				want = 2
+			}
+			assert.Equal(t, want, s.traces.SpanCount())
+			assert.Equal(t, want-1, s.logs.LogRecordCount())
+		})
+	}
 }
 
 func TestReceiverReadiness(t *testing.T) {

@@ -29,7 +29,7 @@ func TestConfigDefaults(t *testing.T) {
 		ResourcesPerRequest: 1000, ScopesPerResource: 100, ItemsPerRequest: 10_000, EventsPerSpan: 128,
 		LinksPerSpan: 128, AttributesPerEntity: 128, ElementsPerRequest: 25_000, ValueDepth: 8,
 	}, cfg.Limits)
-	assert.Equal(t, "1.3", cfg.TLS.MinVersion)
+	assert.Equal(t, "1.2", cfg.TLS.MinVersion)
 }
 
 func TestConfigUnmarshal(t *testing.T) {
@@ -50,7 +50,7 @@ func TestConfigUnmarshal(t *testing.T) {
 	assert.Equal(t, 64, cfg.Limits.Requests)
 	assert.Equal(t, 4096, cfg.Limits.Connections)
 	assert.Equal(t, time.Hour, cfg.MaxStaleness)
-	assert.Equal(t, "1.3", cfg.TLS.MinVersion)
+	assert.Equal(t, "1.2", cfg.TLS.MinVersion)
 	require.NoError(t, cfg.Validate())
 
 	require.Error(t, confmap.NewFromStringMap(map[string]any{"query_key": true}).Unmarshal(createDefaultConfig()), "unknown keys are refused")
@@ -69,7 +69,13 @@ func TestConfigValidate(t *testing.T) {
 	}{
 		{name: "Valid", edit: func(*Config) {}},
 		{name: "NoTLS", edit: func(c *Config) { c.TLS = configtls.ServerConfig{Config: configtls.Config{MinVersion: "1.3"}} }, err: "tls is required"},
-		{name: "TLS12", edit: func(c *Config) { c.TLS.MinVersion = "1.2" }, err: "tls.min_version must be 1.3"},
+		{name: "TLS12", edit: func(c *Config) { c.TLS.MinVersion = "1.2" }},
+		{name: "TLS13", edit: func(c *Config) { c.TLS.MinVersion = "1.3" }},
+		{name: "TLS10", edit: func(c *Config) { c.TLS.MinVersion = "1.0" }, err: "tls.min_version must be 1.2 or 1.3"},
+		{name: "TLS11", edit: func(c *Config) { c.TLS.MinVersion = "1.1" }, err: "tls.min_version must be 1.2 or 1.3"},
+		{name: "TLSUnknown", edit: func(c *Config) { c.TLS.MinVersion = "1.4" }, err: "tls.min_version must be 1.2 or 1.3"},
+		{name: "TLSMaxOld", edit: func(c *Config) { c.TLS.MaxVersion = "1.1" }, err: "tls.max_version"},
+		{name: "TLSInverted", edit: func(c *Config) { c.TLS.MaxVersion = "1.2" }, err: "tls.max_version"},
 		// Codex review on #43: credentials from files only.
 		{name: "InlineKey", edit: func(c *Config) { c.TLS.KeyFile, c.TLS.KeyPem = "", "-----BEGIN EC PRIVATE KEY-----" }, err: "inline cert_pem, key_pem and ca_pem are refused"},
 		{name: "InlineCert", edit: func(c *Config) { c.TLS.CertFile, c.TLS.CertPem = "", "-----BEGIN CERTIFICATE-----" }, err: "inline cert_pem, key_pem and ca_pem are refused"},

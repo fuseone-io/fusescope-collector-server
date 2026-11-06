@@ -18,7 +18,7 @@ import (
 type Config struct {
 	// Endpoint is the TLS listener for /rum/v1/traces and /rum/v1/logs.
 	Endpoint string `mapstructure:"endpoint"`
-	// TLS is required, at least 1.3 (ADR 0004).
+	// TLS is required, at least 1.2 on RUM ingress (ADR 0009).
 	TLS configtls.ServerConfig `mapstructure:"tls"`
 	// IngestPolicy names the extension holding the ingest policy. Unset, the
 	// receiver refuses everything and reports not ready (§11.4).
@@ -87,7 +87,7 @@ func (l LimitsConfig) structure() structureLimits {
 	}
 }
 
-const minTLSVersion = "1.3"
+const minTLSVersion = "1.2"
 
 func createDefaultConfig() component.Config {
 	return &Config{
@@ -138,8 +138,11 @@ func (c *Config) Validate() error {
 	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
 		errs = append(errs, errors.New("tls.cert_file and tls.key_file are required"))
 	}
-	if c.TLS.MinVersion != minTLSVersion {
-		errs = append(errs, fmt.Errorf("tls.min_version must be %s (ADR 0004)", minTLSVersion))
+	if c.TLS.MinVersion != "1.2" && c.TLS.MinVersion != "1.3" {
+		errs = append(errs, errors.New("tls.min_version must be 1.2 or 1.3 (ADR 0009)"))
+	}
+	if c.TLS.MaxVersion != "" && (c.TLS.MaxVersion != "1.2" && c.TLS.MaxVersion != "1.3" || c.TLS.MaxVersion < c.TLS.MinVersion) {
+		errs = append(errs, errors.New("tls.max_version must be 1.2 or 1.3 and at least tls.min_version (ADR 0009)"))
 	}
 	if c.MaxBodySize <= 0 {
 		errs = append(errs, errors.New("max_body_size must be positive"))

@@ -66,12 +66,7 @@ allowed (ADR 0005), but nothing needs them.
   and concurrency limits of §7.1: preflight; policy present (§11.4); key; origin; rate limits;
   content type; body; decoding; package names; processing; pipeline. A request refused at one
   step is not examined further.
-- **TLS.** The listener serves TLS 1.3 only, with no plaintext option, its certificate and key read from files (`cert_file`, `key_file`; inline PEM is refused so no key reaches the effective configuration reported over OpAMP) ([ADR 0004](../adr/0004-security-baseline.md);
-  [M43]). Unlike ClickHouse ([ADR 0007](../adr/0007-clickhouse-plaintext-for-migration.md)),
-  no existing deployment needs an exception. Deployment: the public proxy (Caddy) terminates
-  the client's TLS and opens a second TLS connection to the collector that validates the
-  collector's certificate; mutual TLS on that hop is recommended. The proxy's addresses go in
-  `trusted_proxies` (§7).
+- **TLS.** The RUM listener accepts TLS 1.2 and TLS 1.3 by default; `tls.min_version: "1.3"` retains strict mode. TLS 1.0/1.1 and plaintext are refused. This scoped amendment to [ADR 0004](../adr/0004-security-baseline.md) is proposed in [ADR 0009](../adr/0009-rum-tls-compatibility.md) for stock Android API 23–28 compatibility. Certificates and keys are read from files (`cert_file`, `key_file`); inline PEM remains refused so no key reaches the effective configuration reported over OpAMP ([M43]). A public terminating proxy must also accept TLS 1.2 on the RUM endpoint; the verified proxy-to-collector connection can retain TLS 1.3, preferably mutual TLS. Other transport floors are unchanged. Configure only known proxy addresses in `trusted_proxies` (§7).
 - The browser bundle route of the backend (`/rum/v1/sdk/browser/{version}/…`) is not served:
   the CDN serves it in this phase, with no new build dependency ([M], resolved 11; [ADR10 §10]).
 
