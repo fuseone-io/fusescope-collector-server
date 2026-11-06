@@ -802,3 +802,90 @@ func TestMetadataShutdownInsertsTheQueue(t *testing.T) {
 		t.Errorf("second shutdown = %v", err)
 	}
 }
+
+// The last rows are reserved before shutdown can give up: even when shutdown
+// waits on the mutex past its deadline, no insert starts on a closed
+// connection, and the rows are inserted before it closes.
+func TestMetadataShutdownReservesBeforeClosing(t *testing.T) {
+	f := newMetaFixture(t, "logs", func(c *AttributesMetadataConfig) { c.FlushInterval = time.Hour })
+	var mu sync.Mutex
+	var afterClose, inserts int
+	f.m.client.do = func(context.Context, ch.Query) error {
+		mu.Lock()
+		defer mu.Unlock()
+		inserts++
+		if f.m.client.closed.Load() {
+			afterClose++
+		}
+		return nil
+	}
+	f.m.start(context.Background())
+	f.m.observeLogs(logRecords(nil, metaNow, time.Time{}, map[string]string{"k": "v"}))
+
+	f.m.mu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.m.shutdown(ctx) }()
+	<-ctx.Done()
+	time.Sleep(10 * time.Millisecond)
+	f.m.mu.Unlock()
+	<-done
+
+	select {
+	case <-f.m.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the connection was never closed")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if afterClose != 0 {
+		t.Fatalf("%d inserts started after the connection closed", afterClose)
+	}
+	if inserts != 1 {
+		t.Fatalf("inserts = %d, want the reserved rows inserted once before the close", inserts)
+	}
+	if rows := f.m.take(); rows != nil {
+		t.Errorf("a reservation after the close began: %+v", rows)
+	}
+}
+
+// Repeated shutdowns over an insert that never returns wait for one closer
+// and start no goroutines of their own.
+func TestMetadataRepeatedShutdownAddsNoWaiters(t *testing.T) {
+	for _, periodic := range []bool{false, true} {
+		t.Run(map[bool]string{false: "final insert", true: "periodic insert"}[periodic], func(t *testing.T) {
+			f := newMetaFixture(t, "logs", func(c *AttributesMetadataConfig) {
+				c.FlushInterval = time.Hour
+				if periodic {
+					c.FlushInterval = 10 * time.Millisecond
+				}
+			})
+			stuck := &stuckInsert{entered: make(chan struct{}), release: make(chan struct{})}
+			t.Cleanup(func() { close(stuck.release) })
+			f.m.client.do = stuck.do
+			f.m.start(context.Background())
+			f.m.observeLogs(logRecords(nil, metaNow, time.Time{}, map[string]string{"k": "v"}))
+			if periodic {
+				<-stuck.entered
+			}
+			shutdown := func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+				defer cancel()
+				if err := f.m.shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("shutdown = %v", err)
+				}
+			}
+			shutdown()
+			time.Sleep(20 * time.Millisecond)
+			before := runtime.NumGoroutine()
+			for range 20 {
+				shutdown()
+			}
+			time.Sleep(20 * time.Millisecond)
+			if after := runtime.NumGoroutine(); after > before {
+				t.Errorf("goroutines %d → %d over 20 more shutdowns", before, after)
+			}
+		})
+	}
+}

@@ -108,9 +108,13 @@ type attrsMetadata struct {
 	done   chan struct{}
 	stop   sync.Once
 	cancel context.CancelFunc
-	// inflight counts the inserts running, which the connection must
-	// outlive.
-	inflight sync.WaitGroup
+	// inflight counts the inserts reserved by take, which the connection
+	// must outlive. closing, under mu, stops new reservations once the close
+	// has begun; closed is closed when the connection is.
+	inflight  sync.WaitGroup
+	closing   bool
+	closeOnce sync.Once
+	closed    chan struct{}
 }
 
 func newAttrsMetadata(cfg *Config, signal string, set component.TelemetrySettings) (*attrsMetadata, error) {
@@ -119,6 +123,7 @@ func newAttrsMetadata(cfg *Config, signal string, set component.TelemetrySetting
 		cfg: mc, signal: signal, logger: set.Logger, now: time.Now, timeout: cfg.Timeout,
 		client:  &clickhouseClient{cfg: cfg, database: mc.Database, logger: set.Logger},
 		windows: map[int64]*amWindow{},
+		closed:  make(chan struct{}),
 	}
 	m.scratch.New = func() any { return &amScratch{} }
 	m.body = fmt.Sprintf("INSERT INTO %s.%s %s VALUES", mc.Database, amTable, newAMColumns().input().Columns())
@@ -160,48 +165,57 @@ func (m *attrsMetadata) start(ctx context.Context) {
 }
 
 // shutdown stops the periodic inserts, inserts what is queued and closes the
-// connection, all within ctx: an insert stuck past the deadline, even one that
-// ignores its context, is abandoned and the connection closed once it returns.
-// It may be called again.
+// connection, all within ctx. An insert stuck past the deadline, even one that
+// ignores its context, is abandoned; the connection is closed once it returns,
+// by a single closer that repeated calls only wait for.
 func (m *attrsMetadata) shutdown(ctx context.Context) error {
 	if m.quit != nil {
 		m.stop.Do(func() { close(m.quit) })
-		if !within(ctx, func() { <-m.done }) {
+		if !wait(ctx, m.done) {
 			m.cancel()
-			m.closeLater()
+			m.startClose()
 			return ctx.Err()
 		}
 		m.cancel()
-		if !within(ctx, func() { m.flush(ctx) }) {
-			m.closeLater()
-			return ctx.Err()
+		// Reserve the last rows before anything can be abandoned.
+		if rows := m.take(); rows != nil {
+			inserted := make(chan struct{})
+			go func() {
+				defer close(inserted)
+				m.insertRows(ctx, rows)
+			}()
+			if !wait(ctx, inserted) {
+				m.startClose()
+				return ctx.Err()
+			}
 		}
 	}
-	if !within(ctx, m.closeClient) {
+	m.startClose()
+	if !wait(ctx, m.closed) {
 		return ctx.Err()
 	}
 	return nil
 }
 
-// closeClient closes the connection once no insert holds it.
-func (m *attrsMetadata) closeClient() {
-	m.inflight.Wait()
-	_ = m.client.shutdown(context.Background())
+// startClose stops new inserts and closes the connection once the reserved
+// ones return; m.closed is closed then. Only the first call starts it.
+func (m *attrsMetadata) startClose() {
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.closing = true
+		m.mu.Unlock()
+		go func() {
+			defer close(m.closed)
+			m.inflight.Wait()
+			_ = m.client.shutdown(context.Background())
+		}()
+	})
 }
 
-// closeLater closes the connection once the inserts holding it return.
-func (m *attrsMetadata) closeLater() { go m.closeClient() }
-
-// within runs f and reports whether it returned before ctx ended; if not, f
-// keeps running on its own.
-func within(ctx context.Context, f func()) bool {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		f()
-	}()
+// wait reports whether ch closed before ctx ended.
+func wait(ctx context.Context, ch <-chan struct{}) bool {
 	select {
-	case <-done:
+	case <-ch:
 		return true
 	case <-ctx.Done():
 		return false
@@ -474,16 +488,28 @@ func ownKVs(kvs []amKV) []amKV {
 // flush inserts the queued rows in one block. A failed insert drops them,
 // counted, and releases their keys.
 func (m *attrsMetadata) flush(ctx context.Context) {
+	if rows := m.take(); rows != nil {
+		m.insertRows(ctx, rows)
+	}
+}
+
+// take reserves the queued rows for one insert: it counts the insert in
+// inflight under mu, so a close that has begun (closing, set under mu before
+// it waits) never sees an insert start after it. It returns nil once closing.
+func (m *attrsMetadata) take() []amRow {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing || len(m.queue) == 0 {
+		return nil
+	}
 	rows := m.queue
 	m.queue, m.queueBytes = nil, 0
-	if len(rows) > 0 {
-		m.inflight.Add(1)
-	}
-	m.mu.Unlock()
-	if len(rows) == 0 {
-		return
-	}
+	m.inflight.Add(1)
+	return rows
+}
+
+// insertRows inserts rows that take reserved.
+func (m *attrsMetadata) insertRows(ctx context.Context, rows []amRow) {
 	defer m.inflight.Done()
 	c := newAMColumns()
 	for _, r := range rows {
