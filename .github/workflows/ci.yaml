@@ -52,3 +52,21 @@ jobs:
         run: make components-gen && git diff --exit-code
       - name: Test components
         run: set -o pipefail; make components 2>&1 | tee components.out || { grep -E '\.go:[0-9]+|^(FAIL|---|panic)|got |want ' components.out | head -9 | sed 's/^/::error::/'; exit 1; }
+
+  # fusescope-schema against a real 2x2 ClickHouse cluster, with each
+  # coordination service the spec supports (docs/spec/fusescope-schema.md §9).
+  schema:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        coordination: [keeper, zookeeper]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: false
+      - name: Integration tests (${{ matrix.coordination }})
+        run: make schema-integration COORDINATION=${{ matrix.coordination }}

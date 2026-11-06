@@ -90,12 +90,22 @@ The spike before acceptance verifies this (ADR 0010).
 
 The bootstrap reads before it writes.
 
-1. If `fusescope_schema` exists:
+1. If `fusescope_schema` exists on any replica:
    - read `meta.coordination`;
-   - compare the structure of `meta`, `lease` and `migrations` with the layout of that version.
+   - compare, on every replica (`clusterAllReplicas` over `system.tables` and `system.columns`),
+     the structure of `meta`, `lease` and `migrations` with the layout of that version: the
+     columns in order, `primary_key`, and `engine_full`, which names the KeeperMap path, as in
+     `KeeperMap('/fusescope_schema/lease') PRIMARY KEY name` (observed on 25.12, §11).
 
-   It goes on only if every table present matches this binary's layout and no `coordination`
-   value is newer. Otherwise it refuses (§7.1) without writing. That covers a newer layout, an
+   It goes on only if every table present on every replica matches this binary's layout and every
+   replica's `coordination`, read on that replica, is this binary's.
+
+   ClickHouse resolves a table function's structure on the server it is sent to, and fails on a
+   replica without the table (observed on 25.12 for `clusterAllReplicas` over the table and over
+   `merge()`). So the version can be read on every replica only once each has `meta`: when `meta`
+   is on some replicas only, the bootstrap first creates it where it is missing, `IF NOT EXISTS`
+   and without rows, then reads the version on every replica. That `CREATE` is the only write that
+   can precede a refusal; when `meta` is on every replica, a refusal writes nothing. Otherwise it refuses (§7.1) without writing. That covers a newer layout, an
    unknown table in `fusescope_schema` and a changed column.
 2. If `fusescope_schema` is absent, or holds this binary's layout only partly (some tables
    missing, or `meta` and `lease` without their rows), it completes what is missing:
@@ -104,7 +114,10 @@ The bootstrap reads before it writes.
    - Insert `meta(coordination, 1)`, `meta(cluster_id, <random UUID>)` and
      `lease(migrate, '', 0, 0)`, each in strict mode, so the first insert wins. A "key exists"
      failure means another run got there first, and is ignored.
-3. It reads `meta` and the structures again, and refuses if they are not this binary's layout.
+3. It reads the structures on every replica again, and refuses unless each replica shows all three
+   tables exactly. It reads back `meta.coordination`, `meta.cluster_id` and the lease table, which
+   must hold the single `migrate` row with fields the protocol of §6 writes: token 0 with no owner
+   and a zero expiry, or a positive token with a positive expiry, owned or released.
 
 The bootstrap creates only `fusescope_schema`. It never touches the telemetry databases, and it
 decides nothing about them.
@@ -238,6 +251,22 @@ mode.
    - The migration in progress stays `started`, and `migrate` exits 4 (if no migration was
      `started` yet, it exits 2).
 3. **Release.** `UPDATE owner = '' WHERE name = 'migrate' AND owner = <me> AND token = <mine>`.
+
+The timings must keep the holder's own deadline inside the lease on every server: the runner
+refuses a configuration unless the owner is set, every duration is positive, the renewal period
+is shorter than the loss deadline, and loss deadline + re-read window (§3.2) + allowed clock
+skew (§2.1) ≤ lease duration; the defaults give 4 min + 10 s + 30 s ≤ 5 min. A statement check
+that starts just before the loss deadline then ends before the lease can expire anywhere.
+
+Acquire, renewal, the statement check and release run one at a time in a runner, so a comparison
+never meets a renewal it did not read. Every store call is bounded by the deadline of the step
+that makes it. The comparison's own deadline is exact: its last re-read waits only for the time
+left, and a read showing the lease counts only if it ends within the re-read window.
+
+Replicas are compared by `hostName()` and `serverUUID()`. The listing must hold as many entries as
+`system.clusters` lists for the cluster, with no key twice, since a key twice means one server
+answering for two replicas. A failure to list them is a divergence, never a fallback to the
+replicas that answered.
 
 Every condition is evaluated by the server inside the conditional update, so an acquire cannot
 take a lease renewed after it was read: the renewal leaves `owner` set and `expires_at` in the

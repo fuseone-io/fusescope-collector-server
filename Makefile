@@ -14,7 +14,7 @@ VALIDATE_ENV := INGEST_TOKENS_FILE=/dev/null ENGINE_TOKEN_FILE=/dev/null GATEWAY
 	GATEWAY_ENDPOINT=gateway:4317 GATEWAY_CA_FILE=/dev/null AGENT_CERT_FILE=/dev/null \
 	AGENT_KEY_FILE=/dev/null K8S_NODE_NAME=node HOST_ROOT_PATH=/ KUBELET_AUTH_TYPE=none
 
-.PHONY: build validate licenses vuln forbid-fork clean install-ocb components components-gen
+.PHONY: build validate licenses vuln forbid-fork clean install-ocb components components-gen schema-integration
 
 install-ocb:
 	go install go.opentelemetry.io/collector/cmd/builder@$(OCB_VERSION)
@@ -44,6 +44,17 @@ components:
 	@for d in $(COMPONENTS); do echo ">> $$d"; \
 	  (cd $$d && test -z "$$(gofmt -l .)" && go mod tidy -diff && go vet ./... && go test -race ./...) || { gofmt -l $$d; exit 1; }; \
 	done
+
+# fusescope-schema against a real 2x2 cluster (test/schema/cluster.sh), with
+# COORDINATION=keeper or zookeeper.
+COORDINATION ?= keeper
+# Fails, never skips, without the cluster; the cluster is torn down on any exit.
+schema-integration:
+	@dir=$$($(CURDIR)/test/schema/cluster.sh up $(COORDINATION)) || exit 2; \
+	  trap '$(CURDIR)/test/schema/cluster.sh down "$$dir"' EXIT; \
+	  addrs=$$(cat "$$dir/addrs") && [ -n "$$addrs" ] || { echo "the cluster wrote no addresses" >&2; exit 2; }; \
+	  cd components/command/fusescopeschema && \
+	  FUSESCOPE_SCHEMA_TEST_REQUIRED=1 FUSESCOPE_SCHEMA_TEST_ADDRS=$$addrs go test -race -count=1 -run Integration ./...
 
 # mdatagen's module has replace directives, so `go run …@version` refuses it.
 MDATAGEN := $(CURDIR)/$(BUILD_DIR)/tools/mdatagen
