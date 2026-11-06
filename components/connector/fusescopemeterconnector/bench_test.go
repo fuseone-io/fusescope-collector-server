@@ -55,3 +55,37 @@ func BenchmarkConsume(b *testing.B) {
 		})
 	}
 }
+
+// Overflowing and cutting record telemetry without allocating, so a sender
+// that fills the limits does not make the data path allocate.
+func TestOverflowAndCutsDoNotAllocate(t *testing.T) {
+	f := newFixture(t, signalLogs, func(c *Config) {
+		c.MaxSeries = 1
+		c.MaxLabelBytes = 8
+	})
+	require.NoError(t, f.m.ConsumeLogs(context.Background(), logs(1, "b", map[string]string{"service.name": "first"})))
+	over := logs(1, "b", map[string]string{"service.name": "a-name-longer-than-8"})
+	require.NoError(t, f.m.ConsumeLogs(withKey("k"), over)) // creates the overflow set
+	for _, ctx := range []context.Context{withKey("k"), context.Background()} {
+		allocs := testing.AllocsPerRun(50, func() { _ = f.m.ConsumeLogs(ctx, over) })
+		require.Zero(t, allocs, "allocations per overflowing, cut record")
+	}
+}
+
+func BenchmarkConsumeOverflow(b *testing.B) {
+	tel := componenttest.NewTelemetry()
+	defer func() { require.NoError(b, tel.Shutdown(context.Background())) }()
+	cfg := defaultConfig()
+	cfg.MaxSeries, cfg.MaxLabelBytes = 1, 8
+	m, err := newMeter(cfg, metadatatest.NewSettings(tel), consumertest.NewNop(), signalLogs)
+	require.NoError(b, err)
+	require.NoError(b, m.ConsumeLogs(context.Background(), logs(1, "b", map[string]string{"service.name": "first"})))
+	ld := logs(100, "b", map[string]string{"service.name": "a-name-longer-than-8"})
+	ctx := withKey("k")
+	require.NoError(b, m.ConsumeLogs(ctx, ld))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = m.ConsumeLogs(ctx, ld)
+	}
+}
