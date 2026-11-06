@@ -127,10 +127,15 @@ a replica that does not answer fails them.
    whose coordination state was copied from the original, since the copy carries the same
    identity.
 2. **The lease itself, after acquiring, after every renewal, and before every statement**
-   (§5.1). Every replica must show the holder's `owner` and `token`. Its `expires_at` must equal the
-   last confirmed renewal, or the one before it: reads are only sequentially consistent, so a
-   replica behind a lagging member of an ensemble may not show the latest renewal yet. Before
-   declaring a divergence, the runner reads the replica once more.
+   (§5.1). Every replica must show exactly the holder's `owner`, `token` and the `expires_at` of the
+   last confirmed acquire or renewal. Reads are only sequentially consistent, so a replica behind a
+   lagging member of an ensemble may briefly show an older value. The runner therefore re-reads a
+   differing replica every 500 ms for up to 10 seconds. If the replica still differs, that is a
+   divergence; an older `expires_at` is never accepted.
+
+   This leaves no fencing margin to an out-of-step store. A store that showed an older expiry could
+   let another migrator acquire it up to a renewal period earlier than the real lease expires.
+   Requiring the exact value closes that gap.
 
    A copied, independent store fails this check as soon as one side changes its lease. So does a
    replica on another ensemble, however it was set up.
@@ -315,7 +320,8 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | The coordination service (one node, and one member of an ensemble) stopped during a migration, then started again | the update in flight fails; the run exits 2 or 4 by §1; the rerun follows §7; the lease and the history are unchanged by the failed update |
 | A replica with another `keeper_map_path_prefix`, and a replica on another coordination ensemble | refused by §3.2 before the lease, naming the replica; nothing written to the telemetry databases |
 | A replica on another ensemble whose coordination state was copied from the original, so the same `cluster_id` | the identity check passes; the lease comparison after acquiring fails, and nothing is written |
-| A replica one renewal behind on `expires_at` (a lagging ensemble member) | accepted; two renewals behind, or another `owner`/`token`, is refused |
+| A replica briefly behind on `expires_at`, catching up within 10 s (a lagging ensemble member) | accepted after the re-reads |
+| A replica that stays one renewal behind, or two, on `expires_at`, or shows another `owner`/`token` | refused after 10 s of re-reads |
 | Killed during the bootstrap, at each step of §3.1 | the rerun completes the bootstrap and nothing is left in `fusescope_schema` outside the layout |
 
 **Functional validation**
@@ -359,7 +365,7 @@ chart's pin), against each coordination service:
 [`observed/fusescope-schema-spike/run.sh`](observed/fusescope-schema-spike/run.sh) reproduces it:
 `./run.sh keeper` or `./run.sh zookeeper`. It pins every image by digest, generates the four
 nodes' configuration, runs each case as an assertion, and prints PASS or FAIL. Its output is in
-`results-keeper.txt` and `results-zookeeper.txt`: 23 of 23 passed with each service. The script aborts (exit 2) if `docker compose` fails or any node does not reach its coordination service, so a run never passes on an unready cluster.
+`results-keeper.txt` and `results-zookeeper.txt`: 26 of 26 passed with each service. The script aborts (exit 2) if `docker compose` fails or any node does not reach its coordination service, so a run never passes on an unready cluster.
 
 | Case | Result, with Keeper and with ZooKeeper |
 |---|---|
@@ -374,6 +380,7 @@ nodes' configuration, runs each case as an assertion, and prints PASS or FAIL. I
 | A replica whose coordination tables were created under another prefix | it acquires its own lease while another process holds the real one (the split brain); the identity check finds differing `cluster_id` values |
 | The same with a replica on another coordination ensemble | the identity check finds differing values |
 | A replica on another ensemble with a copy of the original identity (the same `cluster_id`) | the identity check passes; the lease comparison fails, because that replica does not show the holder's `owner` and `token` |
+| That replica's copied lease set to the holder's `owner`, `token` and current `expires_at`; then to the previous renewal's `expires_at`; then to the one before | the full comparison passes only with the current value; it fails with the previous one and with the one before |
 | The coordination service stopped during a conditional update, then started | the update fails with an error; afterwards the lease is unchanged |
 | `KeeperMap` without `keeper_map_path_prefix` | `Code: 36 … KeeperMap is disabled because 'keeper_map_path_prefix' config is not defined` |
 | `keeper_map_path_prefix` in `system.server_settings` | absent (see §2.1) |

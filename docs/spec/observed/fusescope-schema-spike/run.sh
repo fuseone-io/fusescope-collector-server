@@ -162,8 +162,18 @@ boot_local ch-2-2 "$REAL_ID"
 check "copied identity on another ensemble: the identity check passes" "$(idcheck)" pass
 FREE
 ACQ ch-1-1 A3 "$(TOKEN)" >/dev/null
-LEASECHECK="SELECT uniqExact(owner, token) = 1 AND count() = 4 FROM clusterAllReplicas('cluster', fusescope_schema.lease) FORMAT TSV"
+LEASECHECK="SELECT uniqExact(owner, token, expires_at) = 1 AND count() = 4 FROM clusterAllReplicas('cluster', fusescope_schema.lease) FORMAT TSV"
 check "copied identity on another ensemble: the lease comparison across replicas fails" "$(Q ch-1-1 "$LEASECHECK")" 0
+# The copied lease made to match owner and token, with the current, the previous and an older expiry.
+HOLD=$(Q ch-1-1 "SELECT owner, token, toUnixTimestamp64Milli(expires_at) FROM fusescope_schema.lease FORMAT TSV")
+H_OWNER=$(cut -f1 <<<"$HOLD"); H_TOKEN=$(cut -f2 <<<"$HOLD"); H_EXP=$(cut -f3 <<<"$HOLD")
+setcopy() { Q ch-2-2 "ALTER TABLE fusescope_schema.lease UPDATE owner = '$H_OWNER', token = $H_TOKEN, expires_at = fromUnixTimestamp64Milli(toInt64($1)) WHERE name = 'migrate'" >/dev/null; }
+setcopy "$H_EXP"
+check "lease comparison: owner, token and the current expiry everywhere passes" "$(Q ch-1-1 "$LEASECHECK")" 1
+setcopy "$((H_EXP - 60000))"
+check "lease comparison: a replica one renewal behind on expires_at fails" "$(Q ch-1-1 "$LEASECHECK")" 0
+setcopy "$((H_EXP - 120000))"
+check "lease comparison: a replica two renewals behind on expires_at fails" "$(Q ch-1-1 "$LEASECHECK")" 0
 Q ch-2-2 "DROP TABLE IF EXISTS fusescope_schema.meta SYNC; DROP TABLE IF EXISTS fusescope_schema.lease SYNC" >/dev/null
 
 # Back on the shared coordination: re-attach the replica's tables to the shared maps.

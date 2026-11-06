@@ -16,10 +16,13 @@ PASS bootstrapped under another prefix: the identity check finds differing value
 PASS bootstrapped on another ensemble: the identity check finds differing values
 PASS copied identity on another ensemble: the identity check passes
 PASS copied identity on another ensemble: the lease comparison across replicas fails
+PASS lease comparison: owner, token and the current expiry everywhere passes
+PASS lease comparison: a replica one renewal behind on expires_at fails
+PASS lease comparison: a replica two renewals behind on expires_at fails
 PASS back on the shared coordination: the identity check passes
 PASS back on the shared coordination: every replica shows the same lease
 PASS coordination down: the conditional update fails with an error
 PASS coordination back: the lease is unchanged
 PASS no prefix: KeeperMap is refused with Code 36
 PASS the prefix is not exposed in system.server_settings
-summary: 23 passed, 0 failed
+summary: 26 passed, 0 failed

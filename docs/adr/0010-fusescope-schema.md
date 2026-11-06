@@ -101,8 +101,8 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
 ## Spike
 
 A spike on a 2×2 cluster ran the spec §6 protocol (spec §11), with Keeper and with the chart's
-ZooKeeper. It is reproducible with `docs/spec/observed/fusescope-schema-spike/run.sh`, and 23 of
-23 assertions pass with each service. Every protocol case behaved as specified. It also led to
+ZooKeeper. It is reproducible with `docs/spec/observed/fusescope-schema-spike/run.sh`, and 26 of
+26 assertions pass with each service. Every protocol case behaved as specified. It also led to
 three changes in the spec:
 
 - **The read-back is mandatory:** a losing update usually reports no error.
@@ -111,8 +111,8 @@ three changes in the spec:
 - **A replica configured with another prefix or ensemble can hold a lease of its own.** Two
   checks on every replica refuse it (spec §3.2):
   - a random cluster identity, written once, checked before the lease;
-  - the lease itself (`owner`, `token`, and `expires_at` within one renewal), checked after
-    acquiring, after every renewal and before every statement.
+  - the lease itself (`owner`, `token` and exactly the latest `expires_at`, after re-reads for up
+    to 10 s), checked after acquiring, after every renewal and before every statement.
 
   The second also catches a copied store that carries the original identity.
 
