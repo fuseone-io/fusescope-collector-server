@@ -714,3 +714,91 @@ func BenchmarkMetadataObserve(b *testing.B) {
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*td.SpanCount()), "ns/span")
 }
+
+// stuckInsert blocks every insert until release is closed, ignoring the
+// context, like a hung connection.
+type stuckInsert struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *stuckInsert) do(context.Context, ch.Query) error {
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
+	return nil
+}
+
+func TestMetadataShutdownWithAStuckInsert(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		periodic bool // stuck in a periodic insert, or in the final one
+	}{
+		{"final insert", false},
+		{"periodic insert", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newMetaFixture(t, "logs", func(c *AttributesMetadataConfig) {
+				c.FlushInterval = time.Hour
+				if tt.periodic {
+					c.FlushInterval = 10 * time.Millisecond
+				}
+			})
+			stuck := &stuckInsert{entered: make(chan struct{}), release: make(chan struct{})}
+			f.m.client.do = stuck.do
+			f.m.start(context.Background())
+			f.m.observeLogs(logRecords(nil, metaNow, time.Time{}, map[string]string{"k": "v"}))
+			if tt.periodic {
+				<-stuck.entered
+			}
+			shutdown := func() error {
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- f.m.shutdown(ctx) }()
+				select {
+				case err := <-done:
+					return err
+				case <-time.After(5 * time.Second):
+					t.Fatal("shutdown did not return at its deadline")
+					return nil
+				}
+			}
+			if err := shutdown(); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("shutdown = %v, want the deadline", err)
+			}
+			if err := shutdown(); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("second shutdown = %v", err)
+			}
+			if f.m.client.closed.Load() {
+				t.Fatal("closed the connection under a running insert")
+			}
+			close(stuck.release) // only once shutdown has returned
+			deadline := time.Now().Add(5 * time.Second)
+			for !f.m.client.closed.Load() {
+				if time.Now().After(deadline) {
+					t.Fatal("the connection was not closed once the insert returned")
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
+	}
+}
+
+func TestMetadataShutdownInsertsTheQueue(t *testing.T) {
+	f := newMetaFixture(t, "logs", func(c *AttributesMetadataConfig) { c.FlushInterval = time.Hour })
+	f.m.start(context.Background())
+	f.m.observeLogs(logRecords(nil, metaNow, time.Time{}, map[string]string{"k": "v"}))
+	if err := f.m.shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rows := f.fake.take(); len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if !f.m.client.closed.Load() {
+		t.Error("connection left open")
+	}
+	if err := f.m.shutdown(context.Background()); err != nil {
+		t.Errorf("second shutdown = %v", err)
+	}
+}

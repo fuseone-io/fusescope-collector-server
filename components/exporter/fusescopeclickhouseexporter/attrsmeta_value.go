@@ -81,11 +81,10 @@ func (b *boundedString) appendJSON(v pcommon.Value, depth int) (ok, valid bool) 
 	case pcommon.ValueTypeEmpty:
 		b.buf = append(b.buf, "null"...)
 	case pcommon.ValueTypeStr:
-		s := v.Str()
-		if len(b.buf)+len(s)+2 > b.budget {
+		var fits bool
+		if b.buf, fits = appendJSONNoHTML(b.buf, v.Str(), b.budget); !fits {
 			return false, valid
 		}
-		b.buf = appendJSONNoHTML(b.buf, s)
 	case pcommon.ValueTypeBool:
 		b.buf = strconv.AppendBool(b.buf, v.Bool())
 	case pcommon.ValueTypeInt:
@@ -116,8 +115,15 @@ func (b *boundedString) appendJSON(v pcommon.Value, depth int) (ok, valid bool) 
 		if len(b.buf)+2+4*m.Len() > b.budget {
 			return false, valid
 		}
+		// The keys alone, quoted, must fit before they are sorted.
 		keys := b.keys[depth][:0]
+		need := len(b.buf) + 2
 		for k := range m.All() {
+			if need += len(k) + 4; need > b.budget {
+				clear(keys)
+				b.keys[depth] = keys
+				return false, valid
+			}
 			keys = append(keys, k)
 		}
 		slices.Sort(keys)
@@ -127,11 +133,11 @@ func (b *boundedString) appendJSON(v pcommon.Value, depth int) (ok, valid bool) 
 			if i > 0 {
 				b.buf = append(b.buf, ',')
 			}
-			if len(b.buf)+len(k)+3 > b.budget {
+			var fits bool
+			if b.buf, fits = appendJSONNoHTML(b.buf, k, b.budget); !fits {
 				clear(keys)
 				return false, valid
 			}
-			b.buf = appendJSONNoHTML(b.buf, k)
 			b.buf = append(b.buf, ':')
 			e, _ := m.Get(k)
 			eok, evalid := b.appendJSON(e, depth+1)
@@ -198,12 +204,20 @@ func appendES6Float(dst []byte, f float64, top bool) []byte {
 	return dst
 }
 
-// appendJSONNoHTML appends s as a JSON string as encoding/json does with
-// SetEscapeHTML(false): invalid UTF-8 replaced, U+2028 and U+2029 escaped.
-func appendJSONNoHTML(dst []byte, s string) []byte {
+// appendJSONNoHTML appends s as a JSON string in the canonical form of
+// attributes-metadata §2.1: encoding/json's with SetEscapeHTML(false) as of
+// Go 1.26, so invalid UTF-8 becomes the escape \ufffd and U+2028 and U+2029
+// are escaped. It stops, reporting false, once dst would exceed limit bytes,
+// so an escape-heavy string costs no more than the budget.
+func appendJSONNoHTML(dst []byte, s string, limit int) ([]byte, bool) {
 	dst = append(dst, '"')
 	start := 0
 	for i := 0; i < len(s); {
+		// Raw runs are copied when an escape or the end is reached; check
+		// the budget as they grow.
+		if len(dst)+(i-start) > limit {
+			return dst, false
+		}
 		c := s[i]
 		if c < utf8.RuneSelf {
 			if c >= 0x20 && c != '"' && c != '\\' {
@@ -234,12 +248,12 @@ func appendJSONNoHTML(dst []byte, s string) []byte {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size == 1 {
 			dst = append(dst, s[start:i]...)
-			dst = append(dst, `�`...)
+			dst = append(dst, "\\ufffd"...)
 			i += size
 			start = i
 			continue
 		}
-		if r == ' ' || r == ' ' {
+		if r == '\u2028' || r == '\u2029' {
 			dst = append(dst, s[start:i]...)
 			dst = append(dst, '\\', 'u', '2', '0', '2', hexDigits[r&0xF])
 			i += size
@@ -249,5 +263,6 @@ func appendJSONNoHTML(dst []byte, s string) []byte {
 		i += size
 	}
 	dst = append(dst, s[start:]...)
-	return append(dst, '"')
+	dst = append(dst, '"')
+	return dst, len(dst) <= limit
 }

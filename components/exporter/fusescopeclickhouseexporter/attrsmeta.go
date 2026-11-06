@@ -104,9 +104,13 @@ type attrsMetadata struct {
 	queue      []amRow
 	queueBytes int
 
-	quit chan struct{}
-	done chan struct{}
-	stop sync.Once
+	quit   chan struct{}
+	done   chan struct{}
+	stop   sync.Once
+	cancel context.CancelFunc
+	// inflight counts the inserts running, which the connection must
+	// outlive.
+	inflight sync.WaitGroup
 }
 
 func newAttrsMetadata(cfg *Config, signal string, set component.TelemetrySettings) (*attrsMetadata, error) {
@@ -137,6 +141,8 @@ func (m *attrsMetadata) start(ctx context.Context) {
 	if err := m.client.start(ctx); err != nil {
 		m.logger.Warn("attribute metadata has no ClickHouse connection yet", zap.String("signal", m.signal), zap.Error(err))
 	}
+	var flushCtx context.Context
+	flushCtx, m.cancel = context.WithCancel(context.Background())
 	m.quit, m.done = make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(m.done)
@@ -147,24 +153,59 @@ func (m *attrsMetadata) start(ctx context.Context) {
 			case <-m.quit:
 				return
 			case <-t.C:
-				m.flush(context.Background())
+				m.flush(flushCtx)
 			}
 		}
 	}()
 }
 
-// shutdown stops the periodic inserts and inserts what is queued, within ctx.
+// shutdown stops the periodic inserts, inserts what is queued and closes the
+// connection, all within ctx: an insert stuck past the deadline, even one that
+// ignores its context, is abandoned and the connection closed once it returns.
+// It may be called again.
 func (m *attrsMetadata) shutdown(ctx context.Context) error {
 	if m.quit != nil {
 		m.stop.Do(func() { close(m.quit) })
-		select {
-		case <-m.done:
-		case <-ctx.Done():
+		if !within(ctx, func() { <-m.done }) {
+			m.cancel()
+			m.closeLater()
 			return ctx.Err()
 		}
-		m.flush(ctx)
+		m.cancel()
+		if !within(ctx, func() { m.flush(ctx) }) {
+			m.closeLater()
+			return ctx.Err()
+		}
 	}
-	return m.client.shutdown(ctx)
+	if !within(ctx, m.closeClient) {
+		return ctx.Err()
+	}
+	return nil
+}
+
+// closeClient closes the connection once no insert holds it.
+func (m *attrsMetadata) closeClient() {
+	m.inflight.Wait()
+	_ = m.client.shutdown(context.Background())
+}
+
+// closeLater closes the connection once the inserts holding it return.
+func (m *attrsMetadata) closeLater() { go m.closeClient() }
+
+// within runs f and reports whether it returned before ctx ended; if not, f
+// keeps running on its own.
+func within(ctx context.Context, f func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (m *attrsMetadata) dropped(r dropReason, n int) {
@@ -436,10 +477,14 @@ func (m *attrsMetadata) flush(ctx context.Context) {
 	m.mu.Lock()
 	rows := m.queue
 	m.queue, m.queueBytes = nil, 0
+	if len(rows) > 0 {
+		m.inflight.Add(1)
+	}
 	m.mu.Unlock()
 	if len(rows) == 0 {
 		return
 	}
+	defer m.inflight.Done()
 	c := newAMColumns()
 	for _, r := range rows {
 		c.append(m.signal, r)

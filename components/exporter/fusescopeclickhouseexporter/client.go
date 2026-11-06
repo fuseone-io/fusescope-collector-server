@@ -36,6 +36,8 @@ type clickhouseClient struct {
 	stamp fileStamp
 	// do replaces the pool's query in tests.
 	do func(context.Context, ch.Query) error
+	// closed is set once shutdown has closed the pool.
+	closed atomic.Bool
 }
 
 func (c *clickhouseClient) start(ctx context.Context) error {
@@ -62,10 +64,12 @@ func (c *clickhouseClient) dial(ctx context.Context) error {
 	return nil
 }
 
+// shutdown closes the pool, waiting for the connections in use.
 func (c *clickhouseClient) shutdown(context.Context) error {
 	if p := c.pool.Swap(nil); p != nil {
 		p.Close()
 	}
+	c.closed.Store(true)
 	return nil
 }
 

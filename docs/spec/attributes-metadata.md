@@ -70,8 +70,13 @@ every kind. The conversion is bounded: it writes into the row's
 remaining byte budget and stops as soon as the budget is spent, and refuses maps and lists
 nested deeper than 16 levels, so it never builds a whole value first as `AsString` does; a
 refused value drops the row as `row_bytes`. Within the budget its output is byte for byte
-`AsString`'s, including the empty string `AsString` gives for a map or list that holds NaN or
-an infinity.
+`AsString`'s as built with Go 1.26, the toolchain of `go.mod`, which is the canonical form:
+encoding/json with `SetEscapeHTML(false)`, so `<`, `>` and `&` stay raw, invalid UTF-8 inside a
+map or list becomes the escape `\ufffd`, U+2028 and U+2029 are escaped, and a map or list that
+holds NaN or an infinity gives the empty string. A golden test pins it, so a later toolchain
+whose encoding/json differs does not change the rows. The budget also bounds the work: a
+string stops as soon as its escaped form passes it, and a map's keys stop being collected
+once they alone cannot fit, before they are sorted.
 
 A key that is absent and a key present with an empty value are different sets.
 
@@ -185,7 +190,10 @@ A key that is absent and a key present with an empty value are different sets.
 `attributes_metadata.enabled` is set; mode `meter` refuses it. The hook runs once the request's
 export has succeeded whole, every table and every retry included, in the exporter's queue
 consumer, never per attempt or per table. Rows are inserted every `flush_interval` from their
-own connection to `database`, once, without retry: a failed insert releases the keys (§5).
+own connection to `database`, once, without retry: a failed insert releases the keys (§5). On
+shutdown the queue is inserted within the shutdown's deadline; an insert stuck past it, even one
+that ignores its context, is abandoned, and the connection is closed once it returns. Shutdown
+may be called again.
 
 | Setting | Default | Meaning |
 |---|---|---|
