@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -18,7 +19,8 @@ import (
 type Config struct {
 	// Endpoint is the TLS listener for /rum/v1/traces and /rum/v1/logs.
 	Endpoint string `mapstructure:"endpoint"`
-	// TLS is required, at least 1.3 (ADR 0004).
+	// TLS is required: 1.3 by default; 1.2 only when min_version says so,
+	// and then only with ECDHE AEAD suites (ADR 0009).
 	TLS configtls.ServerConfig `mapstructure:"tls"`
 	// IngestPolicy names the extension holding the ingest policy. Unset, the
 	// receiver refuses everything and reports not ready (§11.4).
@@ -89,6 +91,31 @@ func (l LimitsConfig) structure() structureLimits {
 
 const minTLSVersion = "1.3"
 
+// aeadSuites are the TLS 1.2 suites allowed when min_version is 1.2: ECDHE
+// with AES-GCM or ChaCha20-Poly1305, which Android 6-9 negotiate. TLS 1.3
+// uses Go's own suites, which these do not affect (ADR 0009).
+var aeadSuites = []string{
+	"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+	"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+	"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+	"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+	"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+	"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+}
+
+// tlsVersions orders the versions the RUM listener may use.
+var tlsVersions = map[string]int{"1.2": 12, "1.3": 13}
+
+// serverTLS is the listener's TLS configuration: the configured one, with
+// the AEAD allow-list when no suites are set.
+func (c *Config) serverTLS() configtls.ServerConfig {
+	t := c.TLS
+	if len(t.CipherSuites) == 0 {
+		t.CipherSuites = aeadSuites
+	}
+	return t
+}
+
 func createDefaultConfig() component.Config {
 	return &Config{
 		Endpoint:    "localhost:4319",
@@ -138,8 +165,19 @@ func (c *Config) Validate() error {
 	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
 		errs = append(errs, errors.New("tls.cert_file and tls.key_file are required"))
 	}
-	if c.TLS.MinVersion != minTLSVersion {
-		errs = append(errs, fmt.Errorf("tls.min_version must be %s (ADR 0004)", minTLSVersion))
+	minimum, ok := tlsVersions[c.TLS.MinVersion]
+	if !ok {
+		errs = append(errs, errors.New("tls.min_version must be 1.3, or 1.2 to opt in for older clients (ADR 0009)"))
+	}
+	if c.TLS.MaxVersion != "" {
+		if maximum, ok := tlsVersions[c.TLS.MaxVersion]; !ok || maximum < minimum {
+			errs = append(errs, errors.New("tls.max_version must be 1.2 or 1.3 and at least tls.min_version (ADR 0009)"))
+		}
+	}
+	for _, suite := range c.TLS.CipherSuites {
+		if !slices.Contains(aeadSuites, suite) {
+			errs = append(errs, fmt.Errorf("tls.cipher_suites: %q is not an ECDHE AEAD suite (ADR 0009)", suite))
+		}
 	}
 	if c.MaxBodySize <= 0 {
 		errs = append(errs, errors.New("max_body_size must be positive"))

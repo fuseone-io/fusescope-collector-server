@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -182,22 +183,105 @@ func (s *started) post(t *testing.T, path, body string, headers map[string]strin
 }
 
 func TestReceiverServesOverTLS(t *testing.T) {
+	for _, minimum := range []string{"1.2", "1.3"} {
+		t.Run(minimum, func(t *testing.T) {
+			store := newStore(t, testPolicy(1))
+			host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
+			s := startReceiver(t, func(c *Config) { c.TLS.MinVersion = minimum }, host)
+			roots := s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+			for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11, tls.VersionTLS12, tls.VersionTLS13} {
+				t.Run(fmt.Sprintf("client_%x", version), func(t *testing.T) {
+					client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: version, MaxVersion: version}}}
+					defer client.CloseIdleConnections()
+					for _, signal := range []struct{ path, body string }{{tracesPath, testTraceJSON}, {logsPath, testLogJSON}} {
+						req, err := http.NewRequest(http.MethodPost, s.url+signal.path, strings.NewReader(signal.body))
+						require.NoError(t, err)
+						for k, v := range jsonHeaders(webKey) {
+							req.Header.Set(k, v)
+						}
+						resp, err := client.Do(req)
+						if version < tls.VersionTLS12 || (minimum == "1.3" && version == tls.VersionTLS12) {
+							if resp != nil {
+								resp.Body.Close()
+							}
+							require.Error(t, err, "unsupported TLS must fail before ingest")
+							continue
+						}
+						require.NoError(t, err)
+						resp.Body.Close()
+						assert.Equal(t, http.StatusOK, resp.StatusCode)
+						assert.Equal(t, version, resp.TLS.Version)
+					}
+				})
+			}
+			resp := s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey))
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, uint16(tls.VersionTLS13), resp.TLS.Version, "modern clients prefer TLS 1.3")
+			want := 3
+			if minimum == "1.3" {
+				want = 2
+			}
+			assert.Equal(t, want, s.traces.SpanCount())
+			assert.Equal(t, want-1, s.logs.LogRecordCount())
+		})
+	}
+}
+
+// With TLS 1.2 opted in, only ECDHE with AEAD is accepted: a client offering
+// only CBC suites fails, the AES-GCM and ChaCha20 suites of Android 6-9
+// succeed. The default stays TLS 1.3 only (ADR 0009).
+func TestReceiverTLS12Suites(t *testing.T) {
 	store := newStore(t, testPolicy(1))
 	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
-	s := startReceiver(t, nil, host)
+	s := startReceiver(t, func(c *Config) { c.TLS.MinVersion = "1.2" }, host)
+	roots := s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+	post := func(suite uint16) (*http.Response, error) {
+		client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs: roots, MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12, CipherSuites: []uint16{suite},
+		}}}
+		defer client.CloseIdleConnections()
+		req, err := http.NewRequest(http.MethodPost, s.url+tracesPath, strings.NewReader(testTraceJSON))
+		require.NoError(t, err)
+		for k, v := range jsonHeaders(webKey) {
+			req.Header.Set(k, v)
+		}
+		return client.Do(req)
+	}
+	for _, suite := range []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+	} {
+		resp, err := post(suite)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		require.Error(t, err, "%s must be refused", tls.CipherSuiteName(suite))
+	}
+	for _, suite := range []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	} {
+		resp, err := post(suite)
+		require.NoError(t, err, tls.CipherSuiteName(suite))
+		resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, suite, resp.TLS.CipherSuite)
+	}
+}
 
-	resp := s.post(t, tracesPath, testTraceJSON, jsonHeaders(webKey))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, uint16(tls.VersionTLS13), resp.TLS.Version)
-	resp = s.post(t, logsPath, testLogJSON, jsonHeaders(webKey))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 1, s.traces.SpanCount())
-	assert.Equal(t, 1, s.logs.LogRecordCount())
-
-	old := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs, MaxVersion: tls.VersionTLS12}}}
-	defer old.CloseIdleConnections()
-	_, err := old.Post(s.url+tracesPath, "application/json", strings.NewReader(testTraceJSON))
-	assert.Error(t, err, "TLS 1.2 is refused (ADR 0004)")
+func TestReceiverTLSDefaultIsStrict(t *testing.T) {
+	store := newStore(t, testPolicy(1))
+	host := newStatusHost(map[component.ID]component.Component{policyExtension: providerExtension{source: store}})
+	def := createDefaultConfig().(*Config).TLS.MinVersion
+	s := startReceiver(t, func(c *Config) { c.TLS.MinVersion = def }, host)
+	roots := s.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MaxVersion: tls.VersionTLS12}}}
+	defer client.CloseIdleConnections()
+	resp, err := client.Post(s.url+tracesPath, "application/json", strings.NewReader(testTraceJSON))
+	if resp != nil {
+		resp.Body.Close()
+	}
+	require.Error(t, err, "the default listener refuses TLS 1.2")
 }
 
 func TestReceiverReadiness(t *testing.T) {

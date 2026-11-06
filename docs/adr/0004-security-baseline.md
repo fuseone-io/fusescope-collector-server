@@ -2,14 +2,17 @@
 
 - Status: accepted, amended by [ADR 0006](0006-single-ingress.md) (ingest authentication, the
   ingest policy over OpAMP, security gates),
-  [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in) and
-  [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport)
+  [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in),
+  [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport) and
+  [ADR 0009](0009-rum-tls-compatibility.md) (TLS 1.2 opt-in on RUM ingress)
 - Date: 2026-10-31
 
 ## Decision
 
-- TLS 1.3 minimum on every network listener and exporter that leaves the host; mTLS between
-  agents and gateways and from gateways to engine ingesters.
+- TLS 1.3 minimum on every network listener and exporter that leaves the host; the RUM
+  listener may opt in to TLS 1.2 with ECDHE AEAD suites only
+  ([ADR 0009](0009-rum-tls-compatibility.md)). mTLS between agents and gateways and from
+  gateways to engine ingesters.
 - Ingest authentication on the gateway's public receivers by `ingestauth` and `rumreceiver`,
   against SHA-256 verifiers of ingestion and RUM keys from the OpAMP ingest policy
   ([ADR 0006](0006-single-ingress.md), decision 3 and security gates). Engine exporters present

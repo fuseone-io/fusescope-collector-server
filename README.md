@@ -71,3 +71,11 @@ See [docs/upgrading.md](docs/upgrading.md).
 
 Apache-2.0. See [NOTICE](NOTICE) and [ADR 0005](docs/adr/0005-license-policy.md). Nothing here
 is derived from `fusescope-otel-collector` (AGPL-3.0); see [ADR 0002](docs/adr/0002-clean-room.md).
+
+### Android RUM TLS compatibility
+
+The RUM listener serves TLS 1.3 only by default. For stock Android 6–9 (API 23–28), set
+`tls.min_version: "1.2"` on `rum`: TLS 1.2 is then accepted with ECDHE AEAD suites only, and
+modern clients still negotiate 1.3. The public proxy must accept TLS 1.2 on the RUM endpoint
+too; other transports are unchanged. See [ADR 0009](docs/adr/0009-rum-tls-compatibility.md) and
+[#62](https://github.com/fuseone-io/fusescope-collector-server/issues/62).
