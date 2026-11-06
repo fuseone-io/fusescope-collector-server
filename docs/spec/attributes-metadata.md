@@ -127,13 +127,21 @@ A key that is absent and a key present with an empty value are different sets.
   deduplicating. So rows written per signal are bounded by `max_sets_per_window` per window
   whatever the attributes. Rotating, high-cardinality attributes such as request ids fill a
   resource's quota and stop there. The reference's limits were not observed.
-- **Bytes and rows.** A row's cost is its keys and values plus a fixed `row_overhead` (256
-  bytes) for the row and its two maps, so empty `{}` rows are not free. A row costing more than
-  `max_row_bytes` (16 KiB) is not written; it is not truncated, since a cut value would be a
-  wrong suggestion. Rows waiting for insert are bounded by both `max_queue_rows` (50 000) and
-  `max_queue_bytes` (8 MiB) of cost. The deduplication state holds fingerprints and the window,
-  a fixed size per key, capped by `max_state_bytes` (32 MiB), checked by a test that measures
-  its real footprint per key.
+- **Bytes and rows.** A row's cost is its keys and values, plus `attribute_overhead` (64
+  bytes) per map entry, plus a fixed `row_overhead` (256 bytes) for the row and its two maps, so
+  neither empty `{}` rows nor rows of many short attributes are cheap. A row with more than
+  `max_attributes_per_row` (256) entries across both maps, or costing more than
+  `max_row_bytes` (16 KiB), is not written; it is not truncated, since a cut set would be a
+  wrong suggestion. The entry count is checked before sorting or hashing, so an oversized row
+  costs one pass over its maps. Rows waiting for insert are bounded by both `max_queue_rows`
+  (20 000) and `max_queue_bytes` (8 MiB) of cost; at the 256-byte minimum the bytes alone
+  would allow 32 768 rows, so with the defaults the row limit binds first for small rows. The
+  deduplication state holds fingerprints and the window, a fixed size per key, plus the
+  per-resource quota index, capped together by `max_state_bytes` (32 MiB).
+- **Memory tests.** Heap tests check that the costs above bound the retained memory: a full
+  queue of rows of `max_attributes_per_row` one-byte attributes, a full queue of `{}` rows, and
+  a full state whose keys come from distinct resources, so that the quota index is measured
+  too. Each stays within its budget plus a stated slack.
 - **Admission order.** A key enters the state only when its row is queued: it is checked
   against the state, then `max_row_bytes`, then the window and resource quotas, then
   `max_state_bytes`, then the queue. A row refused at any step is not admitted, so the same set
@@ -143,14 +151,16 @@ A key that is absent and a key present with an empty value are different sets.
 - **Only metadata is lost.** Every refusal drops only the metadata row and increments
   `fusescope_attributes_metadata_dropped` (unit `{row}`, attributes `signal` and `reason`),
   with `reason` one of `window` (`max_sets_per_window`), `resource`
-  (`max_sets_per_resource`), `row_bytes`, `queue` (`max_queue_rows` or `max_queue_bytes`),
-  `state_bytes`, `too_old` (§3) and `insert`; the data itself is always written.
+  (`max_sets_per_resource`), `row_bytes` (`max_row_bytes` or `max_attributes_per_row`),
+  `queue` (`max_queue_rows` or `max_queue_bytes`), `state_bytes`, `too_old` (§3) and `insert`; the data itself is always written.
 - **Isolation.** Metadata does not wait for ClickHouse and never returns an error to the data
   path; computing fingerprints still costs CPU on it, which the benchmarks bound. Records are
   read after the signal's exporter has accepted them for writing; queued rows are inserted in
   batches. Inserts report the exporter's insert latency, rows and errors under
   `table=distributed_attributes_metadata`, like the other tables.
-- **Regression tests.** Many distinct sets with empty maps fill `max_queue_rows`, not memory;
+- **Regression tests.** Many distinct sets with empty maps fill `max_queue_rows`, not memory
+  (with the defaults, and with a reduced `max_queue_rows` and a larger `max_queue_bytes` so each
+  limit is reached alone);
   a set refused by a full queue is written on its next occurrence once the queue drains; a row
   over `max_row_bytes` is retried, and refused again, on every occurrence without entering the
   state.
