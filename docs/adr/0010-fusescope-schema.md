@@ -24,17 +24,18 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
    - the backend's reads;
    - ClickHouse's documentation.
 
-   The fork's migration source, its migration list and its history contents are never opened or
-   copied (ADR 0002). The migrations are written from the target DDL, not translated from the
-   fork's steps.
+   The fork's migration source, its migration list and its history contents are never opened,
+   queried or copied (ADR 0002). The migrations are written from the target DDL, not translated
+   from the fork's steps.
 2. **Its own module and binary.** A Go module in `components/` (so `make forbid-fork` and the
    licence check cover it), built as a second binary of the `fusescope-collector` image. The
    chart, the devenv and the suites run the image they already pin and sign, with
    `fusescope-schema` as the entrypoint.
 3. **Its own history, never the fork's.** `fusescope-schema` records every migration in its own
    database, with the migration's ID, the SHA-256 of its statements and its state (started or
-   done). It reads the fork's `schema_migrations_v2` tables only to recognise a database the
-   fork created, and never writes them.
+   done). The fork's `schema_migrations_v2` tables are never queried or written: only their
+   observed structure takes part in recognising a cluster the fork migrated, like any other
+   table. They stay as they are.
 4. **Supported starting points:**
    - an empty cluster (a fresh install);
    - a cluster whose schema is exactly what the fork 0.145.0 created (every FuseScope chart and
@@ -42,19 +43,30 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
    - a cluster `fusescope-schema` already manages.
 
    Anything else (an older or newer fork, a SigNoz version whose schema differs, a hand-edited
-   table) is refused, with the differences listed. The SigNoz migration guide
-   (phase 8) documents how to reach a supported starting point first.
+   table, a schema migrated with `telemetryStoreMigrator.enableReplication: false`) is refused,
+   with the differences listed. The SigNoz migration guide (phase 8) documents how to reach a
+   supported starting point first.
+
+   Supported deployments (spec §2.1) are the chart's own ClickHouse and a self-managed cluster with
+   Keeper and `keeper_map_path_prefix`. Replication off, ClickHouse Cloud and managed services that
+   do not expose Keeper are not supported in this phase and are refused before anything is
+   written.
 5. **Fail closed.** It refuses to run when:
    - the history holds a migration this binary does not know;
    - a recorded checksum differs from the binary's;
    - a migration was started and not finished;
    - the live schema differs from what the history says.
 
-   It does not repair automatically. A runbook covers each case. DDL is not assumed reversible:
-   there is no automatic rollback; a correction is a new forward migration.
+   A migration that is `started` while its migrator still holds a valid lease is in progress, not
+   interrupted: `check` keeps waiting. It does not repair automatically; `repair` is an explicit,
+   locked command whose result is verified (spec §1, §10). DDL is not assumed reversible: there
+   is no automatic rollback; a correction is a new forward migration.
 6. **Serialized and idempotent.**
-   - One migrator at a time per cluster, through a lock held in ClickHouse Keeper (§6 of the
-     spec).
+   - One migrator at a time per cluster, through a lease in a strict `KeeperMap` table, taken and
+     renewed by conditional updates with a generation token. A migrator that loses its lease stops
+     before its next statement (spec §6).
+   - The starting point is decided only after the lease is held, so concurrent first runs
+     cannot act on a stale classification (spec §4).
    - Every statement is safe to repeat (`IF NOT EXISTS`, `IF EXISTS`, or a post-condition check
      before it runs).
    - A migration is marked done only after its post-conditions are verified on every replica.
@@ -72,6 +84,11 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
 
 - No AGPL artefact is needed to install, upgrade or run FuseScope on ClickHouse. ADR 0001 is
   amended when the fork leaves the chart (fusescope#229).
+- The schema changes the backend makes itself (promoted columns and their indexes, retention
+  defaults, TTLs) are an explicit, tested allow-list (spec §8); anything similar outside it is
+  drift.
+- Going back to the fork's migrator is possible only before the first migration after `0001`:
+  later migrations change the schema the fork knows.
 - From then on, schema changes are ours to write, review and test. Parity with the fork stops at
   0.145.0. Later FuseScope schema changes are migrations in this repository, under the
   schema-contract rule ("ask before changing the ClickHouse schema contract").
@@ -79,13 +96,9 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
   it.
 - The tests need a real ClickHouse cluster with Keeper (spec §9), in CI.
 
-## Open points for review
+## Review decisions
 
-1. Keeper for the lock. The proposed lock is a `KeeperMap` table in strict mode, which needs
-   `keeper_map_path_prefix` in the ClickHouse server configuration. The chart's ClickHouse can
-   set it; an external ClickHouse may not. The alternative is a Keeper client in Go, which is a
-   new dependency (`github.com/go-zookeeper/zk`, BSD-3-Clause, needs approval).
-2. Whether the fork's history tables (`schema_migrations_v2`) are dropped once a cluster is
-   adopted, or left as they are (proposed: left, read-only, so a rollback to the fork stays
-   possible during the transition).
-3. The second binary in the collector image (proposed) or a separate signed image.
+1. KeeperMap in strict mode for the lease and the history, with a corrected protocol (spec §6).
+   No Keeper client dependency for now.
+2. The fork's history tables stay untouched and read-only (never queried, spec §3).
+3. `fusescope-schema` ships as a second binary in the signed `fusescope-collector` image.
