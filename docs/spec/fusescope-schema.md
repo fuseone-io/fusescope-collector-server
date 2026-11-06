@@ -46,7 +46,7 @@ Inline passwords are refused (ADR 0004).
 | Deployment | Supported | Why |
 |---|---|---|
 | The chart's ClickHouse (operator, ZooKeeper, `enableReplication: true`, the default) | yes | Keeper and the macros are there; the chart will set `keeper_map_path_prefix` (today it does not), in the same change that switches it to `fusescope-schema` |
-| Self-managed cluster with Keeper or ZooKeeper, the `{shard}` and `{replica}` macros, a cluster in `remote_servers` and `keeper_map_path_prefix` | yes | the same requirements, met by the operator |
+| Self-managed cluster with Keeper or ZooKeeper, the `{shard}` and `{replica}` macros, a cluster in `remote_servers` and the same `keeper_map_path_prefix` and coordination ensemble on every replica | yes | the same requirements, met by the operator; a divergent replica is refused by §3.2 |
 | `telemetryStoreMigrator.enableReplication: false` | **no**: chart validation fails with `fusescope-schema`, and the precheck refuses | [obs] is the replicated schema; a non-replicated one was never observed |
 | ClickHouse Cloud | **no**, refused | no server configuration for `keeper_map_path_prefix`, and engines are rewritten |
 | Managed services that do not expose Keeper or server configuration | **no**, refused | no Keeper, so neither the lease nor `ON CLUSTER` |
@@ -82,7 +82,7 @@ The spike before acceptance verifies this (ADR 0010).
 
 | Table | Key | Columns |
 |---|---|---|
-| `meta` | `name` | `name String`, `value String`. The row `coordination = 1` is the version of these tables' own layout |
+| `meta` | `name` | `name String`, `value String`. The row `coordination = 1` is the version of these tables' own layout. The row `cluster_id` is a random identity of the cluster, written once (§3.2) |
 | `lease` | `name` | `name String` (only `migrate`), `owner String` (`host/pid/random`), `token UInt64` (generation), `expires_at DateTime64(3)` |
 | `migrations` | `id` | `id UInt32`, `name String`, `checksum FixedString(64)` (SHA-256 of the statements after substitution, §5), `state Enum('started', 'done')`, `adopted Bool`, `token UInt64` (the lease generation that wrote it), `started_at DateTime64(3)`, `finished_at Nullable(DateTime64(3))`, `tool_version String`, `host String` |
 
@@ -101,12 +101,34 @@ The bootstrap reads before it writes.
    missing, or `meta` and `lease` without their rows), it completes what is missing:
    - `CREATE DATABASE IF NOT EXISTS` and `CREATE TABLE IF NOT EXISTS … ON CLUSTER`. Concurrent
      runs converge, because each table maps to the same Keeper path.
-   - Insert `meta(coordination, 1)` and `lease(migrate, '', 0, 0)`. A "key exists" failure means
-     another run got there first, and is ignored.
+   - Insert `meta(coordination, 1)`, `meta(cluster_id, <random UUID>)` and
+     `lease(migrate, '', 0, 0)`, each in strict mode, so the first insert wins. A "key exists"
+     failure means another run got there first, and is ignored.
 3. It reads `meta` and the structures again, and refuses if they are not this binary's layout.
 
 The bootstrap creates only `fusescope_schema`. It never touches the telemetry databases, and it
 decides nothing about them.
+
+### 3.2 Cluster identity
+
+`keeper_map_path_prefix` cannot be read (§2.1). The spike (§11) showed two ways a replica can be
+out of step:
+- **It restarts with another prefix or ensemble.** Its existing `KeeperMap` tables then fail to
+  activate (`Code: 668, INVALID_STATE`), so it cannot answer.
+- **Its coordination tables are created fresh under another prefix or ensemble,** for example a
+  new replica configured differently. Then it sees another `KeeperMap`, with its own lease that it
+  can acquire and confirm as owner: a split brain.
+
+To guard against this, before acquiring the lease, and again after every renewal, the runner reads
+`meta.cluster_id` from every replica of the cluster (`clusterAllReplicas`). It goes on only if
+every replica answers, and all with the same non-empty value. Anything else is refusal §7.6:
+
+- a replica that has no `cluster_id`;
+- a replica whose `cluster_id` differs;
+- a replica that does not answer.
+
+The refusal names the replicas that differ. `check`, `plan` and `status` make the same comparison
+and report it.
 
 ## 4. Starting points
 
@@ -278,7 +300,9 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | TLS 1.3 with a password file; plaintext opt-in; `verify: false`; TLS below 1.3 | connects as configured; TLS below 1.3 refused |
 | Custom database names | migrated and compared under the custom names |
 | Precheck failures: no Keeper, no macros, no `keeper_map_path_prefix`, replicas' clocks 60 s apart | each refused with what is missing |
-| The concurrency cases above with a 3-node Keeper ensemble, and with a Keeper node killed during a migration | the same results; a run that loses Keeper exits 2 or 4 by §1 and the rerun follows §7 |
+| Each concurrency and lease case above, with each coordination service: Keeper (one node and a 3-node ensemble) and the chart's ZooKeeper (`signoz/zookeeper:3.7.1`, one node as the chart deploys it by default, and a 3-node ensemble) | the same results with every service |
+| The coordination service (one node, and one member of an ensemble) stopped during a migration, then started again | the update in flight fails; the run exits 2 or 4 by §1; the rerun follows §7; the lease and the history are unchanged by the failed update |
+| A replica with another `keeper_map_path_prefix`, and a replica on another coordination ensemble | refused by §3.2 before the lease, naming the replica; nothing written to the telemetry databases |
 | Killed during the bootstrap, at each step of §3.1 | the rerun completes the bootstrap and nothing is left in `fusescope_schema` outside the layout |
 
 **Functional validation**
@@ -314,23 +338,29 @@ Either way, the result is verified by reading the history back before exit 0.
 
 ## 11. Spike results (2026-11-06)
 
-The protocol of §3 and §6 was run with plain SQL on a 2×2 cluster: ClickHouse 25.12.5.44 (the
-chart's pin), one Keeper, and `keeper_map_path_prefix` set. Each statement ran in its own
-`clickhouse-client` session, on the node noted. The setup is in
-[`observed/fusescope-schema-spike/`](observed/fusescope-schema-spike/).
+The protocol of §3 and §6 was run with plain SQL on a 2×2 cluster, ClickHouse 25.12.5.44 (the
+chart's pin), against each coordination service:
+- one Keeper node;
+- the chart's ZooKeeper (`signoz/zookeeper:3.7.1`, one node, as the chart deploys it by default).
 
-| Case | Result |
+[`observed/fusescope-schema-spike/run.sh`](observed/fusescope-schema-spike/run.sh) reproduces it:
+`./run.sh keeper` or `./run.sh zookeeper`. It pins every image by digest, generates the four
+nodes' configuration, runs each case as an assertion, and prints PASS or FAIL. Its output is in
+`results-keeper.txt` and `results-zookeeper.txt`: 20 of 20 passed with each service.
+
+| Case | Result, with Keeper and with ZooKeeper |
 |---|---|
-| `CREATE DATABASE` and `CREATE TABLE … KeeperMap … ON CLUSTER` | applied on the 4 hosts; every host reads the same rows |
-| Strict `INSERT` of an existing key | fails with `Code: 999` (Keeper: node exists) |
-| 8 concurrent bootstraps (create database, create table, insert the lease row) from the 4 hosts | the `CREATE … IF NOT EXISTS` all succeed; one insert wins, seven get `Code: 999`; one row on every host |
-| Acquire on a free lease, then read-back on the same server | the read-back shows the new owner and token |
-| Acquire with a token read before the owner renewed | no change; the lease keeps its owner |
-| Renewal after expiry | no change: the lease stays expired, not revived |
+| 8 concurrent bootstraps (database, `meta`, `lease`, the identity and lease rows) from the 4 hosts | the `CREATE … IF NOT EXISTS` all succeed; one insert of each row wins and seven get `Code: 999`; the same `cluster_id` on every replica, read directly and through `clusterAllReplicas` |
+| Acquire on a free lease, then read back on the same server | the read-back shows the new owner and token |
+| Acquire with a token read before the owner renewed | no change |
+| Renewal after expiry | no change: not revived |
 | Acquire of the expired lease by another process | succeeds; token + 1 |
 | Release with a stale token | no change |
-| 8 concurrent acquires of a free lease with the same read token, 5 rounds | the token rose by exactly 1 each round; the losers ended with no change, some with a strict-mode error (`Code: 999`) and most with **no error at all** |
-| The same, 10 rounds, each process reading back on its own node right after its update | in every round exactly one process read itself as owner; no read-back was stale |
+| 8 concurrent acquires with the same read token, each process reading back on its own node, 10 rounds | exactly one process read itself as owner and the token rose by 1, every round |
+| A replica restarted with another `keeper_map_path_prefix` | its `KeeperMap` tables do not activate (`Code: 668`); the identity check fails with that error |
+| A replica whose coordination tables were created under another prefix | it acquires its own lease while another process holds the real one (the split brain); the identity check finds differing `cluster_id` values |
+| The same with a replica on another coordination ensemble | the identity check finds differing values |
+| The coordination service stopped during a conditional update, then started | the update fails with an error; afterwards the lease is unchanged |
 | `KeeperMap` without `keeper_map_path_prefix` | `Code: 36 … KeeperMap is disabled because 'keeper_map_path_prefix' config is not defined` |
 | `keeper_map_path_prefix` in `system.server_settings` | absent (see §2.1) |
 
@@ -340,13 +370,16 @@ What this establishes, and its limits:
   alone.** A losing conditional update usually succeeds without changing anything: ClickHouse
   reports no affected rows. So the read-back of §6 is required, not a check on top. `migrate`
   treats a held lease as acquired only when its read-back shows its own owner and token.
-- **Read-back on the same server saw the server's own writes** in every round. That matches
-  Keeper's per-session ordering, but it is an observation on one version and topology. The CI
-  matrix of §9 repeats the concurrency cases on every ClickHouse version it accepts.
-- **One Keeper node** was used; a Keeper ensemble, Keeper failover during a migration, and
-  ZooKeeper instead of Keeper were not tested. They are added to §9 before a version or deployment
-  is declared supported.
-- **Time:** the conditions use the server's `now64(3)`. Different servers' clocks bound how
+- **A replica out of step on the coordination is refused by §3.2**, whether its tables fail to
+  activate or it carries another identity. A split brain on the lease alone is possible, so the
+  identity check is mandatory before the lease and after every renewal.
+- **Read-back on the same server saw the server's own writes** in every round, with both
+  services. That matches the per-session ordering of Keeper and ZooKeeper, but it is an
+  observation on one ClickHouse version and topology. The CI matrix of §9 repeats these cases on
+  every version and service it accepts.
+- **Only single-node coordination was tested here.** 3-node Keeper and ZooKeeper ensembles, and an
+  ensemble member lost during a migration, are in §9 and must pass before an ensemble is declared
+  supported.
+- **Time:** the conditions use the server's `now64(3)`, so the replicas' clocks bound how
   precisely a lease expires. The 5-minute lease with 1-minute renewal tolerates seconds of skew,
-  not minutes, and the precheck checks it: the skew between replicas (from `now64()` on each) must
-  be under 30 seconds, or the run is refused.
+  not minutes. The precheck of §2.1 refuses replicas more than 30 seconds apart.

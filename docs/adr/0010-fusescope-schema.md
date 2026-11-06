@@ -100,20 +100,20 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
 
 ## Spike
 
-A spike on a 2×2 cluster with Keeper ran the spec §6 protocol (spec §11). It covered:
-- the conditional acquire, renewal and release in strict mode;
-- races between acquire and renewal;
-- expiry;
-- 8 concurrent acquires and bootstraps;
-- read-back on the same server.
+A spike on a 2×2 cluster ran the spec §6 protocol (spec §11), with Keeper and with the chart's
+ZooKeeper. It is reproducible with `docs/spec/observed/fusescope-schema-spike/run.sh`, and 20 of
+20 assertions pass with each service. Every protocol case behaved as specified. It also led to
+three changes in the spec:
 
-Every case behaved as specified. It also showed two things the spec now accounts for:
-- a losing update usually reports no error, so the read-back is mandatory;
-- `keeper_map_path_prefix` is not visible in `system` tables, so its absence is detected by the
+- **The read-back is mandatory:** a losing update usually reports no error.
+- **`keeper_map_path_prefix`** is not visible in `system` tables, so its absence is detected by the
   bootstrap's first `KeeperMap` create.
+- **A replica configured with another prefix or ensemble can hold a lease of its own.** A random
+  cluster identity, written once and checked on every replica before the lease and after each
+  renewal, refuses it (spec §3.2).
 
-The limits are recorded in the spec: one Keeper node, one version, and clock skew. The CI matrix
-covers them before any other version or deployment is supported.
+The limits are recorded in the spec: single-node coordination, one ClickHouse version, and clock
+skew. The CI matrix covers them before any other version, ensemble or deployment is supported.
 
 ## Review decisions
 
