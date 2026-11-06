@@ -127,22 +127,33 @@ A key that is absent and a key present with an empty value are different sets.
   deduplicating. So rows written per signal are bounded by `max_sets_per_window` per window
   whatever the attributes. Rotating, high-cardinality attributes such as request ids fill a
   resource's quota and stop there. The reference's limits were not observed.
-- **Bytes.** A row whose keys and values exceed `max_row_bytes` (16 KiB) is not written and is
-  counted; it is not truncated, since a cut value would be a wrong suggestion. Rows waiting for
-  insert hold at most `max_queue_bytes` (8 MiB); a row that does not fit is dropped and counted.
-  The deduplication state holds only fingerprints and the window, a fixed size per key; it is
-  capped by `max_state_bytes` (32 MiB), measured by a test of its real footprint per key, and
-  when full new sets are dropped and counted as for the other limits.
-- **Only metadata is lost.** Every limit drops metadata rows and increments
-  `fusescope_attributes_metadata_dropped` by reason (`window`, `resource`, `row_bytes`,
-  `queue_bytes`, `state_bytes`, `too_old`, `insert`); the data itself is always written.
+- **Bytes and rows.** A row's cost is its keys and values plus a fixed `row_overhead` (256
+  bytes) for the row and its two maps, so empty `{}` rows are not free. A row costing more than
+  `max_row_bytes` (16 KiB) is not written; it is not truncated, since a cut value would be a
+  wrong suggestion. Rows waiting for insert are bounded by both `max_queue_rows` (50 000) and
+  `max_queue_bytes` (8 MiB) of cost. The deduplication state holds fingerprints and the window,
+  a fixed size per key, capped by `max_state_bytes` (32 MiB), checked by a test that measures
+  its real footprint per key.
+- **Admission order.** A key enters the state only when its row is queued: it is checked
+  against the state, then `max_row_bytes`, then the window and resource quotas, then
+  `max_state_bytes`, then the queue. A row refused at any step is not admitted, so the same set
+  is tried again on its next occurrence; a set refused for a quota keeps being refused until
+  its window expires because the quota stays full. An insert that fails releases the keys of
+  its rows, which are then dropped, so a later occurrence in the same window writes them again.
+- **Only metadata is lost.** Every refusal drops only the metadata row and increments
+  `fusescope_attributes_metadata_dropped` (unit `{row}`, attributes `signal` and `reason`),
+  with `reason` one of `window` (`max_sets_per_window`), `resource`
+  (`max_sets_per_resource`), `row_bytes`, `queue` (`max_queue_rows` or `max_queue_bytes`),
+  `state_bytes`, `too_old` (§3) and `insert`; the data itself is always written.
 - **Isolation.** Metadata does not wait for ClickHouse and never returns an error to the data
   path; computing fingerprints still costs CPU on it, which the benchmarks bound. Records are
-  read after the signal's exporter has accepted them for writing; rows go to a bounded queue
-  and are inserted in batches; a full queue drops rows and counts them. An insert that fails is
-  logged and counted, its rows are dropped, and their keys are released so a later occurrence in
-  the same window writes them again. Inserts report the exporter's insert latency, rows and
-  errors under `table=distributed_attributes_metadata`, like the other tables.
+  read after the signal's exporter has accepted them for writing; queued rows are inserted in
+  batches. Inserts report the exporter's insert latency, rows and errors under
+  `table=distributed_attributes_metadata`, like the other tables.
+- **Regression tests.** Many distinct sets with empty maps fill `max_queue_rows`, not memory;
+  a set refused by a full queue is written on its next occurrence once the queue drains; a row
+  over `max_row_bytes` is retried, and refused again, on every occurrence without entering the
+  state.
 
 ## 6. Not observed
 

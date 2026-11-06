@@ -59,10 +59,10 @@ Each row's `labels` hold `__name__`, `__temporality__` (`Delta`), the scope labe
 | Label | Value | Source |
 |---|---|---|
 | `service.name` | the resource's `service.name` | [obs] |
-| `deployment.environment` | the resource's `deployment.environment` | [obs] |
+| `deployment.environment` | the resource's `deployment.environment.name`, else its `deployment.environment` (§3.1) | [obs] name; precedence deliberate |
 | `host.name` | the resource's `host.name` | [obs `obs-keyid`] |
 | `connector_id` | §5 | [obs] |
-| `signoz.workspace.key.id` | the ingestion key (§3.1) | deliberate addition |
+| `signoz.workspace.key.id` | the ingestion key (§3.2) | deliberate addition |
 
 - **Absent dimension.** When the resource lacks one of them, the label is absent, not empty:
   `obs-bare` (no `deployment.environment`) has `service.name` only; `obs-nosvc` (no resource
@@ -73,7 +73,16 @@ Each row's `labels` hold `__name__`, `__temporality__` (`Delta`), the scope labe
   one service sent in two rounds within one window give one `span.count` row of 40 [obs
   `obs-traces` at 20:11:07].
 
-### 3.1 Ingestion key (deliberate addition)
+### 3.1 Environment (deliberate)
+
+The reference reads `deployment.environment` [obs]. Current OpenTelemetry semantic conventions
+name it `deployment.environment.name`, which `rumreceiver` writes
+(`components/receiver/rumreceiver/process.go:31`, [`rum.md`](rum.md) §8.1). The label takes
+`deployment.environment.name` when the resource has it (an empty value counts as present),
+otherwise `deployment.environment`, and is always emitted as `deployment.environment`, the
+name the reference wrote, so one environment never splits into two labels.
+
+### 3.2 Ingestion key (deliberate addition)
 
 Ingestion Settings filters by `signoz.workspace.key.id` (§1), but the reference never writes it
 (§3), so per-key usage is empty with the reference. The collector adds it:
@@ -153,21 +162,27 @@ sums without group by (§1).
 
 ## 7. Limits and isolation (deliberate)
 
-- **Label values.** `service.name`, `deployment.environment`, `host.name` and an unverified
-  key are cut to `max_label_bytes` (256) bytes, at a UTF-8 boundary, before they form a label
-  set; a counter reports the cuts. Authenticated key IDs come from the ingest policy.
+- **Label values.** `service.name`, the environment (§3.1), `host.name` and an unverified key
+  are cut to `max_label_bytes` (256) bytes, at the last UTF-8 boundary at or before it, before
+  they form a label set. Values that differ only after their first 256 bytes therefore add up
+  under the same label; the tests cover that collision and a cut inside a multi-byte character.
+  Authenticated key IDs come from the ingest policy and are not cut.
 - **Label sets.** Per signal, between flushes, at most `max_series` (10 000) label sets holding
   at most `max_series_bytes` (4 MiB) of label keys and values. When a record's set would exceed
-  either, it goes to the overflow set of its authenticated key (§3.1), which keeps
+  either, it goes to the overflow set of its authenticated key (§3.2), which keeps
   `connector_id` and `signoz.workspace.key.id` and drops `service.name`,
   `deployment.environment`, `host.name` and an unverified key.
 - **Keys.** At most `max_authenticated_keys` (1 000) such per-key overflow sets per signal and
   flush, whatever keys rotate during the hour. A record that needs one more, or has no
   authenticated key, goes to a last overflow set with only `connector_id`.
 - **Bound.** So a signal holds at most `max_series + max_authenticated_keys + 1` sets and
-  `max_series_bytes` plus the overflow sets' keys, between flushes. Every record sent to an
-  overflow set is counted by reason (`series`, `bytes`, `keys`), so the loss of the split is
-  visible. Totals stay correct in Meter Explorer, and per key unless `max_authenticated_keys`
+  `max_series_bytes` plus the overflow sets' keys, between flushes.
+- **Loss counter.** `fusescope_meter_overflow_records` (unit `{record}`, attributes `signal`
+  and `reason`) counts every record sent to an overflow set, with `reason` one of `series`
+  (`max_series`), `bytes` (`max_series_bytes`), `keys` (`max_authenticated_keys`) and
+  `no_key` (no authenticated key once an overflow is needed);
+  `fusescope_meter_truncated_values` (`{value}`, `signal`) counts cut label values. The loss
+  of the split is therefore visible. Totals stay correct in Meter Explorer, and per key unless `max_authenticated_keys`
   is exceeded. The reference's limits were not observed.
 - **Isolation.** Counting does not wait for ClickHouse and never returns an error to the data
   path; it reads each batch without copying it, though counting and sizing still cost CPU there,
