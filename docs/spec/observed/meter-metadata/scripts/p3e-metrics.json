@@ -1,0 +1,1 @@
+{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-old"}}]},"scopeMetrics":[{"metrics":[{"name":"obs_old","gauge":{"dataPoints":[{"timeUnixNano":"1793908609000000000","asInt":"1","attributes":[{"key":"marker","value":{"stringValue":"obs-old"}}]}]}}]}]}]}

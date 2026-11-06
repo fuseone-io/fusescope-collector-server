@@ -1,0 +1,23 @@
+# Black-box run of the earlier collector for meter.md and attributes-metadata.md.
+# Times are UTC. Inputs came from telemetrygen or from the JSON files in scripts/ over OTLP;
+# reads are the ClickHouse rows in samples.tsv and attributes_metadata.tsv.
+reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0
+chart: fusescope 0.160.1 (published), kind cluster, default values
+telemetrygen: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.139.0
+timeline:
+  2026-11-05T19:02:22: collector started
+  2026-11-05T19:03: first input (obs-traces, obs-logs, obs-metrics)
+  2026-11-05T20:03:22: first meter flush
+  2026-11-05T20:05: phase1.sh round A (identical sets, a new marker, obs-bare*)
+  2026-11-05T20:10:12: phase1.sh obs-restart*, then a rollout restart
+  2026-11-05T20:10:49: new collector pod started
+  2026-11-05T20:11:07: old pod stopped (shutdown flush)
+  2026-11-05T20:11:55: phase2.sh control, size probes, obs-series
+  2026-11-05T21:10:50: periodic flush
+  2026-11-05T21:15:25: phase3a.sh obs-w21, obs-nosvc
+  2026-11-05T22:10:50: periodic flush
+  2026-11-06T00:01:19: phase3b.sh obs-w21 sent again
+  2026-11-06T02:35:59: phase3c.py and p3c-pod.yaml, span size and fingerprint probes
+  2026-11-06T02:54:34: p3d-pod.yaml, obs-keyid
+  2026-11-06T02:56:52: p3e-pod.yaml, obs-old (timestamps 7 h in the past)
+  2026-11-06T03:10:50: periodic flush
