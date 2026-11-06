@@ -58,10 +58,10 @@ A read-only precheck runs first, on every replica. It verifies:
 - the macros and the cluster exist;
 - `keeper_map_path_prefix` is set (`system.server_settings`).
 
-A failed precheck is a refusal (§7.6) that names the missing item. After the bootstrap (§3.1),
-a probe `KeeperMap` table `fusescope_schema.probe_<random>` is created, written, read and dropped,
-with the drop retried on exit. This is a write, but only to `fusescope_schema`, and it comes before
-anything is written to the telemetry databases.
+A failed precheck is a refusal (§7.6) that names the missing item. There is no separate probe
+table: the bootstrap (§3.1) and the lease's conditional acquire and read-back (§6) are the test that
+`KeeperMap` works in strict mode. They write only to `fusescope_schema`, before anything is written
+to the telemetry databases. If they fail, the run exits 2 and the telemetry databases are untouched.
 
 ## 3. History and coordination
 
@@ -191,7 +191,8 @@ mode.
    owner. Each renewal is confirmed by reading it back.
    - When a renewal fails, or 4 minutes pass without a successful one, the lease is lost.
    - From then on the runner issues no new statement. The current one, idempotent, may finish.
-   - The migration in progress stays `started`, and `migrate` exits 2.
+   - The migration in progress stays `started`, and `migrate` exits 4 (if no migration was
+     `started` yet, it exits 2).
 3. **Release.** `UPDATE owner = '' WHERE name = 'migrate' AND owner = <me> AND token = <mine>`.
 
 Every condition is evaluated by the server inside the conditional update, so an acquire cannot
@@ -255,7 +256,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | The same, after the backend promoted fields, added RUM columns and changed retention | adopted (§8); a promoted column with a changed codec is refused |
 | Running `migrate` twice | the second run is a no-op |
 | 8 concurrent `migrate` processes against an empty cluster | one holds the lease and classifies; the others wait, re-classify as Managed and exit 0; each statement runs once |
-| A lease taken over while a migrator pauses in a statement (renewals blocked) | the old migrator issues no further statement and exits 2; the new one refuses on the `started` row (§7.3) |
+| A lease taken over while a migrator pauses in a statement (renewals blocked) | the old migrator issues no further statement and exits 4; the new one refuses on the `started` row (§7.3) |
 | `SIGKILL` between two statements, then a rerun | refused with `started`; after `repair` (§10.1) it completes |
 | `SIGKILL` while holding only the lease | after expiry the next run takes it over |
 | `check --wait` during a running migration | keeps waiting, then 0 |
@@ -271,6 +272,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | TLS 1.3 with a password file; plaintext opt-in; `verify: false`; TLS below 1.3 | connects as configured; TLS below 1.3 refused |
 | Custom database names | migrated and compared under the custom names |
 | Precheck failures: no Keeper, no macros, no `keeper_map_path_prefix` | each refused with what is missing |
+| Killed during the bootstrap, at each step of §3.1 | the rerun completes the bootstrap and nothing is left in `fusescope_schema` outside the layout |
 
 **Functional validation**
 - The backend's integration suites run with `fusescope-schema` instead of the fork migrator
