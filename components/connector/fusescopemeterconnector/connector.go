@@ -92,17 +92,12 @@ const (
 	hasKey
 )
 
-// Kinds of set: a normal one, the overflow of an authenticated key, and the
-// last overflow, which keeps nothing but connector_id (meter §7).
-const (
-	kindNormal uint8 = iota
-	kindKeyOverflow
-	kindLastOverflow
-)
-
+// setKey is a label set. An overflow set is the set of its labels alone (the
+// key, or nothing), so it is the same set as a normal one with those labels
+// and a flush has one point per label set (meter §3, §7).
 type setKey struct {
 	service, env, host, key string
-	has, kind               uint8
+	has                     uint8
 }
 
 func (k setKey) clone() setKey {
@@ -145,6 +140,7 @@ type meter struct {
 	quit     chan struct{}
 	done     chan struct{}
 	cancel   context.CancelFunc
+	stopOnce sync.Once
 }
 
 func newMeter(cfg *Config, set connector.Settings, next consumer.Metrics, sig signal) (*meter, error) {
@@ -201,10 +197,11 @@ func (m *meter) Start(context.Context, component.Host) error {
 }
 
 // Shutdown stops the periodic flushes and emits what is still counted (meter
-// §5). It gives up at ctx's deadline, even on a sink that ignores ctx.
+// §5). It gives up at ctx's deadline, even on a sink that ignores ctx, and
+// may be called again.
 func (m *meter) Shutdown(ctx context.Context) error {
 	if m.quit != nil {
-		close(m.quit)
+		m.stopOnce.Do(func() { close(m.quit) })
 		select {
 		case <-m.done:
 		case <-ctx.Done():
@@ -212,7 +209,6 @@ func (m *meter) Shutdown(ctx context.Context) error {
 			return ctx.Err()
 		}
 		m.cancel()
-		m.quit = nil
 	}
 	flushed := make(chan error, 1)
 	go func() { flushed <- m.flush(ctx) }()
@@ -433,13 +429,15 @@ func (m *meter) labels(r *request, res pcommon.Map) setKey {
 	return k
 }
 
-// value is res[key] as a string, cut to max_label_bytes at a UTF-8 boundary.
+// value is res[key], cut to max_label_bytes at a UTF-8 boundary. Only a
+// string counts: another type is ignored before any conversion, which for
+// bytes, maps and lists would build the whole string first (meter §3).
 func (m *meter) value(r *request, res pcommon.Map, key string) (string, bool) {
 	v, ok := res.Get(key)
-	if !ok {
+	if !ok || v.Type() != pcommon.ValueTypeStr {
 		return "", false
 	}
-	s := v.AsString()
+	s := v.Str()
 	if limit := m.cfg.MaxLabelBytes; len(s) > limit {
 		for limit > 0 && !utf8.RuneStart(s[limit]) {
 			limit--
@@ -475,7 +473,7 @@ func (w *window) add(cfg *Config, k setKey, trusted string, n, size int64) reaso
 		w.addLast(n, size)
 		return reasonNoKey
 	}
-	ok := setKey{key: trusted, has: hasKey, kind: kindKeyOverflow}
+	ok := setKey{key: trusted, has: hasKey}
 	if c, found := w.sets[ok]; found {
 		c.count += n
 		c.size += size
@@ -491,7 +489,7 @@ func (w *window) add(cfg *Config, k setKey, trusted string, n, size int64) reaso
 }
 
 func (w *window) addLast(n, size int64) {
-	last := setKey{kind: kindLastOverflow}
+	last := setKey{}
 	if c, ok := w.sets[last]; ok {
 		c.count += n
 		c.size += size

@@ -67,9 +67,15 @@ Each row's `labels` hold `__name__`, `__temporality__` (`Delta`), the scope labe
 - **Absent dimension.** When the resource lacks one of them, the label is absent, not empty:
   `obs-bare` (no `deployment.environment`) has `service.name` only; `obs-nosvc` (no resource
   attributes) has neither [obs: raw `labels`].
+- **Strings only (deliberate).** A dimension whose value is not a string (bytes, a map, a list,
+  a number) is ignored, as if absent, before any conversion: converting would build the whole
+  value first, which max_label_bytes could not bound. Semantic conventions define all four as
+  strings.
 - **Other resource attributes are not labels**: the resource of `obs-keyid` held `service.name`,
   `host.name` and `signoz.workspace.key.id`, and its rows have only the first two [obs].
-- **One row per (metric, labels) per flush.** Records with equal dimensions add up; 20 spans of
+- **One row per (metric, labels) per flush.** An overflow set (§7) is the set of the labels it
+  keeps, so it merges with a normal set that has exactly those labels. Records with equal
+  dimensions add up; 20 spans of
   one service sent in two rounds within one window give one `span.count` row of 40 [obs
   `obs-traces` at 20:11:07].
 

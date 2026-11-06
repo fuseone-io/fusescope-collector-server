@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -398,6 +399,50 @@ func TestConnectorIDIsRandomPerInstance(t *testing.T) {
 	assert.NotEqual(t, a, b)
 }
 
+// Only string values become labels: a typed value is ignored before it is
+// converted, so a huge bytes, map or list value costs nothing (meter §3).
+func TestTypedDimensionsAreIgnored(t *testing.T) {
+	big := strings.Repeat("x", 1<<20)
+	tests := []struct {
+		name string
+		set  func(pcommon.Map, string)
+	}{
+		{"bytes", func(m pcommon.Map, k string) { m.PutEmptyBytes(k).FromRaw([]byte(big)) }},
+		{"map", func(m pcommon.Map, k string) {
+			v := m.PutEmptyMap(k)
+			for i := range 10_000 {
+				v.PutStr(strconv.Itoa(i), big[:100])
+			}
+		}},
+		{"list", func(m pcommon.Map, k string) {
+			v := m.PutEmptySlice(k)
+			for range 10_000 {
+				v.AppendEmpty().SetStr(big[:100])
+			}
+		}},
+		{"int", func(m pcommon.Map, k string) { m.PutInt(k, 7) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, signalLogs, nil)
+			ld := logs(1, "b", map[string]string{})
+			res := ld.ResourceLogs().At(0).Resource().Attributes()
+			for _, k := range []string{"service.name", "deployment.environment.name", "deployment.environment", "host.name", "signoz.workspace.key.id"} {
+				tt.set(res, k)
+			}
+			require.NoError(t, f.m.ConsumeLogs(context.Background(), ld)) // creates the set
+			allocs := testing.AllocsPerRun(20, func() { _ = f.m.ConsumeLogs(context.Background(), ld) })
+			assert.Zero(t, allocs, "allocations per consume")
+			points := f.flushAt(t, t1)
+			require.NotEmpty(t, points)
+			for _, p := range points {
+				delete(p.labels, "connector_id")
+				assert.Empty(t, p.labels, "typed values are not labels")
+			}
+		})
+	}
+}
+
 func TestTruncation(t *testing.T) {
 	f := newFixture(t, signalLogs, func(c *Config) { c.MaxLabelBytes = 8 })
 	ctx := context.Background()
@@ -471,6 +516,27 @@ func TestOverflow(t *testing.T) {
 	assert.Equal(t, int64(1), values(f.flushAt(t, t1.Add(time.Hour)))["signoz.meter.log.count|g"])
 }
 
+// An overflow set whose labels equal a normal set's is that set, so a flush
+// has one point per (metric, labels).
+func TestOverflowReusesAnEqualSet(t *testing.T) {
+	f := newFixture(t, signalLogs, func(c *Config) { c.MaxSeries = 2 })
+	require.NoError(t, f.m.ConsumeLogs(withKey("k1"), logs(1, "b", map[string]string{})))        // labels: the key only
+	require.NoError(t, f.m.ConsumeLogs(context.Background(), logs(2, "b", map[string]string{}))) // no labels
+	require.NoError(t, f.m.ConsumeLogs(withKey("k1"), logs(3, "b", map[string]string{"service.name": "a"})))
+	require.NoError(t, f.m.ConsumeLogs(context.Background(), logs(4, "b", map[string]string{"service.name": "b"})))
+	seen := map[string]int64{}
+	for _, p := range f.flushAt(t, t1) {
+		if p.metric != "signoz.meter.log.count" {
+			continue
+		}
+		id := p.labels["signoz.workspace.key.id"] + "|" + p.labels["service.name"]
+		_, dup := seen[id]
+		assert.False(t, dup, "two points with labels %v", p.labels)
+		seen[id] = p.value
+	}
+	assert.Equal(t, map[string]int64{"k1|": 1 + 3, "|": 2 + 4}, seen)
+}
+
 func TestOverflowByBytes(t *testing.T) {
 	f := newFixture(t, signalLogs, func(c *Config) { c.MaxSeriesBytes = setOverhead + 10 })
 	require.NoError(t, f.m.ConsumeLogs(withKey("k"), logs(1, "b", map[string]string{"service.name": "short"})))
@@ -500,7 +566,8 @@ func TestCountsBatchesASiblingRefused(t *testing.T) {
 	assert.Equal(t, int64(6), values(f.flushAt(t, t1))["signoz.meter.span.count|a"])
 }
 
-// blockingSink holds every ConsumeMetrics until release is closed.
+// blockingSink holds every ConsumeMetrics until release is closed, ignoring
+// the context, like a stuck exporter would.
 type blockingSink struct {
 	consumertest.MetricsSink
 	entered chan struct{}
@@ -514,11 +581,7 @@ func newBlockingSink() *blockingSink {
 
 func (b *blockingSink) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
 	b.once.Do(func() { close(b.entered) })
-	select {
-	case <-b.release:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	<-b.release
 	return b.MetricsSink.ConsumeMetrics(ctx, md)
 }
 
@@ -580,22 +643,44 @@ func TestStartFlushesPeriodicallyAndShutdownFlushesTheRest(t *testing.T) {
 }
 
 func TestShutdownGivesUpOnAStuckSink(t *testing.T) {
-	f := newFixture(t, signalLogs, nil)
-	sink := newBlockingSink()
-	f.m.next = sink
-	require.NoError(t, f.m.Start(context.Background(), componenttest.NewNopHost()))
-	require.NoError(t, f.m.ConsumeLogs(context.Background(), logs(1, "b", map[string]string{"service.name": "a"})))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- f.m.Shutdown(ctx) }()
-	select {
-	case err := <-done:
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-	case <-time.After(5 * time.Second):
-		t.Fatal("Shutdown did not return at its deadline")
+	for _, tt := range []struct {
+		name     string
+		periodic bool // stuck in a periodic flush, or in the final one
+	}{
+		{"final flush", false},
+		{"periodic flush", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, signalLogs, func(c *Config) {
+				if tt.periodic {
+					c.FlushInterval = 10 * time.Millisecond
+				}
+			})
+			sink := newBlockingSink()
+			f.m.next = sink
+			require.NoError(t, f.m.Start(context.Background(), componenttest.NewNopHost()))
+			require.NoError(t, f.m.ConsumeLogs(context.Background(), logs(1, "b", map[string]string{"service.name": "a"})))
+			if tt.periodic {
+				<-sink.entered
+			}
+			shutdown := func() error {
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- f.m.Shutdown(ctx) }()
+				select {
+				case err := <-done:
+					return err
+				case <-time.After(5 * time.Second):
+					t.Fatal("Shutdown did not return at its deadline")
+					return nil
+				}
+			}
+			require.ErrorIs(t, shutdown(), context.DeadlineExceeded)
+			require.ErrorIs(t, shutdown(), context.DeadlineExceeded, "a second Shutdown neither panics nor hangs")
+			close(sink.release) // only once Shutdown has returned
+		})
 	}
-	close(sink.release)
 }
 
 func TestShutdownWithoutStart(t *testing.T) {
