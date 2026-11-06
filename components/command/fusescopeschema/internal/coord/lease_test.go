@@ -439,3 +439,43 @@ func TestComparisonBoundsAHangingStoreCall(t *testing.T) {
 		t.Fatal("Valid did not return while a store call hung")
 	}
 }
+
+// The re-reads end at RereadFor: the last sleep is cut to the time left, and a
+// read that shows the lease counts only if it ends by the deadline, so a
+// comparison never succeeds past the fencing margin.
+func TestComparisonEndsAtRereadFor(t *testing.T) {
+	tests := []struct {
+		name      string
+		lagReads  int
+		readTakes time.Duration
+		want      error
+	}{
+		{"caught up on the read at the deadline", 4, 0, nil},
+		{"caught up on a read that ends past the deadline", 3, time.Second, ErrDivergent},
+		{"never caught up", 1 << 30, 0, ErrDivergent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := cluster(t)
+			c := newCoordinator(s, "ch-1-1", "A")
+			held, err := c.Acquire(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.cfg.RereadFor, c.cfg.RereadEvery = 10*time.Second, 3*time.Second
+			s.lag["ch-2-2"] = &fakeLag{reads: tt.lagReads, lease: Lease{Owner: "A", Token: held.Token}}
+			s.onReplicaLeases = func(context.Context) error {
+				s.advance(tt.readTakes.Milliseconds())
+				return nil
+			}
+			start := s.nowMs
+			err = c.Valid(context.Background())
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("Valid = %v, want %v", err, tt.want)
+			}
+			if err == nil && s.nowMs-start > c.cfg.RereadFor.Milliseconds() {
+				t.Fatalf("Valid succeeded %d ms into the comparison, past RereadFor", s.nowMs-start)
+			}
+		})
+	}
+}

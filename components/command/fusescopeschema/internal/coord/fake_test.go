@@ -312,9 +312,23 @@ func (v *fakeView) InsertLeaseIfAbsent(context.Context) error {
 	return nil
 }
 
-func (v *fakeView) Meta(_ context.Context, name string) (string, bool, error) {
+// ReplicaMeta fails, as clusterAllReplicas does, unless every replica has
+// the meta table; each replica reads its own coordination path.
+func (v *fakeView) ReplicaMeta(_ context.Context, name string) (map[string]string, error) {
 	v.s.mu.Lock()
 	defer v.s.mu.Unlock()
-	val, ok := v.m().meta[name]
-	return val, ok, v.check()
+	if err := v.check(); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for r, path := range v.s.replicas {
+		m := v.s.maps[path]
+		if v.s.down[r] || !m.tables["meta"] || v.s.absent[r]["meta"] {
+			return nil, errors.New("replica " + r + " cannot read " + Database + ".meta")
+		}
+		if val, ok := m.meta[name]; ok {
+			out[r] = val
+		}
+	}
+	return out, nil
 }

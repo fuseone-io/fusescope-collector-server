@@ -19,6 +19,15 @@ func complete(s *fakeStore) {
 	m.lease = &Lease{}
 }
 
+// otherStore is a complete layout in an independent coordination store.
+func otherStore(version string) *fakeMap {
+	m := &fakeMap{meta: map[string]string{"coordination": version, "cluster_id": "id-2"}, tables: map[string]bool{}, started: map[uint64]bool{}, lease: &Lease{}}
+	for t := range layout {
+		m.tables[t] = true
+	}
+	return m
+}
+
 func TestBootstrap(t *testing.T) {
 	changed := func(table string, f func(*TableLayout)) TableLayout {
 		l := Layout(table)
@@ -75,6 +84,29 @@ func TestBootstrap(t *testing.T) {
 			complete(s)
 			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 0}
 		}, want: ErrUnknownLayout},
+		{name: "an acquired lease row without an expiry", setup: func(s *fakeStore) {
+			complete(s)
+			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 1}
+		}, want: ErrUnknownLayout},
+		{name: "a released lease row", setup: func(s *fakeStore) {
+			complete(s)
+			s.maps["/shared"].lease = &Lease{Token: 3, ExpiresMs: 5}
+		}},
+		{name: "meta absent on the connected replica: completed", setup: func(s *fakeStore) {
+			complete(s)
+			s.absent["ch-1-1"] = map[string]bool{"meta": true}
+		}, creates: []string{"meta"}},
+		{name: "v1 here, v2 on a replica in another store", setup: func(s *fakeStore) {
+			complete(s)
+			s.maps["/other"] = otherStore("2")
+			s.replicas["ch-2-2"] = "/other"
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "meta partial, v2 on a replica in another store: only meta created", setup: func(s *fakeStore) {
+			complete(s)
+			s.absent["ch-1-1"] = map[string]bool{"meta": true}
+			s.maps["/other"] = otherStore("2")
+			s.replicas["ch-2-2"] = "/other"
+		}, want: ErrUnknownLayout, creates: []string{"meta"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -86,6 +118,11 @@ func TestBootstrap(t *testing.T) {
 			}
 			if tt.noWrites && (len(s.creates) > 0 || len(s.inserts) > 0) {
 				t.Fatalf("wrote before refusing: creates %v, inserts %v", s.creates, s.inserts)
+			}
+			if tt.want != nil && tt.creates != nil {
+				if !slices.Equal(s.creates, tt.creates) || len(s.inserts) > 0 {
+					t.Fatalf("before refusing: creates %v, inserts %v; want creates %v only", s.creates, s.inserts, tt.creates)
+				}
 			}
 			if tt.want != nil {
 				return

@@ -26,8 +26,8 @@ type Lease struct {
 
 // Store is the coordination storage as seen from the server the migrator is
 // connected to. Every write is conditional and reports no outcome: callers
-// learn it by reading back (§11). Replicas are keyed by their topological
-// identity ("shard/replica/host"), unique per replica.
+// learn it by reading back (§11). Replicas are keyed by
+// "hostName()/serverUUID()", unique per server.
 type Store interface {
 	ServerNowMs(ctx context.Context) (int64, error)
 	ReadLease(ctx context.Context) (Lease, bool, error)
@@ -394,10 +394,11 @@ func (c *Coordinator) loseWith(err error) error {
 }
 
 // compareReplicas requires every replica to show exactly want, re-reading a
-// differing one every RereadEvery for up to RereadFor (§3.2). Store calls are
-// bounded by the same deadline.
+// differing one every RereadEvery for up to RereadFor (§3.2). A read counts
+// only if it ends within RereadFor, and store calls are bounded by it, so a
+// comparison never succeeds past the margin the timings leave (Validate).
 func (c *Coordinator) compareReplicas(ctx context.Context, want Lease) error {
-	ctx, cancel := context.WithTimeout(ctx, c.cfg.RereadFor+c.cfg.RereadEvery)
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.RereadFor)
 	defer cancel()
 	deadline := c.now().Add(c.cfg.RereadFor)
 	for {
@@ -415,13 +416,16 @@ func (c *Coordinator) compareReplicas(ctx context.Context, want Lease) error {
 			}
 			return nil
 		})
-		if mismatch == nil {
+		left := deadline.Sub(c.now())
+		switch {
+		case left < 0 && mismatch == nil:
+			return fmt.Errorf("%w: the replicas showed the lease only after %s", ErrDivergent, c.cfg.RereadFor)
+		case mismatch == nil:
 			return nil
-		}
-		if !c.now().Before(deadline) {
+		case left <= 0:
 			return fmt.Errorf("%w: %v", ErrDivergent, mismatch)
 		}
-		if err := c.sleep(ctx, c.cfg.RereadEvery); err != nil {
+		if err := c.sleep(ctx, min(c.cfg.RereadEvery, left)); err != nil {
 			return fmt.Errorf("%w: %v (%v)", ErrDivergent, mismatch, err)
 		}
 	}

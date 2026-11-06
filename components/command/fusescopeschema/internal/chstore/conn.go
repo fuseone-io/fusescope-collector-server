@@ -41,6 +41,9 @@ type TLSConfig struct {
 	InsecureSkipVerify bool
 }
 
+// ErrInvalidConfig: the connection configuration is refused before dialing.
+var ErrInvalidConfig = errors.New("invalid ClickHouse connection configuration")
+
 func (c Config) Validate() error {
 	var errs []error
 	if _, _, err := net.SplitHostPort(c.Endpoint); err != nil {
@@ -55,7 +58,10 @@ func (c Config) Validate() error {
 	if c.TLS.Insecure && (c.TLS.CAFile != "" || c.TLS.InsecureSkipVerify) {
 		errs = append(errs, errors.New("tls.insecure disables TLS: ca_file and insecure_skip_verify do not apply"))
 	}
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
+	}
+	return nil
 }
 
 func (c Config) options() (ch.Options, error) {

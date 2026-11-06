@@ -179,11 +179,7 @@ func (s *Store) ReplicaLeases(ctx context.Context) (map[string]coord.Lease, erro
 }
 
 func (s *Store) ReplicaIdentities(ctx context.Context) (map[string]string, error) {
-	rows, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", value FROM "+s.all("meta")+" WHERE name = 'cluster_id'", 2)
-	if err != nil {
-		return nil, err
-	}
-	return byReplica(rows, func(r []string) (string, error) { return r[0], nil })
+	return s.ReplicaMeta(ctx, "cluster_id")
 }
 
 // ReplicaLayouts reads fusescope_schema's tables on every replica.
@@ -258,10 +254,10 @@ func (s *Store) InsertLeaseIfAbsent(ctx context.Context) error {
 	return s.tryWrite(ctx, fmt.Sprintf("INSERT INTO %s (name, owner, token, expires_at) SELECT 'migrate', '', 0, toDateTime64(0, 3)", s.table("lease")))
 }
 
-func (s *Store) Meta(ctx context.Context, name string) (string, bool, error) {
-	rows, err := s.conn.Rows(ctx, "SELECT value FROM "+s.table("meta")+" WHERE name = "+quote(name), 1)
-	if err != nil || len(rows) == 0 {
-		return "", false, err
+func (s *Store) ReplicaMeta(ctx context.Context, name string) (map[string]string, error) {
+	rows, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", value FROM "+s.all("meta")+" WHERE name = "+quote(name), 2)
+	if err != nil {
+		return nil, err
 	}
-	return rows[0][0], true, nil
+	return byReplica(rows, func(r []string) (string, error) { return r[0], nil })
 }

@@ -259,3 +259,49 @@ func TestIntegrationBootstrapRefusesAnotherEngineOnOneReplica(t *testing.T) {
 		t.Fatalf("Bootstrap = %v, want ErrUnknownLayout", err)
 	}
 }
+
+// meta dropped on the connected replica only: the bootstrap creates it there
+// and completes.
+func TestIntegrationBootstrapCompletesMetaOnTheConnectedReplica(t *testing.T) {
+	addrs := bootstrapped(t)
+	c := dial(t, addrs[0])
+	if err := c.Exec(context.Background(), "DROP TABLE fusescope_schema.meta SYNC"); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(c, "cluster")
+	if err := coord.Bootstrap(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.ReplicaIdentities(context.Background())
+	if err != nil || len(ids) != len(addrs) {
+		t.Fatalf("identities %v, %v", ids, err)
+	}
+}
+
+// A newer coordination version is refused before the missing table is
+// created.
+func TestIntegrationBootstrapRefusesANewerVersionWithoutWriting(t *testing.T) {
+	addrs := bootstrapped(t)
+	c := dial(t, addrs[0])
+	for _, q := range []string{
+		"ALTER TABLE fusescope_schema.meta UPDATE value = '2' WHERE name = 'coordination'",
+		"DROP TABLE fusescope_schema.migrations ON CLUSTER cluster SYNC",
+	} {
+		if err := c.Exec(context.Background(), q, append(ddl, strict)...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewStore(dial(t, addrs[1]), "cluster")
+	if err := coord.Bootstrap(context.Background(), s); !errors.Is(err, coord.ErrUnknownLayout) {
+		t.Fatalf("Bootstrap = %v, want ErrUnknownLayout", err)
+	}
+	layouts, err := s.ReplicaLayouts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r, tables := range layouts {
+		if _, ok := tables["migrations"]; ok {
+			t.Fatalf("replica %s: migrations created despite the refusal", r)
+		}
+	}
+}

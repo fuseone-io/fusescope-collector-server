@@ -97,8 +97,15 @@ The bootstrap reads before it writes.
      columns in order, `primary_key`, and `engine_full`, which names the KeeperMap path, as in
      `KeeperMap('/fusescope_schema/lease') PRIMARY KEY name` (observed on 25.12, §11).
 
-   It goes on only if every table present on every replica matches this binary's layout and no
-   `coordination` value is newer. Otherwise it refuses (§7.1) without writing. That covers a newer layout, an
+   It goes on only if every table present on every replica matches this binary's layout and every
+   replica's `coordination`, read on that replica, is this binary's.
+
+   ClickHouse resolves a table function's structure on the server it is sent to, and fails on a
+   replica without the table (observed on 25.12 for `clusterAllReplicas` over the table and over
+   `merge()`). So the version can be read on every replica only once each has `meta`: when `meta`
+   is on some replicas only, the bootstrap first creates it where it is missing, `IF NOT EXISTS`
+   and without rows, then reads the version on every replica. That `CREATE` is the only write that
+   can precede a refusal; when `meta` is on every replica, a refusal writes nothing. Otherwise it refuses (§7.1) without writing. That covers a newer layout, an
    unknown table in `fusescope_schema` and a changed column.
 2. If `fusescope_schema` is absent, or holds this binary's layout only partly (some tables
    missing, or `meta` and `lease` without their rows), it completes what is missing:
@@ -109,8 +116,8 @@ The bootstrap reads before it writes.
      failure means another run got there first, and is ignored.
 3. It reads the structures on every replica again, and refuses unless each replica shows all three
    tables exactly. It reads back `meta.coordination`, `meta.cluster_id` and the lease table, which
-   must hold the single `migrate` row with fields the protocol of §6 can write (token 0 only with
-   no owner and a zero expiry).
+   must hold the single `migrate` row with fields the protocol of §6 writes: token 0 with no owner
+   and a zero expiry, or a positive token with a positive expiry, owned or released.
 
 The bootstrap creates only `fusescope_schema`. It never touches the telemetry databases, and it
 decides nothing about them.
@@ -253,7 +260,8 @@ that starts just before the loss deadline then ends before the lease can expire 
 
 Acquire, renewal, the statement check and release run one at a time in a runner, so a comparison
 never meets a renewal it did not read. Every store call is bounded by the deadline of the step
-that makes it.
+that makes it. The comparison's own deadline is exact: its last re-read waits only for the time
+left, and a read showing the lease counts only if it ends within the re-read window.
 
 Replicas are compared by `hostName()` and `serverUUID()`. The listing must hold as many entries as
 `system.clusters` lists for the cluster, with no key twice, since a key twice means one server
