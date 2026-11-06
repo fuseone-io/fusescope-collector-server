@@ -1,6 +1,6 @@
 # 0010 · fusescope-schema, our own ClickHouse migrator
 
-- Status: proposed
+- Status: accepted (2026-11-06, after the protocol spike, spec §11)
 - Date: 2026-11-06
 - Issue: [#9](https://github.com/fuseone-io/fusescope-collector-server/issues/9); unblocks
   [fuseone-io/fusescope#229](https://github.com/fuseone-io/fusescope/issues/229)
@@ -98,11 +98,22 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
   it.
 - The tests need a real ClickHouse cluster with Keeper (spec §9), in CI.
 
-## Before acceptance
+## Spike
 
-A spike on a 2×2 cluster with Keeper exercises the spec §6 protocol: the conditional acquire,
-renew and release in strict mode, races between acquire and renewal, expiry, and read-your-writes
-on the same server. Its results go into the spec before this ADR is accepted.
+A spike on a 2×2 cluster with Keeper ran the spec §6 protocol (spec §11). It covered:
+- the conditional acquire, renewal and release in strict mode;
+- races between acquire and renewal;
+- expiry;
+- 8 concurrent acquires and bootstraps;
+- read-back on the same server.
+
+Every case behaved as specified. It also showed two things the spec now accounts for:
+- a losing update usually reports no error, so the read-back is mandatory;
+- `keeper_map_path_prefix` is not visible in `system` tables, so its absence is detected by the
+  bootstrap's first `KeeperMap` create.
+
+The limits are recorded in the spec: one Keeper node, one version, and clock skew. The CI matrix
+covers them before any other version or deployment is supported.
 
 ## Review decisions
 

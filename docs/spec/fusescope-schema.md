@@ -56,7 +56,13 @@ A read-only precheck runs first, on every replica. It verifies:
   versions are refused until they are added to the matrix and pass it);
 - `system.zookeeper` is readable;
 - the macros and the cluster exist;
-- `keeper_map_path_prefix` is set (`system.server_settings`).
+- the clocks of the replicas, read with `now64(3)` on each, differ by less than 30 seconds, since
+  the lease's expiry is evaluated on the server that runs each update (§6, §11).
+
+`keeper_map_path_prefix` is not visible in any `system` table (spike, §11), so it cannot be part of
+the read-only precheck. The bootstrap's first `CREATE TABLE … ENGINE = KeeperMap` reports its
+absence (`Code: 36, BAD_ARGUMENTS: KeeperMap is disabled because 'keeper_map_path_prefix' config is
+not defined`), and that error is turned into the refusal §7.6, before any telemetry write.
 
 A failed precheck is a refusal (§7.6) that names the missing item. There is no separate probe
 table: the bootstrap (§3.1) and the lease's conditional acquire and read-back (§6) are the test that
@@ -271,7 +277,8 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | A failure before any `started` row, and one after | exit 2, then a clean rerun; exit 4, then the rerun refuses |
 | TLS 1.3 with a password file; plaintext opt-in; `verify: false`; TLS below 1.3 | connects as configured; TLS below 1.3 refused |
 | Custom database names | migrated and compared under the custom names |
-| Precheck failures: no Keeper, no macros, no `keeper_map_path_prefix` | each refused with what is missing |
+| Precheck failures: no Keeper, no macros, no `keeper_map_path_prefix`, replicas' clocks 60 s apart | each refused with what is missing |
+| The concurrency cases above with a 3-node Keeper ensemble, and with a Keeper node killed during a migration | the same results; a run that loses Keeper exits 2 or 4 by §1 and the rerun follows §7 |
 | Killed during the bootstrap, at each step of §3.1 | the rerun completes the bootstrap and nothing is left in `fusescope_schema` outside the layout |
 
 **Functional validation**
@@ -304,3 +311,42 @@ replicas, Keeper, and `keeper_map_path_prefix`.
   deleted.
 
 Either way, the result is verified by reading the history back before exit 0.
+
+## 11. Spike results (2026-11-06)
+
+The protocol of §3 and §6 was run with plain SQL on a 2×2 cluster: ClickHouse 25.12.5.44 (the
+chart's pin), one Keeper, and `keeper_map_path_prefix` set. Each statement ran in its own
+`clickhouse-client` session, on the node noted. The setup is in
+[`observed/fusescope-schema-spike/`](observed/fusescope-schema-spike/).
+
+| Case | Result |
+|---|---|
+| `CREATE DATABASE` and `CREATE TABLE … KeeperMap … ON CLUSTER` | applied on the 4 hosts; every host reads the same rows |
+| Strict `INSERT` of an existing key | fails with `Code: 999` (Keeper: node exists) |
+| 8 concurrent bootstraps (create database, create table, insert the lease row) from the 4 hosts | the `CREATE … IF NOT EXISTS` all succeed; one insert wins, seven get `Code: 999`; one row on every host |
+| Acquire on a free lease, then read-back on the same server | the read-back shows the new owner and token |
+| Acquire with a token read before the owner renewed | no change; the lease keeps its owner |
+| Renewal after expiry | no change: the lease stays expired, not revived |
+| Acquire of the expired lease by another process | succeeds; token + 1 |
+| Release with a stale token | no change |
+| 8 concurrent acquires of a free lease with the same read token, 5 rounds | the token rose by exactly 1 each round; the losers ended with no change, some with a strict-mode error (`Code: 999`) and most with **no error at all** |
+| The same, 10 rounds, each process reading back on its own node right after its update | in every round exactly one process read itself as owner; no read-back was stale |
+| `KeeperMap` without `keeper_map_path_prefix` | `Code: 36 … KeeperMap is disabled because 'keeper_map_path_prefix' config is not defined` |
+| `keeper_map_path_prefix` in `system.server_settings` | absent (see §2.1) |
+
+What this establishes, and its limits:
+
+- **Mutual exclusion comes from the condition in the update and the token, not from strict mode
+  alone.** A losing conditional update usually succeeds without changing anything: ClickHouse
+  reports no affected rows. So the read-back of §6 is required, not a check on top. `migrate`
+  treats a held lease as acquired only when its read-back shows its own owner and token.
+- **Read-back on the same server saw the server's own writes** in every round. That matches
+  Keeper's per-session ordering, but it is an observation on one version and topology. The CI
+  matrix of §9 repeats the concurrency cases on every ClickHouse version it accepts.
+- **One Keeper node** was used; a Keeper ensemble, Keeper failover during a migration, and
+  ZooKeeper instead of Keeper were not tested. They are added to §9 before a version or deployment
+  is declared supported.
+- **Time:** the conditions use the server's `now64(3)`. Different servers' clocks bound how
+  precisely a lease expires. The 5-minute lease with 1-minute renewal tolerates seconds of skew,
+  not minutes, and the precheck checks it: the skew between replicas (from `now64()` on each) must
+  be under 30 seconds, or the run is refused.

@@ -1,0 +1,24 @@
+services:
+  keeper:
+    image: clickhouse/clickhouse-keeper:25.12.5
+    volumes: [./keeper.xml:/etc/clickhouse-keeper/keeper_config.d/k.xml:ro]
+  ch-1-1:
+    image: clickhouse/clickhouse-server:25.12.5
+    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}
+    volumes: [./ch-1-1.xml:/etc/clickhouse-server/config.d/spike.xml:ro]
+    depends_on: [keeper]
+  ch-1-2:
+    image: clickhouse/clickhouse-server:25.12.5
+    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}
+    volumes: [./ch-1-2.xml:/etc/clickhouse-server/config.d/spike.xml:ro]
+    depends_on: [keeper]
+  ch-2-1:
+    image: clickhouse/clickhouse-server:25.12.5
+    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}
+    volumes: [./ch-2-1.xml:/etc/clickhouse-server/config.d/spike.xml:ro]
+    depends_on: [keeper]
+  ch-2-2:
+    image: clickhouse/clickhouse-server:25.12.5
+    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}
+    volumes: [./ch-2-2.xml:/etc/clickhouse-server/config.d/spike.xml:ro]
+    depends_on: [keeper]
