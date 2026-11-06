@@ -60,6 +60,7 @@ configuration goes through OpAMP with an allow-list (§5), never an arbitrary UR
 | `signozlogspipeline` | processor | Log pipelines configured in the FuseScope UI |
 | `signozspanmapper`, `signozllmpricing`, `signoz_tail_sampling` | processors | Other UI-managed processing the backend pushes today |
 | `fusescope_spanmetrics` | connector | Service RED metrics under the names the Services page queries ([apm-metrics](docs/spec/apm-metrics.md)) |
+| `fusescope_meter` | connector | Hourly usage per service and ingestion key for Meter Explorer and Ingestion Settings, written by `fusescope_clickhouse` in mode `meter` ([meter](docs/spec/meter.md)) |
 | `fusescope_opamp` | confmap provider | OpAMP agent: applies the backend-managed processors of a pushed configuration within an allow-list, and receives the ingest policy (§5, [ADR 0008](docs/adr/0008-opamp-remote-config.md)) |
 | `ingestauth` | extension | Validates ingestion keys locally against the ingest policy, stamps `fusescope.ingest.key_id`, per-key rate limits ([ADR 0006](docs/adr/0006-single-ingress.md)) |
 | `rumreceiver` | receiver | RUM ingest (`/rum/v1/*`): public keys, per-application CORS, PII scrubbing, moved from the backend gateway |

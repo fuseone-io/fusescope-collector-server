@@ -125,6 +125,15 @@ func newMetricsExporter(cfg *Config, set component.TelemetrySettings) (*signalEx
 	return newSignalExporter(cfg, cfg.Metrics.Database, set, metricsTables, newEncoder, (*metricsEncoder).encode)
 }
 
+func newMeterExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*meterEncoder, pmetric.Metrics], error) {
+	newEncoder := func() *meterEncoder {
+		e := newMeterEncoder()
+		e.logger = set.Logger
+		return e
+	}
+	return newSignalExporter(cfg, cfg.Meter.Database, set, meterTables, newEncoder, (*meterEncoder).encode)
+}
+
 // randomShards are the tables whose Distributed engine shards by rand(): a
 // retry routes their rows to other shards, where a reused token would drop rows
 // that shard never had. They are Replacing or Aggregating merge trees, so the

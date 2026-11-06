@@ -54,6 +54,7 @@ attributes:
       - distributed_metadata
       - distributed_time_series_v4
       - distributed_samples_v4
+      - distributed_samples
 
 telemetry:
   metrics:

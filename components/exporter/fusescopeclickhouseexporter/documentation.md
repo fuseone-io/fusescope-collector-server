@@ -41,7 +41,7 @@ Duration of each INSERT attempt into a table, retries included.
 
 | Name | Description | Values | Semantic Convention |
 | ---- | ----------- | ------ | ------------------- |
-| table | The table inserted into, without its database. | Str: ``distributed_traces_v3_resource``, ``distributed_tag_attributes_v2``, ``distributed_span_attributes_keys``, ``distributed_signoz_error_index_v2``, ``distributed_signoz_index_v3``, ``distributed_logs_v2_resource``, ``distributed_logs_attribute_keys``, ``distributed_logs_resource_keys``, ``distributed_logs_v2``, ``distributed_metadata``, ``distributed_time_series_v4``, ``distributed_samples_v4`` | - |
+| table | The table inserted into, without its database. | Str: ``distributed_traces_v3_resource``, ``distributed_tag_attributes_v2``, ``distributed_span_attributes_keys``, ``distributed_signoz_error_index_v2``, ``distributed_signoz_index_v3``, ``distributed_logs_v2_resource``, ``distributed_logs_attribute_keys``, ``distributed_logs_resource_keys``, ``distributed_logs_v2``, ``distributed_metadata``, ``distributed_time_series_v4``, ``distributed_samples_v4``, ``distributed_samples`` | - |
 | outcome | The result of the attempt, as the exporter returns it. | Str: ``ok``, ``retryable``, ``permanent`` | - |
 
 ### otelcol_exporter_fusescope_clickhouse_insert_errors
@@ -56,7 +56,7 @@ Failed INSERT attempts, by table and by whether the error is retryable or perman
 
 | Name | Description | Values | Semantic Convention |
 | ---- | ----------- | ------ | ------------------- |
-| table | The table inserted into, without its database. | Str: ``distributed_traces_v3_resource``, ``distributed_tag_attributes_v2``, ``distributed_span_attributes_keys``, ``distributed_signoz_error_index_v2``, ``distributed_signoz_index_v3``, ``distributed_logs_v2_resource``, ``distributed_logs_attribute_keys``, ``distributed_logs_resource_keys``, ``distributed_logs_v2``, ``distributed_metadata``, ``distributed_time_series_v4``, ``distributed_samples_v4`` | - |
+| table | The table inserted into, without its database. | Str: ``distributed_traces_v3_resource``, ``distributed_tag_attributes_v2``, ``distributed_span_attributes_keys``, ``distributed_signoz_error_index_v2``, ``distributed_signoz_index_v3``, ``distributed_logs_v2_resource``, ``distributed_logs_attribute_keys``, ``distributed_logs_resource_keys``, ``distributed_logs_v2``, ``distributed_metadata``, ``distributed_time_series_v4``, ``distributed_samples_v4``, ``distributed_samples`` | - |
 | outcome | The class of the failed attempt's error, as the exporter returns it. | Str: ``retryable``, ``permanent`` | - |
 
 ### otelcol_exporter_fusescope_clickhouse_inserted_rows
@@ -71,4 +71,4 @@ Rows in confirmed inserts, by table. With ClickHouse insert deduplication, a con
 
 | Name | Description | Values | Semantic Convention |
 | ---- | ----------- | ------ | ------------------- |
-| table | The table inserted into, without its database. | Str: ``distributed_traces_v3_resource``, ``distributed_tag_attributes_v2``, ``distributed_span_attributes_keys``, ``distributed_signoz_error_index_v2``, ``distributed_signoz_index_v3``, ``distributed_logs_v2_resource``, ``distributed_logs_attribute_keys``, ``distributed_logs_resource_keys``, ``distributed_logs_v2``, ``distributed_metadata``, ``distributed_time_series_v4``, ``distributed_samples_v4`` | - |
+| table | The table inserted into, without its database. | Str: ``distributed_traces_v3_resource``, ``distributed_tag_attributes_v2``, ``distributed_span_attributes_keys``, ``distributed_signoz_error_index_v2``, ``distributed_signoz_index_v3``, ``distributed_logs_v2_resource``, ``distributed_logs_attribute_keys``, ``distributed_logs_resource_keys``, ``distributed_logs_v2``, ``distributed_metadata``, ``distributed_time_series_v4``, ``distributed_samples_v4``, ``distributed_samples`` | - |

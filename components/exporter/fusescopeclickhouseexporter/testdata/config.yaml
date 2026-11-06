@@ -26,3 +26,14 @@ fusescope_clickhouse/old_tls:
     min_version: "1.2"
 fusescope_clickhouse/no_port:
   endpoint: clickhouse
+fusescope_clickhouse/meter:
+  endpoint: clickhouse:9440
+  mode: meter
+fusescope_clickhouse/bad_mode:
+  endpoint: clickhouse:9440
+  mode: everything
+fusescope_clickhouse/bad_meter_database:
+  endpoint: clickhouse:9440
+  mode: meter
+  meter:
+    database: "x y"

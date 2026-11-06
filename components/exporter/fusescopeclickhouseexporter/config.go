@@ -20,6 +20,13 @@ import (
 
 const minTLSVersion = "1.3"
 
+// Modes: signals writes traces, logs and metrics to their databases; meter
+// writes only the usage metrics of fusescope_meter to signoz_meter (meter §6).
+const (
+	modeSignals = "signals"
+	modeMeter   = "meter"
+)
+
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Config defines the fusescope_clickhouse exporter. The password is read from
@@ -31,10 +38,14 @@ type Config struct {
 	TLS          configtls.ClientConfig `mapstructure:"tls"`
 	DialTimeout  time.Duration          `mapstructure:"dial_timeout"`
 	// MaxConnections bounds concurrent inserts towards ClickHouse.
-	MaxConnections int32        `mapstructure:"max_connections"`
-	Traces         SignalConfig `mapstructure:"traces"`
-	Logs           SignalConfig `mapstructure:"logs"`
-	Metrics        SignalConfig `mapstructure:"metrics"`
+	MaxConnections int32 `mapstructure:"max_connections"`
+	// Mode is signals or meter.
+	Mode    string       `mapstructure:"mode"`
+	Traces  SignalConfig `mapstructure:"traces"`
+	Logs    SignalConfig `mapstructure:"logs"`
+	Metrics SignalConfig `mapstructure:"metrics"`
+	// Meter is the database of mode meter.
+	Meter SignalConfig `mapstructure:"meter"`
 
 	exporterhelper.TimeoutConfig `mapstructure:",squash"`
 	QueueConfig                  configoptional.Optional[exporterhelper.QueueBatchConfig] `mapstructure:"sending_queue"`
@@ -58,9 +69,11 @@ func createDefaultConfig() *Config {
 		TLS:            tls,
 		DialTimeout:    5 * time.Second,
 		MaxConnections: 8,
+		Mode:           modeSignals,
 		Traces:         SignalConfig{Database: "signoz_traces"},
 		Logs:           SignalConfig{Database: "signoz_logs"},
 		Metrics:        SignalConfig{Database: "signoz_metrics"},
+		Meter:          SignalConfig{Database: "signoz_meter"},
 		TimeoutConfig:  timeout,
 		QueueConfig:    metadata.NewDefaultSendingQueueConfig(),
 		RetryConfig:    configretry.NewDefaultBackOffConfig(),
@@ -75,7 +88,10 @@ func (cfg *Config) Validate() error {
 	if cfg.Username == "" {
 		errs = append(errs, errors.New("username must not be empty"))
 	}
-	for name, db := range map[string]string{"traces": cfg.Traces.Database, "logs": cfg.Logs.Database, "metrics": cfg.Metrics.Database} {
+	if cfg.Mode != modeSignals && cfg.Mode != modeMeter {
+		errs = append(errs, fmt.Errorf("mode %q must be %s or %s", cfg.Mode, modeSignals, modeMeter))
+	}
+	for name, db := range map[string]string{"traces": cfg.Traces.Database, "logs": cfg.Logs.Database, "metrics": cfg.Metrics.Database, "meter": cfg.Meter.Database} {
 		if !identifier.MatchString(db) {
 			errs = append(errs, fmt.Errorf("%s.database %q is not a valid ClickHouse identifier", name, db))
 		}
