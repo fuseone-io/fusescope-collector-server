@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: p3c}
+spec:
+  restartPolicy: Never
+  containers:
+  - name: c
+    image: curlimages/curl:8.10.1
+    command: [sh, -c, 'for f in ssize10 ssize1010 fp-ab fp-ba fp-int; do curl -sS -o /dev/null -w "$f %{http_code}\n" -H "Content-Type: application/json" --data-binary @/p/p3c-$f.json http://fs-fusescope-otel-collector:4318/v1/traces; sleep 2; done']
+    volumeMounts: [{name: p, mountPath: /p}]
+  volumes: [{name: p, configMap: {name: p3c}}]

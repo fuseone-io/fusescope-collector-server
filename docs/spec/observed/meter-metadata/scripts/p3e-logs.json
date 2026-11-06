@@ -1,0 +1,1 @@
+{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-old"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1793908609000000000","body":{"stringValue":"o"},"attributes":[{"key":"marker","value":{"stringValue":"obs-old"}}]}]}]}]}

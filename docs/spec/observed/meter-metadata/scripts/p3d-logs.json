@@ -1,0 +1,1 @@
+{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-keyid"}},{"key":"signoz.workspace.key.id","value":{"stringValue":"obs-key-1"}},{"key":"host.name","value":{"stringValue":"obs-host"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1793933671000000000","body":{"stringValue":"k"}}]}]}]}
