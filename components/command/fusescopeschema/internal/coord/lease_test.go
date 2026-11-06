@@ -17,7 +17,7 @@ func cluster(t *testing.T) *fakeStore {
 	t.Helper()
 	s := newFakeStore(replicas...)
 	m := s.maps["/shared"]
-	for name := range layoutColumns {
+	for name := range layout {
 		m.tables[name] = true
 	}
 	m.meta["coordination"] = "1"
@@ -29,7 +29,10 @@ func cluster(t *testing.T) *fakeStore {
 // newCoordinator connects to replica, with a fake clock that the store and the
 // coordinator share, so sleeping advances the servers' time.
 func newCoordinator(s *fakeStore, replica, owner string) *Coordinator {
-	c := New(s.as(replica), Config{Owner: owner})
+	c, err := New(s.as(replica), Config{Owner: owner})
+	if err != nil {
+		panic(err)
+	}
 	c.sleep = func(ctx context.Context, d time.Duration) error {
 		s.advance(d.Milliseconds())
 		return ctx.Err()
@@ -280,5 +283,159 @@ func TestValidComparesEveryReplica(t *testing.T) {
 	}
 	if err := c.Renew(context.Background()); !errors.Is(err, ErrDivergent) {
 		t.Fatalf("Renew = %v, want ErrDivergent", err)
+	}
+}
+
+func TestNewRefusesConfigsThatBreakTheFencing(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		ok   bool
+	}{
+		{"the defaults", Config{Owner: "A"}, true},
+		{"short timings for tests", Config{Owner: "A", LeaseFor: 3 * time.Second, LostAfter: time.Second, RenewEvery: 500 * time.Millisecond, RereadFor: time.Second, ClockSkew: 500 * time.Millisecond}, true},
+		{"no owner", Config{}, false},
+		{"a negative lease", Config{Owner: "A", LeaseFor: -time.Second}, false},
+		{"a negative re-read interval", Config{Owner: "A", RereadEvery: -time.Millisecond}, false},
+		{"renewals no sooner than the loss", Config{Owner: "A", RenewEvery: 4 * time.Minute}, false},
+		{"a lease shorter than the loss deadline", Config{Owner: "A", LeaseFor: 3 * time.Minute}, false},
+		{"no room for the re-reads and the clock skew", Config{Owner: "A", LostAfter: 4*time.Minute + 30*time.Second}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(cluster(t).as("ch-1-1"), tt.cfg)
+			if tt.ok != (err == nil) || (err != nil && !errors.Is(err, ErrConfig)) {
+				t.Fatalf("New = %v, want ok=%v", err, tt.ok)
+			}
+		})
+	}
+}
+
+// The replica comparison never falls back to the replicas that happened to
+// answer: failing to list them, an empty list, or a server answering for two
+// replicas is terminal.
+func TestReplicaEnumerationFailsClosed(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*fakeStore)
+	}{
+		{"the listing fails", func(s *fakeStore) { s.listErr = errors.New("system.clusters unreadable") }},
+		{"the cluster lists no replica", func(s *fakeStore) { s.listed = []string{} }},
+		{"one server answers for two replicas", func(s *fakeStore) {
+			delete(s.replicas, "ch-1-2")
+			s.listed = []string{"ch-1-1", "ch-1-1", "ch-2-1", "ch-2-2"}
+		}},
+		{"a replica answers but is not listed", func(s *fakeStore) { s.listed = []string{"ch-1-1", "ch-1-2", "ch-2-1"} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := cluster(t)
+			c := newCoordinator(s, "ch-1-1", "A")
+			if _, err := c.Acquire(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(s)
+			if err := c.Valid(context.Background()); !errors.Is(err, ErrDivergent) {
+				t.Fatalf("Valid = %v, want ErrDivergent", err)
+			}
+			if _, err := newCoordinator(s, "ch-2-1", "B").Acquire(context.Background()); !errors.Is(err, ErrDivergent) {
+				t.Fatalf("Acquire = %v, want ErrDivergent", err)
+			}
+		})
+	}
+}
+
+// A renewal during a Valid's comparison would make the replicas show a newer
+// expiry than the one Valid compares against, and lose a healthy lease: the
+// renewal waits for the comparison.
+func TestRenewWaitsForAValidComparison(t *testing.T) {
+	s := cluster(t)
+	c := newCoordinator(s, "ch-1-1", "A")
+	if _, err := c.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.advance(time.Minute.Milliseconds())
+	inside, renewed := make(chan struct{}), make(chan struct{})
+	renewedDuring := false
+	s.onRenew = func() { close(renewed) }
+	s.onReplicaLeases = func(context.Context) error {
+		s.onReplicaLeases = nil
+		close(inside)
+		select {
+		case <-renewed:
+			renewedDuring = true
+		case <-time.After(200 * time.Millisecond):
+		}
+		return nil
+	}
+	valid := make(chan error)
+	go func() { valid <- c.Valid(context.Background()) }()
+	<-inside
+	renew := make(chan error)
+	go func() { renew <- c.Renew(context.Background()) }()
+	if err := <-valid; err != nil {
+		t.Fatalf("Valid = %v", err)
+	}
+	if err := <-renew; err != nil {
+		t.Fatalf("Renew = %v", err)
+	}
+	if renewedDuring {
+		t.Fatal("the renewal ran during the comparison")
+	}
+}
+
+// Any failed renewal loses the lease: RunRenewals stops and Valid refuses.
+func TestRunRenewalsStopsOnAFailedRenewal(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*fakeStore)
+		want  error
+	}{
+		{"a store error", func(s *fakeStore) { s.failNext = errors.New("connection reset") }, ErrLeaseLost},
+		{"a replica out of step", func(s *fakeStore) { s.lag["ch-1-2"] = &fakeLag{reads: 1 << 30, lease: Lease{Owner: "Z", Token: 9}} }, ErrDivergent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := cluster(t)
+			c := newCoordinator(s, "ch-1-1", "A")
+			if _, err := c.Acquire(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(s)
+			done := make(chan struct{})
+			go func() { c.RunRenewals(context.Background()); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("RunRenewals kept going after a failed renewal")
+			}
+			if err := c.Valid(context.Background()); !errors.Is(err, tt.want) {
+				t.Fatalf("Valid = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+// A store call that hangs is bounded by the re-read deadline.
+func TestComparisonBoundsAHangingStoreCall(t *testing.T) {
+	s := cluster(t)
+	c := newCoordinator(s, "ch-1-1", "A")
+	if _, err := c.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.cfg.RereadFor, c.cfg.RereadEvery = 50*time.Millisecond, 10*time.Millisecond
+	s.onReplicaLeases = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	done := make(chan error)
+	go func() { done <- c.Valid(context.Background()) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrDivergent) {
+			t.Fatalf("Valid = %v, want ErrDivergent", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Valid did not return while a store call hung")
 	}
 }

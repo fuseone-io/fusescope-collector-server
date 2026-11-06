@@ -2,23 +2,43 @@
 # A 2x2 ClickHouse cluster with Keeper or ZooKeeper for fusescope-schema's
 # integration tests (docs/spec/fusescope-schema.md §9). The four servers'
 # native ports are 127.0.0.1:19001..19004.
-#   test/schema/cluster.sh up [keeper|zookeeper]   prints FUSESCOPE_SCHEMA_TEST_ADDRS=...
-#   test/schema/cluster.sh down
+#   test/schema/cluster.sh up [keeper|zookeeper]   prints the cluster's directory,
+#                                                  whose addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
+#   test/schema/cluster.sh down DIR
 set -euo pipefail
-DIR=${FUSESCOPE_SCHEMA_TEST_DIR:-/tmp/fusescope-schema-cluster}
+MARKER=.fusescope-schema-cluster
 CH=clickhouse/clickhouse-server:25.12.5@sha256:cacf32d6884291dc2ff5e0156a97f46fc53ff7c929a7906d114e268a929dfd3a
 KEEPER=clickhouse/clickhouse-keeper:25.12.5@sha256:525b8b0f93ccb371131c46f22a066ea43d33d74aba314203e8044609945d8524
 ZK=signoz/zookeeper:3.7.1@sha256:fcc4a3288154ccaa3bdb5ae6dc10180c084d29a8a6a26b62ac8e30a8940dc2e6
 NODES="ch-1-1 ch-1-2 ch-2-1 ch-2-2"
 
+# down removes only a directory up created: a mktemp directory holding the marker.
+down() {
+  local dir=$1
+  case "$dir" in
+    /*/fusescope-schema-cluster.??????) ;;
+    *) echo "refusing to remove $dir: not a directory made by $0 up" >&2; return 2 ;;
+  esac
+  if [ -L "$dir" ] || [ ! -d "$dir" ] || [ ! -f "$dir/$MARKER" ]; then
+    echo "refusing to remove $dir: not a directory made by $0 up" >&2
+    return 2
+  fi
+  docker compose -f "$dir/compose.yaml" down -v >/dev/null 2>&1 || true
+  rm -rf -- "$dir"
+}
+
 if [ "${1:-}" = down ]; then
-  [ -f "$DIR/compose.yaml" ] && docker compose -f "$DIR/compose.yaml" down -v >/dev/null 2>&1
-  rm -rf "$DIR"
-  exit 0
+  [ -n "${2:-}" ] || { echo "usage: $0 down DIR" >&2; exit 2; }
+  down "$2"
+  exit
 fi
-[ "${1:-}" = up ] || { echo "usage: $0 up [keeper|zookeeper] | down" >&2; exit 2; }
+[ "${1:-}" = up ] || { echo "usage: $0 up [keeper|zookeeper] | down DIR" >&2; exit 2; }
 COORD=${2:-keeper}
-rm -rf "$DIR"; mkdir -p "$DIR"; cd "$DIR"
+case "$COORD" in keeper | zookeeper) ;; *) echo "unknown coordination service $COORD" >&2; exit 2 ;; esac
+DIR=$(mktemp -d "${TMPDIR:-/tmp}/fusescope-schema-cluster.XXXXXX")
+touch "$DIR/$MARKER"
+trap 'down "$DIR"' EXIT # until the cluster is up
+cd "$DIR"
 if [ "$COORD" = keeper ]; then PORT=9181; else PORT=2181; fi
 {
   echo "services:"
@@ -58,4 +78,6 @@ for n in $NODES; do
   done
   [ -n "$ok" ] || { echo "$n did not reach its coordination service" >&2; exit 2; }
 done
-echo "FUSESCOPE_SCHEMA_TEST_ADDRS=127.0.0.1:19001,127.0.0.1:19002,127.0.0.1:19003,127.0.0.1:19004"
+echo 127.0.0.1:19001,127.0.0.1:19002,127.0.0.1:19003,127.0.0.1:19004 > addrs
+trap - EXIT
+echo "$DIR"

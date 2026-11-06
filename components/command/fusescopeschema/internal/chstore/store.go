@@ -17,7 +17,12 @@ import (
 )
 
 // Database holds fusescope-schema's own state (§3).
-const Database = "fusescope_schema"
+const Database = coord.Database
+
+// replicaKey identifies the replica a row comes from. serverUUID is unique per
+// server, so one server answering for two replicas shows as a duplicate; the
+// host name keeps the key readable.
+const replicaKey = "hostName() || '/' || toString(serverUUID())"
 
 // ErrNoKeeperMapPrefix: the server has no keeper_map_path_prefix, which no
 // system table shows (§2.1, §11); the bootstrap's first create reports it.
@@ -29,8 +34,6 @@ var (
 		{Key: "distributed_ddl_output_mode", Value: "none"}, // like throw, without the per-host result table
 		{Key: "distributed_ddl_task_timeout", Value: "180"},
 	}
-	// primaryKey is each layout table's key.
-	primaryKey = map[string]string{"meta": "name", "lease": "name", "migrations": "id"}
 )
 
 // Store is the coordination store on ClickHouse, implementing coord.Store and
@@ -87,12 +90,16 @@ func parseLease(owner, token, expires string) (coord.Lease, error) {
 
 const leaseColumns = "owner, toString(token), toString(toUnixTimestamp64Milli(expires_at))"
 
+// ReadLease reads the lease table, which must hold the migrate row only.
 func (s *Store) ReadLease(ctx context.Context) (coord.Lease, bool, error) {
-	rows, err := s.conn.Rows(ctx, "SELECT "+leaseColumns+" FROM "+s.table("lease")+" WHERE name = 'migrate'", 3)
+	rows, err := s.conn.Rows(ctx, "SELECT name, "+leaseColumns+" FROM "+s.table("lease"), 4)
 	if err != nil || len(rows) == 0 {
 		return coord.Lease{}, false, err
 	}
-	l, err := parseLease(rows[0][0], rows[0][1], rows[0][2])
+	if len(rows) != 1 || rows[0][0] != "migrate" {
+		return coord.Lease{}, false, fmt.Errorf("%s.lease holds %d rows, want only migrate", Database, len(rows))
+	}
+	l, err := parseLease(rows[0][1], rows[0][2], rows[0][3])
 	return l, err == nil, err
 }
 
@@ -125,14 +132,14 @@ func (s *Store) StartedWithToken(ctx context.Context, token uint64) (bool, error
 	return rows[0][0] != "0", nil
 }
 
-// Replicas lists every replica by hostName(), failing unless each one of the
+// Replicas lists every replica by replicaKey, failing unless each one of the
 // cluster's replicas answers.
 func (s *Store) Replicas(ctx context.Context) ([]string, error) {
 	want, err := s.conn.Rows(ctx, "SELECT toString(count()) FROM system.clusters WHERE cluster = "+quote(s.cluster), 1)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.conn.Rows(ctx, fmt.Sprintf("SELECT hostName() FROM clusterAllReplicas(%s, system.one)", quote(s.cluster)), 1)
+	rows, err := s.conn.Rows(ctx, fmt.Sprintf("SELECT %s FROM clusterAllReplicas(%s, system.one)", replicaKey, quote(s.cluster)), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -146,61 +153,77 @@ func (s *Store) Replicas(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-func (s *Store) ReplicaLeases(ctx context.Context) (map[string]coord.Lease, error) {
-	rows, err := s.conn.Rows(ctx, "SELECT hostName(), "+leaseColumns+" FROM "+s.all("lease")+" WHERE name = 'migrate'", 4)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]coord.Lease{}
+// byReplica keys rows by their first column, refusing a replica that shows
+// twice.
+func byReplica[V any](rows [][]string, parse func([]string) (V, error)) (map[string]V, error) {
+	out := make(map[string]V, len(rows))
 	for _, r := range rows {
-		l, err := parseLease(r[1], r[2], r[3])
+		if _, dup := out[r[0]]; dup {
+			return nil, fmt.Errorf("replica %s answered twice", r[0])
+		}
+		v, err := parse(r[1:])
 		if err != nil {
 			return nil, err
 		}
-		out[r[0]] = l
+		out[r[0]] = v
 	}
 	return out, nil
 }
 
-func (s *Store) ReplicaIdentities(ctx context.Context) (map[string]string, error) {
-	rows, err := s.conn.Rows(ctx, "SELECT hostName(), value FROM "+s.all("meta")+" WHERE name = 'cluster_id'", 2)
+func (s *Store) ReplicaLeases(ctx context.Context) (map[string]coord.Lease, error) {
+	rows, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", "+leaseColumns+" FROM "+s.all("lease")+" WHERE name = 'migrate'", 4)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]string{}
-	for _, r := range rows {
-		out[r[0]] = r[1]
-	}
-	return out, nil
+	return byReplica(rows, func(r []string) (coord.Lease, error) { return parseLease(r[0], r[1], r[2]) })
 }
 
-// LayoutTables reads fusescope_schema's tables and columns on this server.
-func (s *Store) LayoutTables(ctx context.Context) (map[string][]string, bool, error) {
-	db, err := s.conn.Rows(ctx, "SELECT toString(count()) FROM system.databases WHERE name = "+quote(Database), 1)
+func (s *Store) ReplicaIdentities(ctx context.Context) (map[string]string, error) {
+	rows, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", value FROM "+s.all("meta")+" WHERE name = 'cluster_id'", 2)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if db[0][0] == "0" {
-		return nil, false, nil
-	}
-	rows, err := s.conn.Rows(ctx, "SELECT table, name, type FROM system.columns WHERE database = "+quote(Database)+" ORDER BY table, position", 3)
+	return byReplica(rows, func(r []string) (string, error) { return r[0], nil })
+}
+
+// ReplicaLayouts reads fusescope_schema's tables on every replica.
+func (s *Store) ReplicaLayouts(ctx context.Context) (map[string]map[string]coord.TableLayout, error) {
+	seen, err := s.Replicas(ctx)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
-	out := map[string][]string{}
-	for _, r := range rows {
-		out[r[0]] = append(out[r[0]], r[1]+" "+r[2])
+	out := make(map[string]map[string]coord.TableLayout, len(seen))
+	for _, r := range seen {
+		if _, dup := out[r]; dup {
+			return nil, fmt.Errorf("replica %s answered twice", r)
+		}
+		out[r] = map[string]coord.TableLayout{}
 	}
-	tables, err := s.conn.Rows(ctx, "SELECT name FROM system.tables WHERE database = "+quote(Database), 1)
+	in := " WHERE database = " + quote(Database)
+	tables, err := s.conn.Rows(ctx, fmt.Sprintf("SELECT %s, name, engine_full, primary_key FROM clusterAllReplicas(%s, system.tables)%s", replicaKey, quote(s.cluster), in), 4)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	for _, t := range tables {
-		if _, ok := out[t[0]]; !ok {
-			out[t[0]] = nil
+		r, ok := out[t[0]]
+		if !ok {
+			return nil, fmt.Errorf("replica %s answered but is not listed in the cluster", t[0])
 		}
+		r[t[1]] = coord.TableLayout{EngineFull: t[2], PrimaryKey: t[3]}
 	}
-	return out, true, nil
+	cols, err := s.conn.Rows(ctx, fmt.Sprintf("SELECT %s, table, name, type FROM clusterAllReplicas(%s, system.columns)%s ORDER BY 1, table, position", replicaKey, quote(s.cluster), in), 4)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cols {
+		t, ok := out[c[0]][c[1]]
+		if !ok {
+			return nil, fmt.Errorf("replica %s shows columns of %s.%s but not the table", c[0], Database, c[1])
+		}
+		t.Columns = append(t.Columns, c[2]+" "+c[3])
+		out[c[0]][c[1]] = t
+	}
+	return out, nil
 }
 
 func (s *Store) CreateLayout(ctx context.Context, tables []string) error {
@@ -209,13 +232,14 @@ func (s *Store) CreateLayout(ctx context.Context, tables []string) error {
 		return err
 	}
 	for _, t := range tables {
-		cols := coord.LayoutColumns(t)
+		l := coord.Layout(t)
+		cols := l.Columns
 		for i, c := range cols {
 			name, typ, _ := strings.Cut(c, " ")
 			cols[i] = ident(name) + " " + typ
 		}
-		q := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s%s (%s) ENGINE = KeeperMap(%s) PRIMARY KEY %s",
-			s.table(t), on, strings.Join(cols, ", "), quote("/"+Database+"/"+t), ident(primaryKey[t]))
+		// The ENGINE clause is the engine_full every replica must then show.
+		q := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s%s (%s) ENGINE = %s", s.table(t), on, strings.Join(cols, ", "), l.EngineFull)
 		if err := s.conn.Exec(ctx, q, ddl...); err != nil {
 			if isCode(err, proto.ErrBadArguments) && strings.Contains(err.Error(), "keeper_map_path_prefix") {
 				return ErrNoKeeperMapPrefix

@@ -99,6 +99,9 @@ type Conn struct {
 }
 
 func Dial(ctx context.Context, c Config) (*Conn, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
 	opts, err := c.options()
 	if err != nil {
 		return nil, err

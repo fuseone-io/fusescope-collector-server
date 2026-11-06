@@ -17,14 +17,37 @@ import (
 )
 
 // These tests need a real cluster: test/schema/cluster.sh up [keeper|zookeeper]
-// prints FUSESCOPE_SCHEMA_TEST_ADDRS, one native address per replica.
+// prints FUSESCOPE_SCHEMA_TEST_ADDRS, one native address per replica. With
+// FUSESCOPE_SCHEMA_TEST_REQUIRED=1, as make schema-integration sets, a missing
+// cluster fails the tests instead of skipping them.
 func clusterAddrs(t *testing.T) []string {
 	t.Helper()
 	v := os.Getenv("FUSESCOPE_SCHEMA_TEST_ADDRS")
 	if v == "" {
+		if os.Getenv("FUSESCOPE_SCHEMA_TEST_REQUIRED") == "1" {
+			t.Fatal("FUSESCOPE_SCHEMA_TEST_REQUIRED=1 but FUSESCOPE_SCHEMA_TEST_ADDRS is not set")
+		}
 		t.Skip("FUSESCOPE_SCHEMA_TEST_ADDRS not set: run test/schema/cluster.sh up")
 	}
-	return strings.Split(v, ",")
+	addrs := strings.Split(v, ",")
+	if len(addrs) != 4 {
+		t.Fatalf("FUSESCOPE_SCHEMA_TEST_ADDRS has %d addresses, want the 2x2 cluster's 4", len(addrs))
+	}
+	return addrs
+}
+
+// coordinator connects to addr; a short LeaseFor scales the other timings so
+// the configuration stays valid.
+func coordinator(t *testing.T, addr string, cfg coord.Config) *coord.Coordinator {
+	t.Helper()
+	if l := cfg.LeaseFor; l != 0 {
+		cfg.LostAfter, cfg.RenewEvery, cfg.RereadFor, cfg.ClockSkew = l/4, l/8, l/4, l/4
+	}
+	c, err := coord.New(NewStore(dial(t, addr), "cluster"), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
 
 func dial(t *testing.T, addr string) *Conn {
@@ -90,7 +113,7 @@ func bootstrapped(t *testing.T) []string {
 func TestIntegrationLeaseLifecycle(t *testing.T) {
 	addrs := bootstrapped(t)
 	ctx := context.Background()
-	a := coord.New(NewStore(dial(t, addrs[0]), "cluster"), coord.Config{Owner: "A", LeaseFor: 3 * time.Second, AcquireTimeout: time.Second})
+	a := coordinator(t, addrs[0], coord.Config{Owner: "A", LeaseFor: 3 * time.Second, AcquireTimeout: time.Second})
 	held, err := a.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +121,7 @@ func TestIntegrationLeaseLifecycle(t *testing.T) {
 	if held.Owner != "A" || held.Token != 1 {
 		t.Fatalf("held = %+v", held)
 	}
-	b := coord.New(NewStore(dial(t, addrs[3]), "cluster"), coord.Config{Owner: "B", LeaseFor: 3 * time.Second, AcquireTimeout: time.Second, RetryEvery: 200 * time.Millisecond})
+	b := coordinator(t, addrs[3], coord.Config{Owner: "B", LeaseFor: 3 * time.Second, AcquireTimeout: time.Second, RetryEvery: 200 * time.Millisecond})
 	if _, err := b.Acquire(ctx); !errors.Is(err, coord.ErrLeaseTimeout) {
 		t.Fatalf("B acquired a held lease: %v", err)
 	}
@@ -112,7 +135,7 @@ func TestIntegrationLeaseLifecycle(t *testing.T) {
 	if err := a.Renew(ctx); !errors.Is(err, coord.ErrLeaseLost) {
 		t.Fatalf("renew after expiry = %v, want ErrLeaseLost", err)
 	}
-	b2 := coord.New(NewStore(dial(t, addrs[3]), "cluster"), coord.Config{Owner: "B", AcquireTimeout: time.Second})
+	b2 := coordinator(t, addrs[3], coord.Config{Owner: "B", AcquireTimeout: time.Second})
 	held, err = b2.Acquire(ctx)
 	if err != nil || held.Owner != "B" || held.Token != 2 {
 		t.Fatalf("B on the expired lease: %+v, %v", held, err)
@@ -134,7 +157,7 @@ func TestIntegrationConcurrentAcquiresHaveOneWinner(t *testing.T) {
 		holders := make(chan *coord.Coordinator, 8)
 		for i := range 8 {
 			wg.Go(func() {
-				c := coord.New(NewStore(dial(t, addrs[i%len(addrs)]), "cluster"), coord.Config{Owner: fmt.Sprintf("P%d-%d", round, i), AcquireTimeout: 2 * time.Second, RetryEvery: 100 * time.Millisecond})
+				c := coordinator(t, addrs[i%len(addrs)], coord.Config{Owner: fmt.Sprintf("P%d-%d", round, i), AcquireTimeout: 2 * time.Second, RetryEvery: 100 * time.Millisecond})
 				_, err := c.Acquire(context.Background())
 				results <- err
 				if err == nil {
@@ -171,7 +194,7 @@ func TestIntegrationInterruptedMigrationIsRefused(t *testing.T) {
 	addrs := bootstrapped(t)
 	ctx := context.Background()
 	c := dial(t, addrs[0])
-	a := coord.New(NewStore(c, "cluster"), coord.Config{Owner: "A", LeaseFor: 2 * time.Second})
+	a := coordinator(t, addrs[0], coord.Config{Owner: "A", LeaseFor: 2 * time.Second})
 	held, err := a.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +205,7 @@ func TestIntegrationInterruptedMigrationIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(2500 * time.Millisecond)
-	b := coord.New(NewStore(dial(t, addrs[2]), "cluster"), coord.Config{Owner: "B"})
+	b := coordinator(t, addrs[2], coord.Config{Owner: "B"})
 	if _, err := b.Acquire(ctx); !errors.Is(err, coord.ErrInterrupted) {
 		t.Fatalf("Acquire = %v, want ErrInterrupted", err)
 	}
@@ -195,6 +218,44 @@ func TestIntegrationBootstrapRefusesAnUnknownTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := coord.Bootstrap(context.Background(), NewStore(c, "cluster")); !errors.Is(err, coord.ErrUnknownLayout) {
+		t.Fatalf("Bootstrap = %v, want ErrUnknownLayout", err)
+	}
+}
+
+// A table dropped on one replica only is created there again.
+func TestIntegrationBootstrapCompletesAReplica(t *testing.T) {
+	addrs := bootstrapped(t)
+	if err := dial(t, addrs[3]).Exec(context.Background(), "DROP TABLE fusescope_schema.migrations SYNC"); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(dial(t, addrs[0]), "cluster")
+	if err := coord.Bootstrap(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	layouts, err := s.ReplicaLayouts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r, tables := range layouts {
+		if _, ok := tables["migrations"]; !ok || len(tables) != 3 {
+			t.Fatalf("replica %s has %v", r, tables)
+		}
+	}
+}
+
+// One replica's lease table is not a KeeperMap: refused, from any replica.
+func TestIntegrationBootstrapRefusesAnotherEngineOnOneReplica(t *testing.T) {
+	addrs := bootstrapped(t)
+	other := dial(t, addrs[2])
+	for _, q := range []string{
+		"DROP TABLE fusescope_schema.lease SYNC",
+		"CREATE TABLE fusescope_schema.lease (name String, owner String, token UInt64, expires_at DateTime64(3)) ENGINE = Memory",
+	} {
+		if err := other.Exec(context.Background(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := coord.Bootstrap(context.Background(), NewStore(dial(t, addrs[0]), "cluster")); !errors.Is(err, coord.ErrUnknownLayout) {
 		t.Fatalf("Bootstrap = %v, want ErrUnknownLayout", err)
 	}
 }

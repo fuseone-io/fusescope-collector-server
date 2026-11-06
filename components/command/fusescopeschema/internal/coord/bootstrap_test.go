@@ -10,38 +10,70 @@ import (
 	"testing"
 )
 
+func complete(s *fakeStore) {
+	m := s.maps["/shared"]
+	for t := range layout {
+		m.tables[t] = true
+	}
+	m.meta["coordination"], m.meta["cluster_id"] = "1", "id-1"
+	m.lease = &Lease{}
+}
+
 func TestBootstrap(t *testing.T) {
+	changed := func(table string, f func(*TableLayout)) TableLayout {
+		l := Layout(table)
+		f(&l)
+		return l
+	}
 	tests := []struct {
 		name    string
 		setup   func(*fakeStore)
 		want    error
 		creates []string
-		written bool
+		// refused before any write
+		noWrites bool
 	}{
-		{name: "fresh: the whole layout and its rows", setup: func(*fakeStore) {}, creates: []string{"lease", "meta", "migrations"}, written: true},
-		{name: "already complete: nothing to create, the rows kept", setup: func(s *fakeStore) {
-			m := s.maps["/shared"]
-			for t := range layoutColumns {
-				m.tables[t] = true
-			}
-			m.meta["coordination"], m.meta["cluster_id"] = "1", "id-1"
-			m.lease = &Lease{}
-		}, written: true},
+		{name: "fresh: the whole layout and its rows", setup: func(*fakeStore) {}, creates: []string{"lease", "meta", "migrations"}},
+		{name: "already complete: nothing to create, the rows kept", setup: complete},
 		{name: "partial, this layout: completed", setup: func(s *fakeStore) {
 			s.maps["/shared"].tables["meta"] = true
-		}, creates: []string{"lease", "migrations"}, written: true},
-		{name: "a newer coordination layout: refused before any write", setup: func(s *fakeStore) {
+		}, creates: []string{"lease", "migrations"}},
+		{name: "a table missing on one replica: created there", setup: func(s *fakeStore) {
+			complete(s)
+			s.absent["ch-2-2"] = map[string]bool{"migrations": true}
+		}, creates: []string{"migrations"}},
+		{name: "a newer coordination layout", setup: func(s *fakeStore) {
 			m := s.maps["/shared"]
 			m.tables["meta"] = true
 			m.meta["coordination"] = "2"
-		}, want: ErrUnknownLayout},
-		{name: "an unknown table: refused before any write", setup: func(s *fakeStore) {
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "an unknown table", setup: func(s *fakeStore) {
 			s.maps["/shared"].tables["probe_123"] = true
-		}, want: ErrUnknownLayout},
-		{name: "a changed column: refused before any write", setup: func(s *fakeStore) {
-			m := s.maps["/shared"]
-			m.tables["lease"] = true
-			m.columns = map[string][]string{"lease": {"name String", "owner String", "token UInt32", "expires_at DateTime64(3)"}}
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "a changed column on one replica", setup: func(s *fakeStore) {
+			complete(s)
+			s.differs["ch-1-2"] = map[string]TableLayout{"lease": changed("lease", func(l *TableLayout) { l.Columns[2] = "token UInt32" })}
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "another engine on one replica", setup: func(s *fakeStore) {
+			complete(s)
+			s.differs["ch-2-1"] = map[string]TableLayout{"meta": changed("meta", func(l *TableLayout) { l.EngineFull = "Memory" })}
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "another KeeperMap path on one replica", setup: func(s *fakeStore) {
+			complete(s)
+			s.differs["ch-2-1"] = map[string]TableLayout{"lease": changed("lease", func(l *TableLayout) {
+				l.EngineFull = "KeeperMap('/elsewhere/lease') PRIMARY KEY name"
+			})}
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "another primary key on one replica", setup: func(s *fakeStore) {
+			complete(s)
+			s.differs["ch-1-1"] = map[string]TableLayout{"lease": changed("lease", func(l *TableLayout) { l.PrimaryKey = "owner" })}
+		}, want: ErrUnknownLayout, noWrites: true},
+		{name: "a replica that does not answer", setup: func(s *fakeStore) { s.down["ch-2-2"] = true }, want: ErrDivergent, noWrites: true},
+		{name: "a replica the create did not reach", setup: func(s *fakeStore) { s.createSkips["ch-2-2"] = true }, want: ErrUnknownLayout},
+		{name: "the lease row's insert lost", setup: func(s *fakeStore) { s.dropLeaseInsert = true }, want: ErrUnknownLayout},
+		{name: "a lease row the protocol cannot write", setup: func(s *fakeStore) {
+			complete(s)
+			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 0}
 		}, want: ErrUnknownLayout},
 	}
 	for _, tt := range tests {
@@ -52,10 +84,10 @@ func TestBootstrap(t *testing.T) {
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("Bootstrap = %v, want %v", err, tt.want)
 			}
+			if tt.noWrites && (len(s.creates) > 0 || len(s.inserts) > 0) {
+				t.Fatalf("wrote before refusing: creates %v, inserts %v", s.creates, s.inserts)
+			}
 			if tt.want != nil {
-				if len(s.creates) > 0 || len(s.inserts) > 0 {
-					t.Fatalf("wrote before refusing: creates %v, inserts %v", s.creates, s.inserts)
-				}
 				return
 			}
 			slices.Sort(s.creates)

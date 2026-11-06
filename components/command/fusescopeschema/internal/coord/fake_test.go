@@ -25,7 +25,22 @@ type fakeStore struct {
 	lag map[string]*fakeLag
 	// onAcquire runs inside TryAcquire before the condition, to race it.
 	onAcquire func()
-	failNext  error
+	// onReplicaLeases runs before each ReplicaLeases; onRenew before each
+	// TryRenew.
+	onReplicaLeases func(ctx context.Context) error
+	onRenew         func()
+	failNext        error
+	// listErr fails Replicas; listed, when set, is what Replicas returns.
+	listErr error
+	listed  []string
+	// absent and differs override, per replica, the tables created on the
+	// cluster: absent tables are not there, differing ones show another
+	// layout. createSkips names replicas a CreateLayout does not reach.
+	absent      map[string]map[string]bool
+	differs     map[string]map[string]TableLayout
+	createSkips map[string]bool
+	// dropLeaseInsert loses the lease row's insert.
+	dropLeaseInsert bool
 	// creates and inserts record the bootstrap's writes.
 	creates []string
 	inserts []string
@@ -37,16 +52,18 @@ type fakeLag struct {
 }
 
 type fakeMap struct {
-	lease    *Lease
-	meta     map[string]string
-	tables   map[string]bool
-	started  map[uint64]bool // migrations started by a lease token
-	creating bool
-	columns  map[string][]string // overrides layoutColumns, to model a changed table
+	lease   *Lease
+	meta    map[string]string
+	tables  map[string]bool
+	started map[uint64]bool // migrations started by a lease token
 }
 
 func newFakeStore(replicas ...string) *fakeStore {
-	s := &fakeStore{nowMs: 1_000_000, maps: map[string]*fakeMap{"/shared": {meta: map[string]string{}, tables: map[string]bool{}, started: map[uint64]bool{}}}, replicas: map[string]string{}, down: map[string]bool{}, lag: map[string]*fakeLag{}}
+	s := &fakeStore{
+		nowMs: 1_000_000, maps: map[string]*fakeMap{"/shared": {meta: map[string]string{}, tables: map[string]bool{}, started: map[uint64]bool{}}},
+		replicas: map[string]string{}, down: map[string]bool{}, lag: map[string]*fakeLag{},
+		absent: map[string]map[string]bool{}, differs: map[string]map[string]TableLayout{}, createSkips: map[string]bool{},
+	}
 	for _, r := range replicas {
 		s.replicas[r] = "/shared"
 	}
@@ -119,6 +136,9 @@ func (v *fakeView) TryAcquire(_ context.Context, owner string, readToken uint64,
 }
 
 func (v *fakeView) TryRenew(_ context.Context, owner string, token uint64, forMs int64) error {
+	if hook := v.s.onRenew; hook != nil {
+		hook()
+	}
 	v.s.mu.Lock()
 	defer v.s.mu.Unlock()
 	if err := v.check(); err != nil {
@@ -147,14 +167,28 @@ func (v *fakeView) Release(_ context.Context, owner string, token uint64) error 
 func (v *fakeView) Replicas(context.Context) ([]string, error) {
 	v.s.mu.Lock()
 	defer v.s.mu.Unlock()
+	if err := v.check(); err != nil {
+		return nil, err
+	}
+	if v.s.listErr != nil {
+		return nil, v.s.listErr
+	}
+	if v.s.listed != nil {
+		return v.s.listed, nil
+	}
 	var out []string
 	for r := range v.s.replicas {
 		out = append(out, r)
 	}
-	return out, v.check()
+	return out, nil
 }
 
-func (v *fakeView) ReplicaLeases(context.Context) (map[string]Lease, error) {
+func (v *fakeView) ReplicaLeases(ctx context.Context) (map[string]Lease, error) {
+	if hook := v.s.onReplicaLeases; hook != nil {
+		if err := hook(ctx); err != nil {
+			return nil, err
+		}
+	}
 	v.s.mu.Lock()
 	defer v.s.mu.Unlock()
 	if err := v.check(); err != nil {
@@ -201,25 +235,29 @@ func (v *fakeView) StartedWithToken(_ context.Context, token uint64) (bool, erro
 
 // Layout methods, used by the bootstrap.
 
-func (v *fakeView) LayoutTables(context.Context) (map[string][]string, bool, error) {
+func (v *fakeView) ReplicaLayouts(context.Context) (map[string]map[string]TableLayout, error) {
 	v.s.mu.Lock()
 	defer v.s.mu.Unlock()
 	if err := v.check(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	m := v.m()
-	if len(m.tables) == 0 && !m.creating {
-		return nil, false, nil
-	}
-	out := map[string][]string{}
-	for t := range m.tables {
-		if cols, ok := m.columns[t]; ok {
-			out[t] = cols
-			continue
+	out := map[string]map[string]TableLayout{}
+	for r, path := range v.s.replicas {
+		if v.s.down[r] {
+			return nil, errors.New("replica " + r + " does not answer")
 		}
-		out[t] = layoutColumns[t]
+		tables := map[string]TableLayout{}
+		for t := range v.s.maps[path].tables {
+			if !v.s.absent[r][t] {
+				tables[t] = Layout(t)
+			}
+		}
+		for t, l := range v.s.differs[r] {
+			tables[t] = l
+		}
+		out[r] = tables
 	}
-	return out, true, nil
+	return out, nil
 }
 
 func (v *fakeView) CreateLayout(_ context.Context, missing []string) error {
@@ -229,10 +267,21 @@ func (v *fakeView) CreateLayout(_ context.Context, missing []string) error {
 		return err
 	}
 	m := v.m()
-	m.creating = true
 	v.s.creates = append(v.s.creates, missing...)
 	for _, t := range missing {
+		existed := m.tables[t]
 		m.tables[t] = true
+		for r := range v.s.replicas {
+			switch {
+			case !v.s.createSkips[r]:
+				delete(v.s.absent[r], t)
+			case !existed:
+				if v.s.absent[r] == nil {
+					v.s.absent[r] = map[string]bool{}
+				}
+				v.s.absent[r][t] = true
+			}
+		}
 	}
 	return nil
 }
@@ -257,7 +306,7 @@ func (v *fakeView) InsertLeaseIfAbsent(context.Context) error {
 		return err
 	}
 	v.s.inserts = append(v.s.inserts, "lease")
-	if v.m().lease == nil {
+	if v.m().lease == nil && !v.s.dropLeaseInsert {
 		v.m().lease = &Lease{}
 	}
 	return nil
