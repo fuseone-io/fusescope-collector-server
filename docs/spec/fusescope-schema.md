@@ -18,11 +18,11 @@ only their observed structure is part of [obs]. The target of every migration is
 
 | Command | Lease | Writes | Exit codes |
 |---|---|---|---|
-| `migrate` | takes it | the schema and the history | 0 up to date; 1 refused (§7); 2 connection, ClickHouse or lease error, safe to retry |
+| `migrate` | takes it | the schema and the history | 0 up to date; 1 refused (§7); 2 connection, ClickHouse or lease error **before** any migration was marked `started`: safe to retry; 4 the same error **after** a migration was marked `started`: the next run refuses (§7.3) until `status` and `repair` (§10) |
 | `check [--wait D]` | never | nothing | 0 up to date; 3 pending or in progress; 1 refused. With `--wait`, polls until 0 or 1, or until D passes (then 3) |
 | `plan` | never | nothing | prints the starting point and the pending migrations, marked advisory: `migrate` decides again under the lease |
 | `status` | never | nothing | prints the history, the lease and any difference from the expected schema |
-| `repair --id N --mark done\|absent` | takes it | one history row | 0 repaired; 1 refused, because the post-conditions do not match (§10.1); 2 connection or lease error |
+| `repair --id N --mark done\|absent` | takes it | one history row | 0 repaired; 1 refused: the post-conditions or pre-conditions do not match, or `absent` on an irreversible migration (§10.1); 2 connection or lease error, nothing changed |
 
 The chart's Job runs `migrate`, and the collector's init container runs `check --wait 10m`.
 
@@ -45,26 +45,34 @@ Inline passwords are refused (ADR 0004).
 
 | Deployment | Supported | Why |
 |---|---|---|
-| The chart's ClickHouse (operator, ZooKeeper, `enableReplication: true`, the default) | yes | Keeper and the macros are there, and the chart sets `keeper_map_path_prefix` |
+| The chart's ClickHouse (operator, ZooKeeper, `enableReplication: true`, the default) | yes | Keeper and the macros are there; the chart will set `keeper_map_path_prefix` (today it does not), in the same change that switches it to `fusescope-schema` |
 | Self-managed cluster with Keeper or ZooKeeper, the `{shard}` and `{replica}` macros, a cluster in `remote_servers` and `keeper_map_path_prefix` | yes | the same requirements, met by the operator |
 | `telemetryStoreMigrator.enableReplication: false` | **no**: chart validation fails with `fusescope-schema`, and the precheck refuses | [obs] is the replicated schema; a non-replicated one was never observed |
 | ClickHouse Cloud | **no**, refused | no server configuration for `keeper_map_path_prefix`, and engines are rewritten |
 | Managed services that do not expose Keeper or server configuration | **no**, refused | no Keeper, so neither the lease nor `ON CLUSTER` |
 
-A precheck runs before anything is written. It verifies:
-- the server version;
+A read-only precheck runs first, on every replica. It verifies:
+- the server version is in the CI matrix of §9 (initially the chart's pinned 25.12; other
+  versions are refused until they are added to the matrix and pass it);
 - `system.zookeeper` is readable;
 - the macros and the cluster exist;
-- a probe `KeeperMap` table can be created and dropped.
+- `keeper_map_path_prefix` is set (`system.server_settings`).
 
-A failed precheck is a refusal (§7.6) that names the missing item.
+A failed precheck is a refusal (§7.6) that names the missing item. After the bootstrap (§3.1),
+a probe `KeeperMap` table `fusescope_schema.probe_<random>` is created, written, read and dropped,
+with the drop retried on exit. This is a write, but only to `fusescope_schema`, and it comes before
+anything is written to the telemetry databases.
 
 ## 3. History and coordination
 
 `fusescope-schema` keeps its state in database `fusescope_schema`, created `ON CLUSTER`, in
-`KeeperMap` tables, so every replica and shard reads the same rows, linearizably [ch]. Every write
-runs with `keeper_map_strict_mode = 1`. Under it, an `INSERT` of an existing key fails, and an
-`ALTER … UPDATE` or `DELETE` fails when the row changed since it was read [ch].
+`KeeperMap` tables, shared by every replica and shard. Writes are linearizable; reads are only
+sequentially consistent [ch], so no decision rests on a read alone. Every write runs with
+`keeper_map_strict_mode = 1`. Under it, an `INSERT` of an existing key fails, and an
+`ALTER … UPDATE` or `DELETE` fails when the row changed since the mutation read it [ch]. Safety
+rests on these conditional writes and the lease token (§6). A read-back after one's own write
+confirms the result: it is made on the same server, which sees its own Keeper session's writes.
+The spike before acceptance verifies this (ADR 0010).
 
 | Table | Key | Columns |
 |---|---|---|
@@ -74,14 +82,24 @@ runs with `keeper_map_strict_mode = 1`. Under it, an `INSERT` of an existing key
 
 ### 3.1 Bootstrap
 
-1. `CREATE DATABASE IF NOT EXISTS fusescope_schema ON CLUSTER`, then the three tables with
-   `CREATE TABLE IF NOT EXISTS … ON CLUSTER`. Concurrent bootstraps converge, because each table
-   maps to the same Keeper path.
-2. Insert `meta(coordination, 1)` and `lease(migrate, '', 0, 0)`. A "key exists" failure means
-   another process got there first, and is ignored.
-3. Read `meta.coordination`. A value this binary does not know is a refusal (§7.1).
+The bootstrap reads before it writes.
 
-Bootstrap creates only `fusescope_schema`. It never touches the telemetry databases, and it
+1. If `fusescope_schema` exists:
+   - read `meta.coordination`;
+   - compare the structure of `meta`, `lease` and `migrations` with the layout of that version.
+
+   It goes on only if every table present matches this binary's layout and no `coordination`
+   value is newer. Otherwise it refuses (§7.1) without writing. That covers a newer layout, an
+   unknown table in `fusescope_schema` and a changed column.
+2. If `fusescope_schema` is absent, or holds this binary's layout only partly (some tables
+   missing, or `meta` and `lease` without their rows), it completes what is missing:
+   - `CREATE DATABASE IF NOT EXISTS` and `CREATE TABLE IF NOT EXISTS … ON CLUSTER`. Concurrent
+     runs converge, because each table maps to the same Keeper path.
+   - Insert `meta(coordination, 1)` and `lease(migrate, '', 0, 0)`. A "key exists" failure means
+     another run got there first, and is ignored.
+3. It reads `meta` and the structures again, and refuses if they are not this binary's layout.
+
+The bootstrap creates only `fusescope_schema`. It never touches the telemetry databases, and it
 decides nothing about them.
 
 ## 4. Starting points
@@ -103,7 +121,7 @@ Schemas are compared as structures read from `system` tables on every replica
 
 | Object | Compared |
 |---|---|
-| Table | `engine`; `sorting_key`, `primary_key`, `partition_key`, `sampling_key`; the TTL expression (subject to §8); the settings; the Keeper path with `{uuid}`, `{shard}` and `{replica}` in place |
+| Table | the engine and every engine argument, parsed from `engine_full`: the Keeper path (with `{uuid}`, `{shard}` and `{replica}` in place) and the replica name, then each parameter, such as Replacing's version (and is-deleted) column, Summing's columns, Collapsing's sign, VersionedCollapsing's version, Graphite's rule set and Distributed's sharding key, canonicalised with `formatQuery`; `sorting_key`, `primary_key`, `partition_key`, `sampling_key`; the TTL expression (subject to §8); the settings |
 | Column (`system.columns`) | name, position, type, `default_kind`, `default_expression`, `compression_codec`, `comment` |
 | Data-skipping index (`system.data_skipping_indices`) | name, type and its arguments, expression, granularity |
 | Projection | name and query |
@@ -127,8 +145,12 @@ correction is a new migration. Each has:
 - `statements`: DDL with the placeholders `{cluster}` and the database roles, each statement
   idempotent (`CREATE … IF NOT EXISTS`, `DROP … IF EXISTS`, `ALTER … ADD COLUMN IF NOT EXISTS`,
   or guarded by a precondition the runner checks first);
-- `postconditions`: the structures (§4.1) it leaves;
-- `absent`: the structures it adds, which `repair --mark absent` requires gone (§10.1).
+- `preconditions`: the complete structure (§4.1) of every object the migration creates, alters or
+  drops, as it must be before the migration runs (an object it creates must not exist). The runner
+  checks them before step 1 of §5.1;
+- `postconditions`: the complete structure of the same objects after it;
+- `reversible`: whether its effect can be undone by hand to exactly `preconditions`. A migration
+  that drops or rewrites data, such as dropping a column, is `false`.
 
 `0001 base` creates the six databases and every object of [obs], in dependency order: local
 tables, then distributed tables, then materialized views after their targets.
@@ -157,17 +179,24 @@ mode.
    ```
    ALTER TABLE lease UPDATE owner = <me>, token = <token + 1>, expires_at = now64(3) + 5 min
    WHERE name = 'migrate' AND token = <token read>
+     AND (owner = '' OR expires_at <= now64(3))
    ```
 
    Then read the row back. The lease is held only if it shows `<me>` and `<token + 1>`. A failed
    update or a different read-back means another process won; retry until `--lock-timeout`
    (default 10 minutes), then exit 2.
-2. **Renew.** A background task renews every 60 seconds with the same conditional update on
-   `owner = <me> AND token = <mine>`, moving `expires_at` 5 minutes ahead.
+2. **Renew.** A background task renews every 60 seconds with
+   `UPDATE expires_at = now64(3) + 5 min WHERE name = 'migrate' AND owner = <me> AND token = <mine>
+   AND expires_at > now64(3)`. A lease that has already expired is never revived, even by its
+   owner. Each renewal is confirmed by reading it back.
    - When a renewal fails, or 4 minutes pass without a successful one, the lease is lost.
    - From then on the runner issues no new statement. The current one, idempotent, may finish.
    - The migration in progress stays `started`, and `migrate` exits 2.
-3. **Release.** `UPDATE owner = '' WHERE owner = <me> AND token = <mine>`.
+3. **Release.** `UPDATE owner = '' WHERE name = 'migrate' AND owner = <me> AND token = <mine>`.
+
+Every condition is evaluated by the server inside the conditional update, so an acquire cannot
+take a lease renewed after it was read: the renewal leaves `owner` set and `expires_at` in the
+future.
 
 A later migrator sees an expired lease over a `started` row with the old token. That row was
 interrupted, so §7.3 refuses: the next generation never resumes the previous one's work silently.
@@ -204,6 +233,7 @@ looks similar, is drift.
 | Their companion `<column>_exists Bool DEFAULT if(mapContains(<map>, '<key>') != 0, true, false) CODEC(ZSTD(1))` | the same | the same |
 | Indexes `<column>_idx` over a promoted column (the backend's index types and granularity), and `<column>_minmax_idx … TYPE minmax GRANULARITY 1` | the local tables above | `reader.go` about lines 2667, 2808 and 2823 |
 | RUM promoted columns, `_exists` columns and `_idx` indexes, of the same shapes | `signoz_index_v3`/`distributed_signoz_index_v3` and `logs_v2`/`distributed_logs_v2` (`promoter.go` about lines 38–39) | `implrumapplication/promoter.go` about lines 118–124 |
+| Skip indexes on JSON subcolumns, named `` `<column>.<path>_<jsontype>_<indextype>` ``, with the expression `assumeNotNull(dynamicElement(<column>.<path>, '<Type>'))` (wrapped in `lower(…)` for `String`), of type `tokenbf_v1`, `ngrambf_v1` or `minmax`, with any granularity. `<column>` is the target's base or promoted JSON column | `logs_v2` (`body_v2`, `body_promoted`); `signoz_index_v3` (`attributes`, `attributes_promoted`) | `pkg/modules/promote/implpromote/module.go` about line 199; names and expressions in `pkg/telemetryschema/chschema/index.go` about lines 55–80; targets in `pkg/types/promotetypes/target.go` |
 | The `DEFAULT` value of `_retention_days` and `_retention_days_cold` (type `UInt16` unchanged) | the logs and logs-resource tables | `reader.go` about lines 1309–1340 |
 | The table TTL expression | the tables the backend's retention settings target | `clickhouseReader/ttl_statements.go` |
 
@@ -231,7 +261,13 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | `check --wait` during a running migration | keeps waiting, then 0 |
 | `check` on an interrupted migration | 1 |
 | An unknown history row, a changed checksum, an extra table, a replica missing a table | each refused with its reason |
-| `repair --mark done` with the post-conditions unmet, and `--mark absent` with objects present | refused |
+| `repair --mark done` with the post-conditions unmet; `--mark absent` with the live state not exactly the pre-conditions; `--mark absent` on an irreversible migration | refused |
+| Acquire racing a renewal (the waiter read the row before the owner renewed) | the acquire changes nothing, its read-back shows the other owner, and it keeps waiting |
+| Renewing after expiry | refused; the old owner stops |
+| A newer `meta.coordination`, an unknown table in `fusescope_schema`, a partial bootstrap of this layout | refused without writes; refused without writes; completed |
+| Promoted JSON subcolumn indexes (`promote` API) on logs and traces, then adoption | adopted; the same index with another expression is refused |
+| A Replacing engine whose version column differs from [obs] | refused |
+| A failure before any `started` row, and one after | exit 2, then a clean rerun; exit 4, then the rerun refuses |
 | TLS 1.3 with a password file; plaintext opt-in; `verify: false`; TLS below 1.3 | connects as configured; TLS below 1.3 refused |
 | Custom database names | migrated and compared under the custom names |
 | Precheck failures: no Keeper, no macros, no `keeper_map_path_prefix` | each refused with what is missing |
@@ -256,11 +292,13 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 
 ### 10.1 `repair`
 
-`repair` takes the lease and refuses unless:
+`repair` takes the lease, checks on every replica, and refuses unless:
 
-- **`--mark done`**: every post-condition of migration `N` holds on every replica (§4.1, §8).
-  The row becomes `done` with the current token.
-- **`--mark absent`**: none of the structures in `N`'s `absent` list exists on any replica, and
-  no migration after `N` is recorded. The row is deleted.
+- **`--mark done`**: every post-condition of migration `N` holds (§4.1, §8). The row becomes
+  `done` with the current token.
+- **`--mark absent`**: `N` is reversible, no migration after `N` is recorded, and the live
+  structure of every object `N` touches equals `N`'s pre-conditions exactly: created objects
+  absent, altered and dropped objects as they were. Any third state is refused. The row is
+  deleted.
 
 Either way, the result is verified by reading the history back before exit 0.

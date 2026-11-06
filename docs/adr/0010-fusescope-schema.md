@@ -63,8 +63,10 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
    is no automatic rollback; a correction is a new forward migration.
 6. **Serialized and idempotent.**
    - One migrator at a time per cluster, through a lease in a strict `KeeperMap` table, taken and
-     renewed by conditional updates with a generation token. A migrator that loses its lease stops
-     before its next statement (spec §6).
+     renewed by conditional updates with a generation token, and taken only from a free or expired
+     lease. A migrator that loses its lease stops before its next statement (spec §6). Safety rests
+     on these conditional writes, not on reads, which KeeperMap makes only sequentially
+     consistent.
    - The starting point is decided only after the lease is held, so concurrent first runs
      cannot act on a stale classification (spec §4).
    - Every statement is safe to repeat (`IF NOT EXISTS`, `IF EXISTS`, or a post-condition check
@@ -95,6 +97,12 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
 - Installations on a schema other than the fork 0.145.0 need a manual step; the refusal names
   it.
 - The tests need a real ClickHouse cluster with Keeper (spec §9), in CI.
+
+## Before acceptance
+
+A spike on a 2×2 cluster with Keeper exercises the spec §6 protocol: the conditional acquire,
+renew and release in strict mode, races between acquire and renewal, expiry, and read-your-writes
+on the same server. Its results go into the spec before this ADR is accepted.
 
 ## Review decisions
 
