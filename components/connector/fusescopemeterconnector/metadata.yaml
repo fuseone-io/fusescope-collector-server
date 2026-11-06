@@ -1,0 +1,53 @@
+display_name: FuseScope Meter Connector
+type: fusescope_meter
+github_project: fuseone-io/fusescope-collector-server
+
+status:
+  disable_codecov_badge: true
+  class: connector
+  stability:
+    alpha: [traces_to_metrics, logs_to_metrics, metrics_to_metrics]
+  distributions: []
+
+tests:
+  config: {}
+
+attributes:
+  reason:
+    description: Why records went to an overflow set (docs/spec/meter.md §7).
+    type: string
+    enum: [series, bytes, keys, no_key]
+  signal:
+    description: The signal the connector instance counts.
+    type: string
+    enum: [traces, logs, metrics]
+
+telemetry:
+  metrics:
+    fusescope_meter_flush_errors:
+      enabled: true
+      stability: development
+      description: Flushes the metrics pipeline refused; their values are dropped.
+      unit: "{flush}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [signal]
+    fusescope_meter_overflow_records:
+      enabled: true
+      stability: development
+      description: Records counted in an overflow set, which loses their split by service, environment and host.
+      unit: "{record}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [signal, reason]
+    fusescope_meter_truncated_values:
+      enabled: true
+      stability: development
+      description: Label values cut to max_label_bytes.
+      unit: "{value}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [signal]

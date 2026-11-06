@@ -5,6 +5,7 @@ package fusescopeclickhouseexporter // import "github.com/fuseone-io/fusescope-c
 
 import (
 	"context"
+	"errors"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configretry"
@@ -29,8 +30,14 @@ func NewFactory() exporter.Factory {
 	)
 }
 
+// errMeterOnlyMetrics refuses traces and logs pipelines of mode meter.
+var errMeterOnlyMetrics = errors.New("mode meter writes only metrics, from fusescope_meter")
+
 func createTraces(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Traces, error) {
 	c := cfg.(*Config)
+	if c.Mode == modeMeter {
+		return nil, errMeterOnlyMetrics
+	}
 	x, err := newTracesExporter(c, set.TelemetrySettings)
 	if err != nil {
 		return nil, err
@@ -40,6 +47,9 @@ func createTraces(ctx context.Context, set exporter.Settings, cfg component.Conf
 
 func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Logs, error) {
 	c := cfg.(*Config)
+	if c.Mode == modeMeter {
+		return nil, errMeterOnlyMetrics
+	}
 	x, err := newLogsExporter(c, set.TelemetrySettings)
 	if err != nil {
 		return nil, err
@@ -49,6 +59,13 @@ func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config
 
 func createMetrics(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Metrics, error) {
 	c := cfg.(*Config)
+	if c.Mode == modeMeter {
+		x, err := newMeterExporter(c, set.TelemetrySettings)
+		if err != nil {
+			return nil, err
+		}
+		return newMetrics(ctx, set, c, x)
+	}
 	x, err := newMetricsExporter(c, set.TelemetrySettings)
 	if err != nil {
 		return nil, err
@@ -72,7 +89,7 @@ func newLogs(ctx context.Context, set exporter.Settings, c *Config, x *signalExp
 	return logsExporter{exp, x.stopRetries}, nil
 }
 
-func newMetrics(ctx context.Context, set exporter.Settings, c *Config, x *signalExporter[*metricsEncoder, pmetric.Metrics]) (exporter.Metrics, error) {
+func newMetrics[E attempter](ctx context.Context, set exporter.Settings, c *Config, x *signalExporter[E, pmetric.Metrics]) (exporter.Metrics, error) {
 	exp, err := exporterhelper.NewMetrics(ctx, set, c, x.push, helperOptions(c, x.start, x.shutdown)...)
 	if err != nil {
 		return nil, err

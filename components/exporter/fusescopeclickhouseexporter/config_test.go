@@ -41,6 +41,9 @@ func TestConfigValidate(t *testing.T) {
 		{name: "fusescope_clickhouse/bad_database", wantErr: "not a valid ClickHouse identifier"},
 		{name: "fusescope_clickhouse/old_tls", wantErr: "tls.min_version must be at least 1.3"},
 		{name: "fusescope_clickhouse/no_port", wantErr: "endpoint must be host:port"},
+		{name: "fusescope_clickhouse/meter"},
+		{name: "fusescope_clickhouse/bad_mode", wantErr: `mode "everything" must be signals or meter`},
+		{name: "fusescope_clickhouse/bad_meter_database", wantErr: `meter.database "x y" is not a valid ClickHouse identifier`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

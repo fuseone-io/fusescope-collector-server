@@ -67,9 +67,15 @@ Each row's `labels` hold `__name__`, `__temporality__` (`Delta`), the scope labe
 - **Absent dimension.** When the resource lacks one of them, the label is absent, not empty:
   `obs-bare` (no `deployment.environment`) has `service.name` only; `obs-nosvc` (no resource
   attributes) has neither [obs: raw `labels`].
+- **Strings only (deliberate).** A dimension whose value is not a string (bytes, a map, a list,
+  a number) is ignored, as if absent, before any conversion: converting would build the whole
+  value first, which max_label_bytes could not bound. Semantic conventions define all four as
+  strings.
 - **Other resource attributes are not labels**: the resource of `obs-keyid` held `service.name`,
   `host.name` and `signoz.workspace.key.id`, and its rows have only the first two [obs].
-- **One row per (metric, labels) per flush.** Records with equal dimensions add up; 20 spans of
+- **One row per (metric, labels) per flush.** An overflow set (§7) is the set of the labels it
+  keeps, so it merges with a normal set that has exactly those labels. Records with equal
+  dimensions add up; 20 spans of
   one service sent in two rounds within one window give one `span.count` row of 40 [obs
   `obs-traces` at 20:11:07].
 
@@ -195,3 +201,44 @@ sums without group by (§1).
 
 - Behaviour after a crash, OOM kill or node loss (§5).
 - The reference's limits, and data points of types other than gauge.
+
+## 9. Connector
+
+`fusescope_meter` is a traces-, logs- and metrics-to-metrics connector. It is an exporter of
+each ingestion pipeline, beside `fusescope_clickhouse`, and the receiver of a `metrics/meter`
+pipeline that exports to a `fusescope_clickhouse` instance in `mode: meter`:
+
+```yaml
+connectors:
+  fusescope_meter: {}
+exporters:
+  fusescope_clickhouse/meter:
+    mode: meter            # writes only signoz_meter.distributed_samples
+service:
+  pipelines:
+    traces:       {receivers: [otlp, rum], processors: [...], exporters: [fusescope_clickhouse, fusescope_meter]}
+    metrics/meter: {receivers: [fusescope_meter], exporters: [fusescope_clickhouse/meter]}
+```
+
+- **Where it counts.** Everything that reaches it, after the pipeline's processors, whether or
+  not the sibling `fusescope_clickhouse` accepts the batch: a client that resends a refused batch
+  is counted again. This is the reference's point of observation (§2) and is tested.
+- **Ingestion only.** Pipelines of derived data (`fusescope_spanmetrics`, the collector's own
+  telemetry) do not export to it.
+- **Authentication.** The pipeline's context reaches the connector before any queue or batch,
+  so `client.Info` holds the key of §3.2. A batch processor ahead of it would drop that context
+  and must not be placed there.
+- **Flush.** The current window is swapped for an empty one under a lock; the metrics are built
+  and sent without it, so a slow or stuck metrics pipeline never holds up the data path. One
+  flush runs at a time. Shutdown gives up at its deadline.
+- **Mode `meter`** of `fusescope_clickhouse` accepts only metrics pipelines, writes the fixed
+  table `distributed_samples` of `meter.database` (`signoz_meter`), and keeps its own queue,
+  retries and insert telemetry (`table=distributed_samples`).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `flush_interval` | `1h` | §5 |
+| `max_series` | `10000` | §7 |
+| `max_series_bytes` | `4194304` (4 MiB) | §7 |
+| `max_authenticated_keys` | `1000` | §7 |
+| `max_label_bytes` | `256` | §7 |
