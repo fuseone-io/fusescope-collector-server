@@ -126,9 +126,11 @@ type meter struct {
 	id     string
 	now    func() time.Time
 
-	tb        *metadata.TelemetryBuilder
-	sigAttr   metric.AddOption
-	overflows [numReasons]metric.AddOption
+	tb *metadata.TelemetryBuilder
+	// Options as slices, so recording passes them without a variadic
+	// allocation.
+	sigAttr   []metric.AddOption
+	overflows [numReasons][]metric.AddOption
 
 	mu          sync.Mutex
 	cur         *window
@@ -150,12 +152,12 @@ func newMeter(cfg *Config, set connector.Settings, next consumer.Metrics, sig si
 	}
 	m := &meter{
 		cfg: cfg, logger: set.Logger, next: next, sig: sig, id: newUUID(), now: time.Now,
-		tb: tb, sigAttr: metric.WithAttributeSet(attribute.NewSet(attribute.String("signal", sig.String()))),
+		tb: tb, sigAttr: []metric.AddOption{metric.WithAttributeSet(attribute.NewSet(attribute.String("signal", sig.String())))},
 		cur: newWindow(), flushing: make(chan struct{}, 1),
 	}
 	for r := reasonSeries; r < numReasons; r++ {
-		m.overflows[r] = metric.WithAttributeSet(attribute.NewSet(
-			attribute.String("signal", sig.String()), attribute.String("reason", reasonNames[r])))
+		m.overflows[r] = []metric.AddOption{metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("signal", sig.String()), attribute.String("reason", reasonNames[r])))}
 	}
 	m.windowStart = m.now()
 	return m, nil
@@ -242,7 +244,7 @@ func (m *meter) flush(ctx context.Context) error {
 		return nil
 	}
 	if err := m.next.ConsumeMetrics(ctx, m.build(w, start, end)); err != nil {
-		m.tb.FusescopeMeterFlushErrors.Add(context.Background(), 1, m.sigAttr)
+		m.tb.FusescopeMeterFlushErrors.Add(context.Background(), 1, m.sigAttr...)
 		m.logger.Error("the metrics pipeline refused a meter flush; its counts are dropped",
 			zap.String("signal", m.sig.String()), zap.Int("sets", len(w.order)), zap.Error(err))
 		return err
@@ -314,11 +316,11 @@ func newRequest(ctx context.Context) request {
 func (m *meter) record(r *request) {
 	ctx := context.Background()
 	if r.cuts > 0 {
-		m.tb.FusescopeMeterTruncatedValues.Add(ctx, r.cuts, m.sigAttr)
+		m.tb.FusescopeMeterTruncatedValues.Add(ctx, r.cuts, m.sigAttr...)
 	}
 	for i, n := range r.overflows {
 		if n > 0 {
-			m.tb.FusescopeMeterOverflowRecords.Add(ctx, n, m.overflows[i])
+			m.tb.FusescopeMeterOverflowRecords.Add(ctx, n, m.overflows[i]...)
 		}
 	}
 }
