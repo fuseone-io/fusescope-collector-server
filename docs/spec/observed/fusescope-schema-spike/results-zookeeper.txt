@@ -14,9 +14,12 @@ PASS restart with another prefix: the identity check fails, with an error
 PASS bootstrapped under another prefix: that replica holds its own lease while ch-1-1 holds the real one
 PASS bootstrapped under another prefix: the identity check finds differing values
 PASS bootstrapped on another ensemble: the identity check finds differing values
+PASS copied identity on another ensemble: the identity check passes
+PASS copied identity on another ensemble: the lease comparison across replicas fails
 PASS back on the shared coordination: the identity check passes
+PASS back on the shared coordination: every replica shows the same lease
 PASS coordination down: the conditional update fails with an error
 PASS coordination back: the lease is unchanged
 PASS no prefix: KeeperMap is refused with Code 36
 PASS the prefix is not exposed in system.server_settings
-summary: 20 passed, 0 failed
+summary: 23 passed, 0 failed

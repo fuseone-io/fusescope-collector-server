@@ -50,12 +50,19 @@ node_config() { # node shard coord-host prefix (empty: no prefix)
   done
 } > compose.yaml
 for n in $NODES; do node_config "$n" "${n:3:1}" coord /keeper_map_tables; done
-docker compose up -d >/dev/null 2>&1
+docker compose up -d >compose.log 2>&1 || { echo "ABORT: docker compose up failed"; cat compose.log; exit 2; }
 
 Q() { docker compose exec -T "$1" clickhouse-client --keeper_map_strict_mode=1 --multiquery -q "$2" </dev/null 2>&1; }
 # Ready once the server answers and reaches its coordination service.
-up() { for _ in $(seq 90); do Q "$1" "SELECT count() > 0 FROM system.zookeeper WHERE path = '/'" | grep -qx 1 && return; sleep 2; done; }
-restart() { docker compose restart "$1" >/dev/null 2>&1; up "$1"; }
+up() {
+  for _ in $(seq 90); do
+    Q "$1" "SELECT count() > 0 FROM system.zookeeper WHERE path = '/'" | grep -qx 1 && return 0
+    sleep 2
+  done
+  echo "ABORT: $1 did not reach its coordination service"
+  exit 2
+}
+restart() { docker compose restart "$1" >/dev/null 2>&1 || { echo "ABORT: restart $1 failed"; exit 2; }; up "$1"; }
 for n in $NODES; do up "$n"; done
 pass=0
 fail=0
@@ -148,11 +155,23 @@ boot_local ch-2-2 id-other-ensemble
 check "bootstrapped on another ensemble: the identity check finds differing values" "$(idcheck)" mismatch
 Q ch-2-2 "DROP TABLE IF EXISTS fusescope_schema.meta SYNC; DROP TABLE IF EXISTS fusescope_schema.lease SYNC" >/dev/null
 
+# 5c. Another ensemble, but with a copy of the original identity: the identity check passes, and
+#     the lease comparison on every replica is what refuses.
+REAL_ID=$(Q ch-1-1 "SELECT value FROM fusescope_schema.meta WHERE name = 'cluster_id' FORMAT TSV")
+boot_local ch-2-2 "$REAL_ID"
+check "copied identity on another ensemble: the identity check passes" "$(idcheck)" pass
+FREE
+ACQ ch-1-1 A3 "$(TOKEN)" >/dev/null
+LEASECHECK="SELECT uniqExact(owner, token) = 1 AND count() = 4 FROM clusterAllReplicas('cluster', fusescope_schema.lease) FORMAT TSV"
+check "copied identity on another ensemble: the lease comparison across replicas fails" "$(Q ch-1-1 "$LEASECHECK")" 0
+Q ch-2-2 "DROP TABLE IF EXISTS fusescope_schema.meta SYNC; DROP TABLE IF EXISTS fusescope_schema.lease SYNC" >/dev/null
+
 # Back on the shared coordination: re-attach the replica's tables to the shared maps.
 node_config ch-2-2 2 coord /keeper_map_tables
 restart ch-2-2
 Q ch-2-2 "CREATE TABLE IF NOT EXISTS fusescope_schema.meta (name String, value String) ENGINE = KeeperMap('/fusescope_schema/meta') PRIMARY KEY name; CREATE TABLE IF NOT EXISTS fusescope_schema.lease (name String, owner String, token UInt64, expires_at DateTime64(3)) ENGINE = KeeperMap('/fusescope_schema/lease') PRIMARY KEY name" >/dev/null
 check "back on the shared coordination: the identity check passes" "$(idcheck)" pass
+check "back on the shared coordination: every replica shows the same lease" "$(Q ch-1-1 "$LEASECHECK")" 1
 
 # 6. Coordination lost during an update, then back.
 FREE
