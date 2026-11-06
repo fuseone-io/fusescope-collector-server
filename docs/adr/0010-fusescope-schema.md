@@ -1,6 +1,6 @@
 # 0010 · fusescope-schema, our own ClickHouse migrator
 
-- Status: proposed
+- Status: accepted (2026-11-06, after the protocol spike, spec §11)
 - Date: 2026-11-06
 - Issue: [#9](https://github.com/fuseone-io/fusescope-collector-server/issues/9); unblocks
   [fuseone-io/fusescope#229](https://github.com/fuseone-io/fusescope/issues/229)
@@ -98,11 +98,26 @@ the fork cannot be retired ([fusescope#229](https://github.com/fuseone-io/fusesc
   it.
 - The tests need a real ClickHouse cluster with Keeper (spec §9), in CI.
 
-## Before acceptance
+## Spike
 
-A spike on a 2×2 cluster with Keeper exercises the spec §6 protocol: the conditional acquire,
-renew and release in strict mode, races between acquire and renewal, expiry, and read-your-writes
-on the same server. Its results go into the spec before this ADR is accepted.
+A spike on a 2×2 cluster ran the spec §6 protocol (spec §11), with Keeper and with the chart's
+ZooKeeper. It is reproducible with `docs/spec/observed/fusescope-schema-spike/run.sh`, and 26 of
+26 assertions pass with each service. Every protocol case behaved as specified. It also led to
+three changes in the spec:
+
+- **The read-back is mandatory:** a losing update usually reports no error.
+- **`keeper_map_path_prefix`** is not visible in `system` tables, so its absence is detected by the
+  bootstrap's first `KeeperMap` create.
+- **A replica configured with another prefix or ensemble can hold a lease of its own.** Two
+  checks on every replica refuse it (spec §3.2):
+  - a random cluster identity, written once, checked before the lease;
+  - the lease itself (`owner`, `token` and exactly the latest `expires_at`, after re-reads for up
+    to 10 s), checked after acquiring, after every renewal and before every statement.
+
+  The second also catches a copied store that carries the original identity.
+
+The limits are recorded in the spec: single-node coordination, one ClickHouse version, and clock
+skew. The CI matrix covers them before any other version, ensemble or deployment is supported.
 
 ## Review decisions
 

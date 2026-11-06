@@ -1,0 +1,28 @@
+coordination: keeper; ClickHouse 25.12.5.44
+PASS bootstrap: one cluster_id insert wins, 7 get Code 999
+PASS bootstrap: one lease insert wins, 7 get Code 999
+PASS cluster identity: the same cluster_id read on each of the 4 replicas
+PASS cluster identity through clusterAllReplicas: one value, 4 replicas
+PASS acquire a free lease, read back on the same server
+PASS acquire with a token read before a renewal changes nothing
+PASS a renewal after expiry does not revive the lease
+PASS acquire an expired lease
+PASS a release with a stale token changes nothing
+PASS 8 concurrent acquires: exactly one self-confirmed owner and token + 1, every round
+PASS restart with another prefix: the replica's KeeperMap tables do not activate (Code 668)
+PASS restart with another prefix: the identity check fails, with an error
+PASS bootstrapped under another prefix: that replica holds its own lease while ch-1-1 holds the real one
+PASS bootstrapped under another prefix: the identity check finds differing values
+PASS bootstrapped on another ensemble: the identity check finds differing values
+PASS copied identity on another ensemble: the identity check passes
+PASS copied identity on another ensemble: the lease comparison across replicas fails
+PASS lease comparison: owner, token and the current expiry everywhere passes
+PASS lease comparison: a replica one renewal behind on expires_at fails
+PASS lease comparison: a replica two renewals behind on expires_at fails
+PASS back on the shared coordination: the identity check passes
+PASS back on the shared coordination: every replica shows the same lease
+PASS coordination down: the conditional update fails with an error
+PASS coordination back: the lease is unchanged
+PASS no prefix: KeeperMap is refused with Code 36
+PASS the prefix is not exposed in system.server_settings
+summary: 26 passed, 0 failed
