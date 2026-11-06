@@ -90,30 +90,34 @@ Ingestion Settings filters by `signoz.workspace.key.id` (§1), but the reference
 
 ## 4. Size (deliberate difference)
 
-`span.size` and `log.size` are the OTLP protobuf encoded size of each record on its own (pdata
-`Span` and `LogRecord` sizes), without its resource and scope. `metric.datapoint.size` stays 0
-as observed (§2).
+`span.size` and `log.size` are the OTLP protobuf encoded size of each record on its own,
+without its resource and scope: `ptrace.ProtoMarshaler.SpanSize` and
+`plog.ProtoMarshaler.LogRecordSize`, which compute it without copying or serializing.
+`metric.datapoint.size` stays 0 as observed (§2).
 
-The reference's sizes could not be reproduced [obs]:
+The reference's sizes could not be reproduced [obs]. The right column is what the collector
+writes for the same records, computed with pdata v1.70.0 from the fields the probes sent
+(`obs-size-*`: timestamp, severity `Info`/9, the body, `app=server`, as stored in
+`signoz_logs`; spans: trace and span ID, name, kind, start and end):
 
-| Probe | Reference value per record | Protobuf size of the record |
+| Probe | Reference, per record | Record-only protobuf size |
 |---|---|---|
-| log, body of 10 chars (`obs-size-10`) | 56 | — |
-| log, body of 1010 chars (`obs-size-1010`) | 1058 | — |
-| log `obs-nosvc` (body and one attribute, empty resource) | 33 | 45 |
-| span, name of 10 chars (`obs-ssize-10`) | 338 | 60 |
-| span, name of 1010 chars (`obs-ssize-1010`) | 1342 | 1061 |
+| log, body of 10 chars (`obs-size-10`) | 56 | 52 |
+| log, body of 1010 chars (`obs-size-1010`) | 1058 | 1054 |
+| log `obs-nosvc` (body and one attribute, empty resource) | 33 | 49 |
+| span, name of 10 chars (`obs-ssize-10`) | 338 | 64 |
+| span, name of 1010 chars (`obs-ssize-1010`) | 1342 | 1065 |
 
-- 1000 more characters add 1002 bytes to a log and 1004 to a span. That fits protobuf length
-  prefixes growing by one byte per enclosing message: two (`AnyValue`, `body`) for a log, four
-  for a span, as if each span were measured inside a whole export request.
+- 1000 more characters add 1002 bytes to a log and 1004 to a span in the reference. That fits
+  protobuf length prefixes growing by one byte per enclosing message: two (`AnyValue`, `body`)
+  for a log, four for a span, as if each span were measured inside a whole export request.
 - The absolute values fit neither the record alone nor the whole request: the span's 338 bytes
-  are more than its request (about 100 bytes), and the log's 33 are less than its record (45).
-  The reference measures something not visible from outside.
-- **Consequence.** After cutover, sizes in Meter Explorer and Ingestion Settings drop for the
-  same traffic, by a few hundred bytes per span at most for small spans. Counts are unchanged.
-  Record-only size is chosen because it is stable, cheap and does not depend on how the client
-  batched its requests.
+  are more than its whole request (about 100 bytes), and `obs-nosvc`'s 33 are less than its
+  record. The reference measures something not visible from outside.
+- **Consequence.** After cutover, sizes in Meter Explorer and Ingestion Settings change for the
+  same traffic: small spans by a few hundred bytes less, logs by a few bytes either way
+  (`obs-nosvc` would grow). Counts are unchanged. Record-only size is chosen because it is
+  stable, cheap and does not depend on how the client batched its requests.
 
 ## 5. Flush and identity
 
@@ -149,14 +153,22 @@ sums without group by (§1).
 
 ## 7. Limits and isolation (deliberate)
 
-- **Series limit.** At most `max_series` (10 000) label sets per signal are held between
-  flushes. Records of further sets go to an overflow set that keeps `connector_id` and
-  `signoz.workspace.key.id` when it comes from an authenticated request (§3.1), and drops
-  `service.name`, `deployment.environment`, `host.name` and an unverified key; a counter reports
-  the overflow. Per-key totals of authenticated keys, and Meter Explorer's totals, stay correct;
-  only the split by service, environment and host degrades. Authenticated key IDs come from the
-  ingest policy, so the overflow sets are bounded by the policy's keys. The reference's limit was
-  not observed.
+- **Label values.** `service.name`, `deployment.environment`, `host.name` and an unverified
+  key are cut to `max_label_bytes` (256) bytes, at a UTF-8 boundary, before they form a label
+  set; a counter reports the cuts. Authenticated key IDs come from the ingest policy.
+- **Label sets.** Per signal, between flushes, at most `max_series` (10 000) label sets holding
+  at most `max_series_bytes` (4 MiB) of label keys and values. When a record's set would exceed
+  either, it goes to the overflow set of its authenticated key (§3.1), which keeps
+  `connector_id` and `signoz.workspace.key.id` and drops `service.name`,
+  `deployment.environment`, `host.name` and an unverified key.
+- **Keys.** At most `max_authenticated_keys` (1 000) such per-key overflow sets per signal and
+  flush, whatever keys rotate during the hour. A record that needs one more, or has no
+  authenticated key, goes to a last overflow set with only `connector_id`.
+- **Bound.** So a signal holds at most `max_series + max_authenticated_keys + 1` sets and
+  `max_series_bytes` plus the overflow sets' keys, between flushes. Every record sent to an
+  overflow set is counted by reason (`series`, `bytes`, `keys`), so the loss of the split is
+  visible. Totals stay correct in Meter Explorer, and per key unless `max_authenticated_keys`
+  is exceeded. The reference's limits were not observed.
 - **Isolation.** Counting does not wait for ClickHouse and never returns an error to the data
   path; it reads each batch without copying it, though counting and sizing still cost CPU there,
   which the benchmarks bound. The flush goes through a separate metrics pipeline to

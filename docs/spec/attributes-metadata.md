@@ -83,8 +83,13 @@ A key that is absent and a key present with an empty value are different sets.
 - **Admitted windows (deliberate).** A record's window must be one of the `max_windows` (4,
   that is 24 h) most recent windows by the collector's clock. A record time in a later window
   (a clock ahead, or a bogus timestamp) is clamped to the current window; one in an earlier
-  window gives no row and is counted. The table keeps 30 days [ddl TTL], so this only drops
-  metadata of data older than a day, which the backend's recent-window queries do not reach.
+  window gives no row and is counted.
+- **Backfill loss (deliberate break).** The table keeps 30 days [ddl TTL] and the backend can
+  query related values over any range in it (§1). Data sent while it happens is unaffected:
+  each window it falls in gets its rows at the time. Data that arrives more than a day after its
+  own time (a backfill, a client replaying a buffer) gets no metadata, so related values for
+  those windows miss its sets; the data itself is written. The reference recorded those
+  windows [obs `obs-old`, 7 h late].
 
 ## 4. Deduplication and fingerprints
 
@@ -120,9 +125,17 @@ A key that is absent and a key present with an empty value are different sets.
   `max_windows` range (§3); nothing is evicted earlier. When a limit is reached, new sets in
   that window are dropped and counted until the window expires; sets already admitted keep
   deduplicating. So rows written per signal are bounded by `max_sets_per_window` per window
-  whatever the attributes, and memory by `max_windows × max_sets_per_window` keys (16 bytes of
-  fingerprints plus overhead each) per signal. Rotating, high-cardinality attributes such as
-  request ids fill a resource's quota and stop there. The reference's limits were not observed.
+  whatever the attributes. Rotating, high-cardinality attributes such as request ids fill a
+  resource's quota and stop there. The reference's limits were not observed.
+- **Bytes.** A row whose keys and values exceed `max_row_bytes` (16 KiB) is not written and is
+  counted; it is not truncated, since a cut value would be a wrong suggestion. Rows waiting for
+  insert hold at most `max_queue_bytes` (8 MiB); a row that does not fit is dropped and counted.
+  The deduplication state holds only fingerprints and the window, a fixed size per key; it is
+  capped by `max_state_bytes` (32 MiB), measured by a test of its real footprint per key, and
+  when full new sets are dropped and counted as for the other limits.
+- **Only metadata is lost.** Every limit drops metadata rows and increments
+  `fusescope_attributes_metadata_dropped` by reason (`window`, `resource`, `row_bytes`,
+  `queue_bytes`, `state_bytes`, `too_old`, `insert`); the data itself is always written.
 - **Isolation.** Metadata does not wait for ClickHouse and never returns an error to the data
   path; computing fingerprints still costs CPU on it, which the benchmarks bound. Records are
   read after the signal's exporter has accepted them for writing; rows go to a bounded queue

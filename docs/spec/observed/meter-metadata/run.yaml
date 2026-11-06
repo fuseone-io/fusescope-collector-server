@@ -1,9 +1,17 @@
 # Black-box run of the earlier collector for meter.md and attributes-metadata.md.
 # Times are UTC. Inputs came from telemetrygen or from the JSON files in scripts/ over OTLP;
 # reads are the ClickHouse rows in samples.tsv and attributes_metadata.tsv.
-reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0
+reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0@sha256:e03a01636cea5abd9eceec0d4d81769d7c5e9813487886afa415ada2f0adfc4a
 chart: fusescope 0.160.1 (published), kind cluster, default values
-telemetrygen: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.139.0
+images:
+  backend: ghcr.io/fuseone-io/fusescope:0.159.0@sha256:75510a30346ae8697384774ea7124d2906d84cf930819e9b5917d23463052658
+  clickhouse: docker.io/clickhouse/clickhouse-server:25.12.5@sha256:cacf32d6884291dc2ff5e0156a97f46fc53ff7c929a7906d114e268a929dfd3a
+  zookeeper: docker.io/signoz/zookeeper:3.7.1@sha256:fcc4a3288154ccaa3bdb5ae6dc10180c084d29a8a6a26b62ac8e30a8940dc2e6
+  clickhouse_operator: docker.io/altinity/clickhouse-operator:0.21.2@sha256:cd9252644ce0a1a26feea66eb77edbfe91b10dec2634b7b8ad73fa3196551488
+  metrics_exporter: docker.io/altinity/metrics-exporter:0.21.2@sha256:df3d57215356043a2b5bcc03a9cdb62198b907932c7077131e079fae1c01156c
+  telemetrygen: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.139.0@sha256:554d71c82659e4dda1269004b0ea0731755b7e153e2ba909c9b3555883b4b623
+  curl: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+record_sizes: computed with go.opentelemetry.io/collector/pdata v1.70.0 (meter.md section 4)
 timeline:
   2026-11-05T19:02:22: collector started
   2026-11-05T19:03: first input (obs-traces, obs-logs, obs-metrics)
