@@ -21,6 +21,22 @@ func NewSettings(tt *componenttest.Telemetry) exporter.Settings {
 	return set
 }
 
+func AssertEqualExporterFusescopeClickhouseAttributesMetadataDropped(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_exporter_fusescope_clickhouse_attributes_metadata_dropped",
+		Description: "Attribute metadata rows dropped by a limit or a failed insert; the data itself is written. [Development]",
+		Unit:        "{row}",
+		Data: metricdata.Sum[int64]{
+			Temporality: metricdata.CumulativeTemporality,
+			IsMonotonic: true,
+			DataPoints:  dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_exporter_fusescope_clickhouse_attributes_metadata_dropped")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
 func AssertEqualExporterFusescopeClickhouseInsertDuration(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.HistogramDataPoint[float64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
 		Name:        "otelcol_exporter_fusescope_clickhouse_insert_duration",

@@ -23,12 +23,13 @@ func Tracer(settings component.TelemetrySettings) trace.Tracer {
 // TelemetryBuilder provides an interface for components to report telemetry
 // as defined in metadata and user config.
 type TelemetryBuilder struct {
-	meter                                     metric.Meter
-	mu                                        sync.Mutex
-	registrations                             []metric.Registration
-	ExporterFusescopeClickhouseInsertDuration metric.Float64Histogram
-	ExporterFusescopeClickhouseInsertErrors   metric.Int64Counter
-	ExporterFusescopeClickhouseInsertedRows   metric.Int64Counter
+	meter                                                metric.Meter
+	mu                                                   sync.Mutex
+	registrations                                        []metric.Registration
+	ExporterFusescopeClickhouseAttributesMetadataDropped metric.Int64Counter
+	ExporterFusescopeClickhouseInsertDuration            metric.Float64Histogram
+	ExporterFusescopeClickhouseInsertErrors              metric.Int64Counter
+	ExporterFusescopeClickhouseInsertedRows              metric.Int64Counter
 }
 
 // TelemetryBuilderOption applies changes to default builder.
@@ -60,6 +61,12 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 	}
 	builder.meter = Meter(settings)
 	var err, errs error
+	builder.ExporterFusescopeClickhouseAttributesMetadataDropped, err = builder.meter.Int64Counter(
+		"otelcol_exporter_fusescope_clickhouse_attributes_metadata_dropped",
+		metric.WithDescription("Attribute metadata rows dropped by a limit or a failed insert; the data itself is written. [Development]"),
+		metric.WithUnit("{row}"),
+	)
+	errs = errors.Join(errs, err)
 	builder.ExporterFusescopeClickhouseInsertDuration, err = builder.meter.Float64Histogram(
 		"otelcol_exporter_fusescope_clickhouse_insert_duration",
 		metric.WithDescription("Duration of each INSERT attempt into a table, retries included. [Development]"),
