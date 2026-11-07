@@ -317,8 +317,9 @@ A migration may also own rows. It then has, besides its structure:
   sharding key picks, as the backend's inserts do, and the statement returns only after that
   shard has written it. Every data statement must be idempotent by key: it inserts only the keys
   that no shard holds yet, so running it again inserts nothing;
-- **data conditions**, cumulative like the post-conditions: a later migration carries them
-  forward unless it changes them. Each condition names:
+- **data conditions**, cumulative like the post-conditions: each migration's set is the whole set
+  that must hold after it, and not only the rows it adds. A later migration copies the previous
+  set and changes it, for example by widening a condition's rows. Each condition names:
   - a replicated local table by role, such as `{db:metadata}.column_evolution_metadata`;
   - its **key**: the table's whole sorting key, which must equal the `sorting_key` in the
     structural post-conditions;
@@ -330,25 +331,39 @@ A migration may also own rows. It then has, besides its structure:
   The checksum covers the data statements, each with its kind, and the data conditions. A
   migration with neither hashes exactly as before, so `0001`'s pinned checksum does not change.
 
+A migration with data statements, or whose data conditions differ from the previous migration's,
+is **not reversible**: `repair --mark absent` compares only structure (§10.1), so it could not
+prove its rows gone. Loading the migrations fails otherwise, and a test covers that.
+
 **Reading.** On every replica of every shard, the local table is read in the scope, grouped by
 the key. Every other column is read as the engine merges it: for
 `SimpleAggregateFunction(f, T)`, `f(column)`. Unmerged parts therefore read as the merged row.
 The replicas of one shard must show the same rows. A replica that differs is re-read every
 500 ms for up to 10 seconds, as in §3.2, since replication may lag behind an insert. If it still
-differs, that is a divergence (§7.4). Then the shards are united. A key held by more than one
+differs, that is a divergence (§7.4). A replica that cannot be read, or a run whose context ends
+during the re-reads, is not a divergence: it is the retryable error of §1, exit 2, or 4 once a
+migration is `started`. Then the shards are united. A key held by more than one
 shard is a contradiction, since each key must be one row in the cluster.
 
 A data condition is checked in two ways:
 
 - **It holds** when the keys in the scope across the cluster are exactly its rows, each on one
-  shard, and every constraint holds. This is a post-condition. `migrate` checks it after the
-  migration's statements and before `done`, and for every `done` migration on later runs.
-  `check` and `status` check it the same way, and so does `repair --mark done` (§10.1).
-- **It admits** a pending migration when every key in the scope is one of its rows, on one shard,
-  with its constraints met. Missing keys are what the migration inserts. Anything else is a
-  contradiction, refused before the `started` row is written (§7.8), and nothing is written.
-  `check` and `plan` report the same refusal. A partial state is admitted, and only the missing
-  rows are inserted.
+  shard, and every constraint holds.
+- **It admits** the live rows when every key in the scope is one of its rows, on one shard, with
+  its constraints met. Missing keys are what the migration inserts. A partial state is admitted,
+  and only the missing rows are inserted.
+
+Only one set is ever checked against the live rows, as for the structure: that of the last
+`done` migration, or the next migration's while it runs.
+
+1. On every run, `migrate`, `check` and `status` require the set of the last `done` migration to
+   hold (§7.4). Sets of earlier migrations are not checked: a later set replaced them.
+2. Before the next migration's `started` row is written, its set must admit the live rows. If it
+   does not, that is a contradiction (§7.8), and nothing is written. When several migrations are
+   pending, only the next one's set is checked against the live rows, since each later set starts
+   from the rows the one before it leaves. `check` and `plan` report the same refusal.
+3. After its statements and before `done`, the migration's own set must hold. From then on it is
+   the set of step 1. `repair --mark done` checks the same (§10.1).
 
 ### 5.3 `0002 column_evolution_baseline`
 
@@ -450,8 +465,8 @@ interrupted, so §7.3 refuses: the next generation never resumes the previous on
 2. a recorded checksum differs from the binary's for the same `id`;
 3. a row is `started` and its `token` is not the current lease's, or the lease has expired: the
    migration was interrupted;
-4. the live schema differs from the post-conditions of the `done` migrations, beyond §8, or a
-   `done` migration's data condition does not hold (§5.2);
+4. the live schema differs from the post-conditions of the last `done` migration, beyond §8, or
+   that migration's data conditions do not hold (§5.2);
 5. the starting point is "anything else" (§4);
 6. the precheck fails (§2.1);
 7. the TLS settings break ADR 0004;
@@ -507,6 +522,10 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | A base row deleted after `0002` is `done` | `check`, `status` and `migrate` refuse (§7.4), naming the row |
 | The response to `0002`'s insert lost (the connection cut after the statement is sent) | exit 4; `status` shows whether the data condition holds; `repair --mark done` succeeds when it holds and is refused when it does not; `--mark absent` refused (not reversible) |
 | A replica of the row's shard lagging behind the insert | the post-condition waits for it within the re-read window, then holds; a replica that never catches up is a divergence |
+| A replica of a data condition's table unreachable, before `started` and after it | exit 2 before, exit 4 after; never a divergence (§7.4) |
+| The run's context cancelled during the re-reads of a lagging replica, before the 10 s pass | exit 2 before `started`, 4 after; never a divergence |
+| A later migration widening `0002`'s rows (a test-only `0003` adding a sixth base row) | before it, `0002`'s set must hold and `0003`'s must admit; after it, only `0003`'s set is checked, and the sixth row is not refused |
+| A migration with data statements or changed data conditions marked reversible | loading the migrations fails |
 | Each `0002` case above, with Keeper and with ZooKeeper, on the 2 × 2 cluster | the same results |
 | Adopting a cluster the fork 0.145.0 migrated (the fork image run as a black box) | `0001` adopted; nothing re-created; data still readable |
 | The same, after the backend promoted fields, added RUM columns and changed retention | adopted (§8); a promoted column with a changed codec is refused |
@@ -564,7 +583,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 
 - **`--mark done`**: every post-condition of migration `N` holds (§4.1, §5.2, §8). The row becomes
   `done` with the current token.
-- **`--mark absent`**: `N` is reversible, no migration after `N` is recorded, and the live
+- **`--mark absent`**: `N` is reversible (so it owns no rows, §5.2), no migration after `N` is recorded, and the live
   structure of every object `N` touches equals `N`'s pre-conditions exactly: created objects
   absent, altered and dropped objects as they were. Any third state is refused. The row is
   deleted.
