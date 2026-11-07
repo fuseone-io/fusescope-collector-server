@@ -14,7 +14,7 @@ import (
 
 // baseChecksum pins 0001. It changes only with a deliberate, reviewed edit
 // before 0001 is released; afterwards, never (§5).
-const baseChecksum = "99a397f7a4d9acef9a94b71161e87f2d43381607cb3bfa4e8aa0b7a051554900"
+const baseChecksum = "5c63a2a2c3f87a9c834f6a54a028de8f63778b5363e08ec1db509d06c421d788"
 
 func base(t *testing.T) Migration {
 	t.Helper()
@@ -131,6 +131,31 @@ func TestBaseHoldsOnlyPlaceholders(t *testing.T) {
 		if strings.Contains(s, "'cluster'") || strings.Contains(s, "ON CLUSTER cluster") {
 			t.Fatalf("a statement names the cluster: %.80s", s)
 		}
+	}
+}
+
+// Each post-condition is the whole schema after its migration; the
+// precondition is the previous one's, and the affected objects their
+// difference (§5).
+func TestPreconditionsAreThePreviousPost(t *testing.T) {
+	m := base(t)
+	if len(m.Pre) != 0 {
+		t.Fatalf("0001's precondition holds %d objects, want none", len(m.Pre))
+	}
+	if got := m.Affected(); len(got) != len(m.Post) {
+		t.Fatalf("0001 affects %d objects, want all %d", len(got), len(m.Post))
+	}
+	next := Migration{ID: 2, Pre: m.Post, Post: schema.Snapshot{}}
+	for k, o := range m.Post {
+		next.Post[k] = o
+	}
+	changed := next.Post["meter.samples"]
+	changed.Columns = append(append([]schema.Column(nil), changed.Columns...), schema.Column{Name: "x", Type: "String"})
+	next.Post["meter.samples"] = changed
+	delete(next.Post, "logs.usage")
+	next.Post["logs.new"] = schema.Object{Kind: schema.KindTable}
+	if got := next.Affected(); !slices.Equal(got, []string{"logs.new", "logs.usage", "meter.samples"}) {
+		t.Fatalf("Affected = %v", got)
 	}
 }
 

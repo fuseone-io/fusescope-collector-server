@@ -261,6 +261,7 @@ func TestHistoryThisBinaryDoesNotKnowIsRefused(t *testing.T) {
 	cases := map[string]Row{
 		"an unknown id":    {ID: 2, Name: "future", Done: true},
 		"another checksum": {ID: 1, Name: "base", Checksum: strings.Repeat("0", 64), Done: true},
+		"another name":     {ID: 1, Name: "renamed", Done: true},
 	}
 	for name, row := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -268,6 +269,9 @@ func TestHistoryThisBinaryDoesNotKnowIsRefused(t *testing.T) {
 			forkSchema(s)
 			if row.ID == 2 {
 				s.history = []Row{{ID: 1, Name: "base", Checksum: m.Checksum(), Done: true}}
+			}
+			if row.Name == "renamed" {
+				row.Checksum = m.Checksum()
 			}
 			s.history = append(s.history, row)
 			want := ErrUnknownMigration
@@ -278,6 +282,17 @@ func TestHistoryThisBinaryDoesNotKnowIsRefused(t *testing.T) {
 				t.Fatalf("Migrate = %v, want %v without writing", err, want)
 			}
 		})
+	}
+}
+
+// The lease lost between the starting point and the first migration: nothing
+// was started, so the run must not report a started migration.
+func TestLeaseLostBeforeStartedReportsNothingStarted(t *testing.T) {
+	s, l, r, _ := setup(t)
+	l.loseAt = 2
+	res, err := r.Migrate(context.Background())
+	if !errors.Is(err, coord.ErrLeaseLost) || res.Started || len(s.writes)+len(s.executed) > 0 {
+		t.Fatalf("Migrate = %+v, %v, writes %v, executed %d", res, err, s.writes, len(s.executed))
 	}
 }
 

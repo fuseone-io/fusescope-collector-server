@@ -13,6 +13,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/schema"
@@ -26,9 +28,31 @@ type Migration struct {
 	Name       string
 	Statements []string
 	Reversible bool
-	// Post is the structure every replica must show afterwards. It is a
-	// separate artifact, not derived from Statements (§9).
+	// Post is the whole schema every replica must show afterwards, every
+	// object and not only the ones the migration changes. It is a separate
+	// artifact, not derived from Statements (§5).
 	Post schema.Snapshot
+	// Pre is the previous migration's Post, empty for the first: the whole
+	// schema before this migration.
+	Pre schema.Snapshot
+}
+
+// Affected lists the objects the migration creates, changes or drops: those
+// that differ between Pre and Post, sorted.
+func (m Migration) Affected() []string {
+	var out []string
+	for _, k := range m.Post.Names() {
+		if pre, ok := m.Pre[k]; !ok || !reflect.DeepEqual(pre, m.Post[k]) {
+			out = append(out, k)
+		}
+	}
+	for _, k := range m.Pre.Names() {
+		if _, ok := m.Post[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 //go:embed sql/*.sql post/*.json
@@ -40,7 +64,12 @@ func All() ([]Migration, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []Migration{base}, nil
+	all := []Migration{base}
+	pre := schema.Snapshot{}
+	for i := range all {
+		all[i].Pre, pre = pre, all[i].Post
+	}
+	return all, nil
 }
 
 func load(id uint32, name string, reversible bool) (Migration, error) {
@@ -75,14 +104,10 @@ func Split(sql string) []string {
 	return out
 }
 
-// Join is the inverse of Split.
+// Join is the inverse of Split: each statement followed by ";" on its own
+// line, a blank line between statements.
 func Join(statements []string) string {
-	var b strings.Builder
-	for _, s := range statements {
-		b.WriteString(s)
-		b.WriteString("\n" + statementEnd + "\n")
-	}
-	return b.String()
+	return strings.Join(statements, "\n"+statementEnd+"\n") + "\n" + statementEnd
 }
 
 // Checksum is the SHA-256 of everything that defines the migration: its id,

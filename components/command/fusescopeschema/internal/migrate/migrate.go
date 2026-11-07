@@ -148,11 +148,11 @@ func (r *Runner) Migrate(ctx context.Context) (Result, error) {
 		done = 1
 	}
 	for _, m := range r.Migrations[done:] {
-		res.Started = true
-		if err := r.run(ctx, m); err != nil {
+		started, err := r.run(ctx, m)
+		if err != nil {
+			res.Started = started
 			return res, fmt.Errorf("%04d %s: %w", m.ID, m.Name, err)
 		}
-		res.Started = false
 		res.Applied = append(res.Applied, m.ID)
 	}
 	return res, nil
@@ -165,8 +165,9 @@ func (r *Runner) checkHistory(history []Row) (int, error) {
 		if i >= len(r.Migrations) || h.ID != r.Migrations[i].ID {
 			return 0, fmt.Errorf("%w: %04d %s", ErrUnknownMigration, h.ID, h.Name)
 		}
-		if h.Checksum != r.Migrations[i].Checksum() {
-			return 0, fmt.Errorf("%w: %04d %s was recorded with checksum %s", ErrChecksum, h.ID, h.Name, h.Checksum)
+		if h.Name != r.Migrations[i].Name || h.Checksum != r.Migrations[i].Checksum() {
+			return 0, fmt.Errorf("%w: %04d was recorded as %q with checksum %s, this binary has %q with %s",
+				ErrChecksum, h.ID, h.Name, h.Checksum, r.Migrations[i].Name, r.Migrations[i].Checksum())
 		}
 		if !h.Done {
 			return 0, fmt.Errorf("%w: %04d %s is still started (lease token %d); see the runbook, §10.1", ErrInterrupted, h.ID, h.Name, h.Token)
@@ -196,15 +197,20 @@ func (r *Runner) compare(ctx context.Context, m migrations.Migration, live map[s
 }
 
 // run runs one migration (§5.1): started, each statement under a valid lease,
-// the post-conditions on every replica, done.
-func (r *Runner) run(ctx context.Context, m migrations.Migration) error {
+// the post-conditions on every replica, done. It reports whether the
+// migration's started row was written, so a failure leaves it started.
+func (r *Runner) run(ctx context.Context, m migrations.Migration) (started bool, _ error) {
 	if err := r.Lease.Valid(ctx); err != nil {
-		return err
+		return false, err
 	}
 	token := r.Lease.Held().Token
 	if err := r.Store.InsertStarted(ctx, Row{ID: m.ID, Name: m.Name, Checksum: m.Checksum(), Token: token}, r.Version, r.Host); err != nil {
-		return fmt.Errorf("record started: %w", err)
+		return false, fmt.Errorf("record started: %w", err)
 	}
+	return true, r.statements(ctx, m, token)
+}
+
+func (r *Runner) statements(ctx context.Context, m migrations.Migration, token uint64) error {
 	for i, stmt := range m.Statements {
 		if err := r.Lease.Valid(ctx); err != nil {
 			return fmt.Errorf("before statement %d: %w", i+1, err)

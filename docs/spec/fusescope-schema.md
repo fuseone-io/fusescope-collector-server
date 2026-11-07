@@ -212,10 +212,14 @@ correction is a new migration. Each has:
 - `statements`: DDL with the placeholders `{cluster}` and the database roles, each statement
   idempotent (`CREATE … IF NOT EXISTS`, `DROP … IF EXISTS`, `ALTER … ADD COLUMN IF NOT EXISTS`,
   or guarded by a precondition the runner checks first);
-- `preconditions`: the complete structure (§4.1) of every object the migration creates, alters or
-  drops, as it must be before the migration runs (an object it creates must not exist). The runner
-  checks them before step 1 of §5.1;
-- `postconditions`: the complete structure of the same objects after it;
+- `postconditions`: the complete structure (§4.1) of the whole schema after it, every object of
+  the six databases and not only the ones it changes. Each migration's post-conditions are
+  therefore cumulative, and the live schema is always compared whole;
+- `preconditions`: the previous migration's post-conditions (none for `0001`), the whole schema as
+  it must be before the migration runs. The runner checks them before step 1 of §5.1, as the
+  post-conditions of the last `done` migration. The objects a migration creates, alters or drops
+  are those that differ between its pre- and post-conditions, which `repair --mark absent` (§10.1)
+  restores;
 - `reversible`: whether its effect can be undone by hand to exactly `preconditions`. A migration
   that drops or rewrites data, such as dropping a column, is `false`.
 
@@ -230,7 +234,9 @@ tables, then distributed tables, then materialized views after their targets.
   that read to equal the artifact on every replica. Another test runs `0001` on an empty cluster
   and compares the result with the artifact, so neither is checked against itself.
 - The checksum is the SHA-256 of the id, the name, `reversible`, the statements and the
-  post-conditions, and a test pins it.
+  post-conditions, and a test pins it. The preconditions are the previous migration's
+  post-conditions, covered by that migration's checksum. A history row is accepted only with this
+  binary's id, name and checksum.
 - The placeholders render as quoted identifiers (`{db:<role>}`, `{cluster}`) or as string
   literals (`'{db:<role>}'`, `'{cluster}'`, in a Distributed table's arguments).
 - [obs] includes the fork's history tables (`schema_migrations_v2`). `0001` creates them empty, and
