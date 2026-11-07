@@ -332,18 +332,14 @@ func (c *command) inspect(ctx context.Context, store *chstore.Store, r *migrate.
 	}
 	// fusescope_schema on every replica first: the history and the lease are
 	// then read on the connected server only.
-	complete, err := coord.InspectLayout(ctx, store)
-	if err != nil {
-		return migrate.State{}, nil, err
-	}
-	var lease *coord.Lease
-	now := int64(0)
-	if complete {
-		if lease, now, err = store.LeaseIfPresent(ctx); err != nil {
-			return migrate.State{}, nil, err
+	var complete bool
+	st, lease, err := r.InspectReading(ctx, func(ctx context.Context) (*coord.Lease, int64, error) {
+		var err error
+		if complete, err = coord.InspectLayout(ctx, store); err != nil || !complete {
+			return nil, 0, err
 		}
-	}
-	st, err := r.Inspect(ctx, lease, now)
+		return store.LeaseIfPresent(ctx)
+	})
 	if err == nil && !complete && st.Verdict == migrate.UpToDate {
 		st.Verdict = migrate.Pending // migrate completes the coordination
 	}

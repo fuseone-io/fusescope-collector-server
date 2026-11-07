@@ -133,6 +133,51 @@ func TestInspect(t *testing.T) {
 	}
 }
 
+// A migrate that writes its started row after check read the lease, and
+// before it read the history, is in progress, not interrupted.
+func TestInspectReadingRereadsTheLeaseAfterAStartedRow(t *testing.T) {
+	started := func(r *Runner) Row {
+		b := baseDone(r)
+		b.Done, b.Token = false, 9
+		return b
+	}
+	held := &coord.Lease{Owner: "other", Token: 9, ExpiresMs: 2_000}
+	cases := []struct {
+		name    string
+		leases  []*coord.Lease // per read
+		verdict Verdict
+		err     error
+		reads   int
+	}{
+		{name: "the row written between the reads", leases: []*coord.Lease{nil, held}, verdict: InProgress, reads: 2},
+		{name: "interrupted on both reads", leases: []*coord.Lease{nil, nil}, err: ErrInterrupted, reads: 2},
+		{name: "in progress on the first read", leases: []*coord.Lease{held}, verdict: InProgress, reads: 1},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _, r, _ := setup(t)
+			reads := 0
+			read := func(context.Context) (*coord.Lease, int64, error) {
+				l := tt.leases[reads]
+				reads++
+				s.history = []Row{started(r)}
+				return l, 1_000, nil
+			}
+			st, lease, err := readOnly(r).InspectReading(context.Background(), read)
+			if tt.err != nil {
+				if !errors.Is(err, tt.err) {
+					t.Fatalf("InspectReading = %v, want %v", err, tt.err)
+				}
+			} else if err != nil || st.Verdict != tt.verdict || lease != held {
+				t.Fatalf("InspectReading = %+v, lease %v, %v; want %v under the held lease", st, lease, err, tt.verdict)
+			}
+			if reads != tt.reads {
+				t.Fatalf("read the lease %d times, want %d", reads, tt.reads)
+			}
+		})
+	}
+}
+
 func TestRepair(t *testing.T) {
 	started := func(r *Runner, id uint32) Row {
 		m := r.Migrations[id-1]

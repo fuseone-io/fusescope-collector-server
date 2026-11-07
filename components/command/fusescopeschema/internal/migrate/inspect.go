@@ -44,6 +44,30 @@ type Unfinished struct {
 	Diffs []schema.Diff
 }
 
+// LeaseRead reads the lease row, nil when there is none, and the server's
+// time in milliseconds.
+type LeaseRead func(context.Context) (*coord.Lease, int64, error)
+
+// InspectReading is Inspect with the lease read by read. A started row that
+// the lease read before it does not cover may have been written after that
+// read, by a migrate that holds the lease: the lease is read once more, after
+// the row, before the row counts as interrupted.
+func (r *Runner) InspectReading(ctx context.Context, read LeaseRead) (State, *coord.Lease, error) {
+	lease, now, err := read(ctx)
+	if err != nil {
+		return State{}, nil, err
+	}
+	st, err := r.Inspect(ctx, lease, now)
+	if !errors.Is(err, ErrInterrupted) {
+		return st, lease, err
+	}
+	if lease, now, err = read(ctx); err != nil {
+		return State{}, nil, err
+	}
+	st, err = r.Inspect(ctx, lease, now)
+	return st, lease, err
+}
+
 // Inspect reads the history and the live schema as migrate would, without
 // writing. lease is the lease row as read, nil when there is none; a started
 // row counts as in progress only under that lease's token, unexpired at

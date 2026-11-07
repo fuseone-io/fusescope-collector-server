@@ -512,7 +512,7 @@ func dockerCompose(compose string, args ...string) error {
 // The coordination service, one node or one member of an ensemble, stopped
 // during a migration and started again (§9). Safety holds whatever the
 // availability: 0 only with an ensemble, and then everything is done; 4
-// leaves 0001 started with no statement sent after the lease was lost, the
+// leaves 0001 started (the loss is at its statement 20) with no statement sent after the lease was lost, the
 // rerun refused and recovery only through §7. Never 1, 2 or a hang.
 func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	addrs := clusterAddrs(t)
@@ -529,8 +529,8 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	t.Cleanup(func() { _ = dockerCompose(compose, "start", victim) })
 	var restarted sync.WaitGroup
 	var othersUp, quorum error
-	hook := func(_ uint32, i int) error {
-		if i != 20 {
+	hook := func(id uint32, i int) error {
+		if id != 1 || i != 20 {
 			return nil
 		}
 		if err := dockerCompose(compose, "stop", victim); err != nil {
@@ -583,8 +583,18 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	}
 	switch {
 	case r.code == ExitOK && !single:
-		if h := history(); len(h) != 1 || !strings.Contains(h[0], "Done:true") {
-			t.Fatalf("history after exit 0: %v, want 0001 done", h)
+		all, err := migrations.All()
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := history()
+		if len(h) != len(all) {
+			t.Fatalf("history after exit 0: %v, want every one of the %d migrations done", h, len(all))
+		}
+		for _, row := range h {
+			if !strings.Contains(row, "Done:true") {
+				t.Fatalf("history after exit 0: %v, want every one of the %d migrations done", h, len(all))
+			}
 		}
 		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after a migrate that rode out the loss")
 		if again := run(bg, t, addrs[3], nil, "migrate"); again.code != ExitOK || strings.Contains(again.stdout, "applied") {

@@ -479,7 +479,9 @@ interrupted, so §7.3 refuses: the next generation never resumes the previous on
 
 `check` reports these the same way (exit 1), with one difference. A `started` row whose token is
 the current lease's, with an unexpired lease, is **in progress**: `check` returns 3, and with
-`--wait` it keeps waiting.
+`--wait` it keeps waiting. `check` reads the lease before the history, so a `started` row the
+lease it read does not cover may have been written after that read: the lease is read once more,
+after the row, before the row counts as interrupted.
 
 Each refusal names its runbook section (§10).
 
