@@ -182,14 +182,24 @@ Schemas are compared as structures read from `system` tables on every replica
 | Column (`system.columns`) | name, position, type, `default_kind`, `default_expression`, `compression_codec`, `comment` |
 | Data-skipping index (`system.data_skipping_indices`) | name, type and its arguments, expression, granularity |
 | Projection | name and query |
-| Materialized view | target table, and the query from `system.tables.as_select` |
+| Materialized view | target table and, for a refreshable one, the `REFRESH` clause, both from `create_table_query`; the query from `system.tables.as_select` |
 | Distributed table | cluster, database, table, sharding key |
-| Dictionary | source, layout, structure, lifetime |
+| Dictionary | presence only, for now: no migration creates a dictionary, so one found is an extra object. Its source, layout, structure and lifetime are compared from the first migration that creates one |
 
-- Every expression is canonicalised by the server with `formatQuery` before it is compared, so
-  formatting differences between ClickHouse versions do not count.
-- Database names are replaced by their role, so custom names compare.
-- The cluster name is replaced by `{cluster}`.
+- Every expression is canonicalised by the server with `formatQuerySingleLine` before it is
+  compared, so formatting differences between ClickHouse versions do not count. Each text is
+  formatted inside a statement that parses it, and the wrapper is cut off again: expressions and
+  keys in `SELECT …`, queries as they are, the TTL in `ALTER TABLE t MODIFY TTL …` and the settings
+  in `ALTER TABLE t MODIFY SETTING …`. The connected server formats every replica's texts. The
+  observed schema needs this: in a TTL the server prints `(a + b) + c` where a `SELECT` prints
+  `a + b + c`, and it drops a rule's `DELETE` (observed on 25.12).
+- Database names are replaced by their role, as `{db:<role>}` (`{db:logs}`, `{db:traces}`, …), so
+  custom names compare: a qualifier in an expression or query, a materialized view's target, and
+  a Distributed table's database argument.
+- The cluster name in a Distributed table's arguments is replaced by `{cluster}`.
+- Columns keep their position. A column §8 allows must come after every expected column, since
+  the backend adds them with `ADD COLUMN` and no `FIRST` or `AFTER`, and an `_exists` column after
+  its promoted column.
 
 A difference on a single replica counts.
 
@@ -305,12 +315,16 @@ looks similar, is drift.
 |---|---|---|
 | Columns `<prefix>_<datatype>_<key>` added with `DEFAULT <map>['<key>'] CODEC(ZSTD(1))`, where `<map>` is `attributes_<type>` or `resources_<type>` | `logs_v2` and `distributed_logs_v2`; `signoz_index_v3` and `distributed_signoz_index_v3` | promoted fields: `clickhouseReader/reader.go` (logs about line 2629, traces about line 2770) |
 | Their companion `<column>_exists Bool DEFAULT if(mapContains(<map>, '<key>') != 0, true, false) CODEC(ZSTD(1))` | the same | the same |
-| Indexes `<column>_idx` over a promoted column (the backend's index types and granularity), and `<column>_minmax_idx … TYPE minmax GRANULARITY 1` | the local tables above | `reader.go` about lines 2667, 2808 and 2823 |
+| Indexes `<column>_idx` over a promoted string or number column, of a type the backend accepts (`minmax`, `set(n)`, `bloom_filter[(rate)]`, `tokenbf_v1(…)`, `ngrambf_v1(…)`, as `indexTypeRe` bounds them) and any granularity; and `<column>_minmax_idx … TYPE minmax GRANULARITY 1` over a promoted number column. The expression is the column alone | the local tables above | `reader.go` about lines 2667, 2808 and 2823; the types in `pkg/types/promotetypes/types.go` about line 25 |
 | RUM promoted columns, `_exists` columns and `_idx` indexes, of the same shapes | `signoz_index_v3`/`distributed_signoz_index_v3` and `logs_v2`/`distributed_logs_v2` (`promoter.go` about lines 38–39) | `implrumapplication/promoter.go` about lines 118–124 |
-| Skip indexes on JSON subcolumns, named `` `<column>.<path>_<jsontype>_<indextype>` ``, with the expression `assumeNotNull(dynamicElement(<column>.<path>, '<Type>'))` (wrapped in `lower(…)` for `String`), of type `tokenbf_v1`, `ngrambf_v1` or `minmax`, with any granularity. `<column>` is the target's base or promoted JSON column | `logs_v2` (`body_v2`, `body_promoted`); `signoz_index_v3` (`attributes`, `attributes_promoted`) | `pkg/modules/promote/implpromote/module.go` about line 199; names and expressions in `pkg/telemetryschema/chschema/index.go` about lines 55–80; targets in `pkg/types/promotetypes/target.go` |
-| The `DEFAULT` value of `_retention_days` and `_retention_days_cold` (type `UInt16` unchanged) | the logs and logs-resource tables | `reader.go` about lines 1309–1340 |
-| The table TTL expression | the tables the backend's retention settings target | `clickhouseReader/ttl_statements.go` |
+| Skip indexes on JSON subcolumns, named `<column>.<path>_<jsontype>_<indextype>`, where `<indextype>` is the base of the index type (one of the types above) and `<column>` is the target's base or promoted JSON column, with any granularity. For logs, `<jsontype>` is `string`, `int64` or `float64` and the expression `assumeNotNull(dynamicElement(<column>.<path>, '<Type>'))`, wrapped in `lower(…)` for `String`, a path segment holding `-`, `:` or `@` backquoted. For traces, `<jsontype>` is `string` or `float64` (Int64 is folded into Float64), the path is one backquoted identifier, and the expression is `` <column>.`<path>`::String ``, or `` toFloat64OrNull(<column>.`<path>`::String) `` for `float64` | `logs_v2` (`body_v2`, `body_promoted`); `signoz_index_v3` (`attributes`, `attributes_promoted`) | `pkg/modules/promote/implpromote/module.go` about line 255; names and logs expressions in `pkg/telemetryschema/chschema/index.go` about lines 55–103; traces expressions in `pkg/types/promotetypes/target.go` about line 32 and `tracestelemetryschema/storage.go` about line 343; the indexable types in `pkg/types/telemetrytypes/json_datatype.go` |
+| The `DEFAULT` of `_retention_days` and `_retention_days_cold`, the type `UInt16` and everything else unchanged. `_retention_days_cold` takes a number. `_retention_days` takes a number or the custom retention's `multiIf(<cond>, <days>, …, <default days>)`, each `<cond>` one or more `<key> IN ('<value>', …)` joined by `AND`, where `<key>` is `resources_string['<k>']` on the logs tables and `JSONExtractString(labels, '<k>')` on the resource tables, and every value a string literal and every days value a number. The rules are read from the live text and the backend's text rebuilt from them must canonicalise to it | `logs_v2`, `distributed_logs_v2`, `logs_v2_resource`, `distributed_logs_v2_resource` | `reader.go` about lines 1273–1349 (`buildMultiIfExpression` about line 1408) |
+| The table TTL, as the retention settings write it: `<time> + <delete> DELETE`, optionally followed by `, <time> + <move> TO VOLUME '<volume>'`, with any numbers and volume. `<time>` is `toDateTime(timestamp / 1000000000)` for `logs_v2`, `toDateTime(seen_at_ts_bucket_start) + toIntervalSecond(1800)` for the logs and traces resource tables, `timestamp` for the logs keys tables, `toDateTime(end)` for `trace_summary`, `toDateTime(timestamp)` for the other traces tables and `toDateTime(toUInt32(unix_milli / 1000), 'UTC')` for the metrics tables. `<delete>` and `<move>` are `INTERVAL n SECOND`; for `logs_v2` and `logs_v2_resource` also `toIntervalDay(_retention_days)` and `toIntervalDay(if(_retention_days_cold = 0, n, _retention_days_cold))`, and for the keys tables `toIntervalDay(n)`. The keys tables and `span_attributes_keys` take no move rule | logs: `logs_v2`, `logs_v2_resource`, `logs_attribute_keys`, `logs_resource_keys`; traces: `signoz_index_v3`, `traces_v3_resource`, `signoz_error_index_v2`, `usage_explorer`, `dependency_graph_minutes_v2`, `trace_summary`, `span_attributes_keys`; metrics: `samples_v4`, `samples_v4_agg_5m`, `samples_v4_agg_30m`, `exp_hist`, `time_series_v4`, `time_series_v4_6hrs`, `time_series_v4_1day`, `time_series_v4_1week` | `clickhouseReader/ttl_statements.go`; `pkg/types/retentiontypes/ttlclause.go`; the tables in `reader.go` about lines 942, 1059 and 1734 |
 
+Each pattern builds the text the backend writes, from the names it parses, and the server's
+canonical form of that text must equal the live one. For a TTL, the template is rendered with
+sentinel numbers and volume, canonicalised, and matched as an anchored pattern where only the
+sentinels vary.
 A promoted column must match its pattern exactly: the name, the type, the `DEFAULT` built from the
 same `<key>`, and the codec. Anything else is drift, for example:
 - a column with another codec;

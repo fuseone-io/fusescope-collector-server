@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the reference collector as a black box, sends the corpus, and writes what
 # ClickHouse holds afterwards: DDL for every table and the rows of every table
-# that received data.
+# that received data, except the reference's migration history.
 #   observe.sh <out_dir>
 # OBSERVE_CLICKHOUSE_PORT, OBSERVE_OTLP_PORT and OBSERVE_HEALTH_PORT move the host
 # ports (8123, 4318, 13133), with COMPOSE_PROJECT_NAME, beside another stack.
@@ -58,7 +58,8 @@ sleep 30
 
 ch "SYSTEM FLUSH LOGS" >/dev/null
 ch "SELECT DISTINCT arrayStringConcat(tables, ',') AS tables, replaceRegexpAll(query, '(?is)\\s+(VALUES|FORMAT)\\s.*$', '') AS statement
-    FROM system.query_log WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND has(databases, 'system') = 0
+    FROM system.query_log AS q WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND has(databases, 'system') = 0
+      AND NOT arrayExists(t -> t LIKE '%.schema_migrations%', q.tables)
     ORDER BY tables, statement FORMAT JSONEachRow" > "$out/inserts.jsonl"
 
 ch "SELECT database, name, engine FROM system.tables WHERE database LIKE 'signoz%' ORDER BY database, name FORMAT TSV" \
@@ -66,6 +67,8 @@ ch "SELECT database, name, engine FROM system.tables WHERE database LIKE 'signoz
 while IFS=$'\t' read -r db table engine; do
   [ -n "$db" ] || continue
   ch "SHOW CREATE TABLE \`$db\`.\`$table\` FORMAT TSVRaw" > "$out/ddl/$db.$table.sql"
+  # The reference's own migration history is never recorded (ADR 0002): only its structure.
+  case "$table" in schema_migrations*|distributed_schema_migrations*) continue ;; esac
   case "$engine" in
     *MergeTree)
       rows=$(ch "SELECT count() FROM \`$db\`.\`$table\`")
