@@ -44,6 +44,10 @@ type Store interface {
 	MarkDone(ctx context.Context, id uint32, token uint64) error
 	// ExecDDL runs a statement ON CLUSTER and waits for every host.
 	ExecDDL(ctx context.Context, statement string) error
+	// RepairDone marks a started row done under the current lease token,
+	// and DeleteRow deletes a row; both confirm by reading back (§10.1).
+	RepairDone(ctx context.Context, id uint32, oldToken, newToken uint64) error
+	DeleteRow(ctx context.Context, id uint32, token uint64) error
 }
 
 // Lease is the held lease.
@@ -167,18 +171,27 @@ func (r *Runner) Migrate(ctx context.Context) (Result, error) {
 // migrations, with their checksums, and returns its length (§7.1–7.3).
 func (r *Runner) checkHistory(history []Row) (int, error) {
 	for i, h := range history {
-		if i >= len(r.Migrations) || h.ID != r.Migrations[i].ID {
-			return 0, fmt.Errorf("%w: %04d %s", ErrUnknownMigration, h.ID, h.Name)
-		}
-		if h.Name != r.Migrations[i].Name || h.Checksum != r.Migrations[i].Checksum() {
-			return 0, fmt.Errorf("%w: %04d was recorded as %q with checksum %s, this binary has %q with %s",
-				ErrChecksum, h.ID, h.Name, h.Checksum, r.Migrations[i].Name, r.Migrations[i].Checksum())
+		if err := r.checkRow(i, h); err != nil {
+			return 0, err
 		}
 		if !h.Done {
 			return 0, fmt.Errorf("%w: %04d %s is still started (lease token %d); see the runbook, §10.1", ErrInterrupted, h.ID, h.Name, h.Token)
 		}
 	}
 	return len(history), nil
+}
+
+// checkRow requires history row i to be this binary's migration i, with its
+// name and checksum.
+func (r *Runner) checkRow(i int, h Row) error {
+	if i >= len(r.Migrations) || h.ID != r.Migrations[i].ID {
+		return fmt.Errorf("%w: %04d %s", ErrUnknownMigration, h.ID, h.Name)
+	}
+	if h.Name != r.Migrations[i].Name || h.Checksum != r.Migrations[i].Checksum() {
+		return fmt.Errorf("%w: %04d was recorded as %q with checksum %s, this binary has %q with %s",
+			ErrChecksum, h.ID, h.Name, h.Checksum, r.Migrations[i].Name, r.Migrations[i].Checksum())
+	}
+	return nil
 }
 
 func empty(live map[string]schema.Snapshot) bool {

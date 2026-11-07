@@ -6,6 +6,7 @@ package coord
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -77,9 +78,13 @@ func TestBootstrap(t *testing.T) {
 			complete(s)
 			s.differs["ch-1-1"] = map[string]TableLayout{"lease": changed("lease", func(l *TableLayout) { l.PrimaryKey = "owner" })}
 		}, want: ErrUnknownLayout, noWrites: true},
-		{name: "a replica that does not answer", setup: func(s *fakeStore) { s.down["ch-2-2"] = true }, want: ErrDivergent, noWrites: true},
+		{name: "a replica that does not answer", setup: func(s *fakeStore) { s.down["ch-2-2"] = true }, want: ErrUnavailable, noWrites: true},
 		{name: "a replica the create did not reach", setup: func(s *fakeStore) { s.createSkips["ch-2-2"] = true }, want: ErrUnknownLayout},
 		{name: "the lease row's insert lost", setup: func(s *fakeStore) { s.dropLeaseInsert = true }, want: ErrUnknownLayout},
+		{name: "the lease row unreadable: retryable", setup: func(s *fakeStore) { s.readLeaseErr = errors.New("connection reset") }, want: ErrUnavailable},
+		{name: "the lease table holding other rows", setup: func(s *fakeStore) {
+			s.readLeaseErr = fmt.Errorf("%w: the lease table holds 2 rows", ErrUnknownLayout)
+		}, want: ErrUnknownLayout},
 		{name: "a lease row the protocol cannot write", setup: func(s *fakeStore) {
 			complete(s)
 			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 0}

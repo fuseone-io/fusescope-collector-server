@@ -97,10 +97,27 @@ func (s *Store) ReadLease(ctx context.Context) (coord.Lease, bool, error) {
 		return coord.Lease{}, false, err
 	}
 	if len(rows) != 1 || rows[0][0] != "migrate" {
-		return coord.Lease{}, false, fmt.Errorf("%s.lease holds %d rows, want only migrate", Database, len(rows))
+		return coord.Lease{}, false, fmt.Errorf("%w: %s.lease holds %d rows, want only migrate", coord.ErrUnknownLayout, Database, len(rows))
 	}
 	l, err := parseLease(rows[0][1], rows[0][2], rows[0][3])
-	return l, err == nil, err
+	if err != nil {
+		return coord.Lease{}, false, fmt.Errorf("%w: %s.lease: %v", coord.ErrUnknownLayout, Database, err)
+	}
+	return l, true, nil
+}
+
+// ReplicaRows reads every row of a fusescope_schema table on every replica,
+// each as the text of its tuple, sorted.
+func (s *Store) ReplicaRows(ctx context.Context, table string) (map[string][]string, error) {
+	rows, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", toString(tuple(*)) AS row FROM "+s.all(table)+" ORDER BY 1, row", 2)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, r := range rows {
+		out[r[0]] = append(out[r[0]], r[1])
+	}
+	return out, nil
 }
 
 func (s *Store) TryAcquire(ctx context.Context, owner string, readToken uint64, forMs int64) error {

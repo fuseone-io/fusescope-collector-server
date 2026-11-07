@@ -322,3 +322,83 @@ func TestIntegrationKilledMidwayIsInterrupted(t *testing.T) {
 		}
 	}
 }
+
+// repair --mark absent on the real store: a synthetic reversible 0002,
+// injected in the runner only, interrupted after creating its table; refused
+// while the table exists, recorded absent once it is dropped by hand.
+func TestIntegrationRepairMarkAbsent(t *testing.T) {
+	addrs := clusterAddrs(t)
+	emptyCluster(t, dial(t, addrs[0]), schema.DefaultDatabases, "cluster")
+	ctx := context.Background()
+	r := newRun(t, addrs[0], schema.DefaultDatabases, "cluster", coord.Config{})
+	if _, err := r.runner.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stmt := "CREATE TABLE IF NOT EXISTS {db:logs}.zz_reversible ON CLUSTER {cluster} (`k` String) ENGINE = ReplicatedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}') ORDER BY k"
+	render := func(s string) string { return migrations.Render(s, schema.DefaultDatabases, "cluster") }
+	if err := r.store.ExecDDL(ctx, render(stmt)); err != nil {
+		t.Fatal(err)
+	}
+	live, err := r.store.ReplicaSnapshots(ctx, schema.DefaultDatabases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var post schema.Snapshot
+	for _, s := range live {
+		post = s
+	}
+	drop := render("DROP TABLE IF EXISTS {db:logs}.zz_reversible ON CLUSTER {cluster} SYNC")
+	if err := r.store.ExecDDL(ctx, drop); err != nil {
+		t.Fatal(err)
+	}
+	base := base(t)
+	m2 := migrations.Migration{ID: 2, Name: "reversible", Statements: []string{stmt}, Reversible: true, Pre: base.Post, Post: post}
+	if got := m2.Affected(); len(got) != 1 || got[0] != "logs.zz_reversible" {
+		t.Fatalf("0002 affects %v", got)
+	}
+	r.runner.Migrations = []migrations.Migration{base, m2}
+	killed := errors.New("killed")
+	r.runner.AfterStatement = func(id uint32, _ int) error {
+		if id == 2 {
+			return killed
+		}
+		return nil
+	}
+	if res, err := r.runner.Migrate(ctx); !errors.Is(err, killed) || !res.Started {
+		t.Fatalf("Migrate = %+v, %v", res, err)
+	}
+	if err := r.coord.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := newRun(t, addrs[3], schema.DefaultDatabases, "cluster", coord.Config{AllowInterrupted: true})
+	rep.runner.Migrations = r.runner.Migrations
+	if err := rep.runner.Repair(ctx, 2, migrate.MarkAbsent); !errors.Is(err, migrate.ErrRepairRefused) || !strings.Contains(err.Error(), "logs.zz_reversible still exists") {
+		t.Fatalf("Repair with the table there = %v", err)
+	}
+	if h, _ := rep.store.History(ctx); len(h) != 2 {
+		t.Fatalf("a refused repair changed the history: %+v", h)
+	}
+	if err := rep.store.ExecDDL(ctx, drop); err != nil {
+		t.Fatal(err)
+	}
+	if err := rep.runner.Repair(ctx, 2, migrate.MarkAbsent); err != nil {
+		t.Fatalf("Repair = %v", err)
+	}
+	h, err := rep.store.History(ctx)
+	if err != nil || len(h) != 1 || h[0].ID != 1 {
+		t.Fatalf("history %+v, %v; want 0002 deleted", h, err)
+	}
+	deleted := false
+	for _, q := range rep.rec.all() {
+		deleted = deleted || strings.HasPrefix(q, "DELETE FROM `fusescope_schema`.`migrations` WHERE id = 2")
+	}
+	if !deleted {
+		t.Fatal("no DELETE of 0002's row was issued")
+	}
+	// 0002 is pending again and runs.
+	rep.runner.AfterStatement = nil
+	if res, err := rep.runner.Migrate(ctx); err != nil || len(res.Applied) != 1 || res.Applied[0] != 2 {
+		t.Fatalf("Migrate after the repair = %+v, %v", res, err)
+	}
+}

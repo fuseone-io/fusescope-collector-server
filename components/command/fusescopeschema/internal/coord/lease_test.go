@@ -135,6 +135,22 @@ func TestAcquireRefusesAnExpiredLeaseOverAStartedMigration(t *testing.T) {
 	}
 }
 
+// repair takes the lease an interrupted migration left, to record its outcome.
+func TestRepairTakesTheLeaseOverAnInterruptedMigration(t *testing.T) {
+	s := cluster(t)
+	if _, err := newCoordinator(s, "ch-1-1", "A").Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.maps["/shared"].started[1] = true
+	s.advance((6 * time.Minute).Milliseconds())
+	repair := newCoordinator(s, "ch-2-1", "repair")
+	repair.cfg.AllowInterrupted = true
+	held, err := repair.Acquire(context.Background())
+	if err != nil || held.Owner != "repair" || held.Token != 2 {
+		t.Fatalf("Acquire = %+v, %v", held, err)
+	}
+}
+
 func TestRenewExtendsTheLease(t *testing.T) {
 	s := cluster(t)
 	c := newCoordinator(s, "ch-1-1", "A")
@@ -217,7 +233,7 @@ func TestIdentityChecks(t *testing.T) {
 			s.maps["/other"] = &fakeMap{meta: map[string]string{}, tables: map[string]bool{}, started: map[uint64]bool{}, lease: &Lease{}}
 			s.replicas["ch-2-2"] = "/other"
 		}, ErrDivergent},
-		{"a replica that does not answer", func(s *fakeStore) { s.down["ch-2-2"] = true }, ErrDivergent},
+		{"a replica that does not answer", func(s *fakeStore) { s.down["ch-2-2"] = true }, ErrUnavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -318,14 +334,15 @@ func TestReplicaEnumerationFailsClosed(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(*fakeStore)
+		want  error
 	}{
-		{"the listing fails", func(s *fakeStore) { s.listErr = errors.New("system.clusters unreadable") }},
-		{"the cluster lists no replica", func(s *fakeStore) { s.listed = []string{} }},
+		{"the listing fails", func(s *fakeStore) { s.listErr = errors.New("system.clusters unreadable") }, ErrUnavailable},
+		{"the cluster lists no replica", func(s *fakeStore) { s.listed = []string{} }, ErrDivergent},
 		{"one server answers for two replicas", func(s *fakeStore) {
 			delete(s.replicas, "ch-1-2")
 			s.listed = []string{"ch-1-1", "ch-1-1", "ch-2-1", "ch-2-2"}
-		}},
-		{"a replica answers but is not listed", func(s *fakeStore) { s.listed = []string{"ch-1-1", "ch-1-2", "ch-2-1"} }},
+		}, ErrDivergent},
+		{"a replica answers but is not listed", func(s *fakeStore) { s.listed = []string{"ch-1-1", "ch-1-2", "ch-2-1"} }, ErrDivergent},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -335,11 +352,17 @@ func TestReplicaEnumerationFailsClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			tt.setup(s)
-			if err := c.Valid(context.Background()); !errors.Is(err, ErrDivergent) {
-				t.Fatalf("Valid = %v, want ErrDivergent", err)
+			if err := c.Valid(context.Background()); !errors.Is(err, tt.want) {
+				t.Fatalf("Valid = %v, want %v", err, tt.want)
 			}
-			if _, err := newCoordinator(s, "ch-2-1", "B").Acquire(context.Background()); !errors.Is(err, ErrDivergent) {
-				t.Fatalf("Acquire = %v, want ErrDivergent", err)
+			// Unavailable or divergent, the lease is lost for good.
+			s.listErr, s.listed = nil, nil
+			if err := c.Valid(context.Background()); !errors.Is(err, tt.want) {
+				t.Fatalf("Valid once readable again = %v, want the loss to stay", err)
+			}
+			tt.setup(s)
+			if _, err := newCoordinator(s, "ch-2-1", "B").Acquire(context.Background()); !errors.Is(err, tt.want) {
+				t.Fatalf("Acquire = %v, want %v", err, tt.want)
 			}
 		})
 	}
@@ -432,8 +455,8 @@ func TestComparisonBoundsAHangingStoreCall(t *testing.T) {
 	go func() { done <- c.Valid(context.Background()) }()
 	select {
 	case err := <-done:
-		if !errors.Is(err, ErrDivergent) {
-			t.Fatalf("Valid = %v, want ErrDivergent", err)
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("Valid = %v, want ErrUnavailable", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Valid did not return while a store call hung")
