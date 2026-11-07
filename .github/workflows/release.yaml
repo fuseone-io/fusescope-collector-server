@@ -1,7 +1,9 @@
 name: release
 
-# Publishes the container image to GHCR for linux/amd64 and linux/arm64, with
-# provenance and an SBOM, signed keyless with cosign by its multi-arch digest
+# Publishes the container image, the collector and fusescope-schema, to GHCR
+# for linux/amd64 and linux/arm64, with provenance and an SBOM. It is pushed by
+# digest only, with no tag, then checked, then signed keyless with cosign by
+# its multi-arch digest; only then do its tags point at it
 # (the index and each platform's manifest), only for commits whose ci run
 # succeeded: each commit
 # on main as :sha-<commit>, then :main at main's head; each vX.Y.Z tag as
@@ -54,10 +56,10 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             v=${GITHUB_REF_NAME#v}
             echo "version=$v" >> "$GITHUB_OUTPUT"
-            echo "tags=-t $IMAGE:$v -t $IMAGE:${v%.*} -t $IMAGE:latest -t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
+            echo "tags=sha-$sha $v ${v%.*} latest" >> "$GITHUB_OUTPUT"
           else
             echo "version=0.1.0-dev+$sha" >> "$GITHUB_OUTPUT"
-            echo "tags=-t $IMAGE:sha-$sha" >> "$GITHUB_OUTPUT"
+            echo "tags=sha-$sha" >> "$GITHUB_OUTPUT"
           fi
       - name: Free disk space
         # Two platforms' Go builds do not fit beside the runner's preinstalled toolchains.
@@ -66,11 +68,13 @@ jobs:
           df -h / | tail -1
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Build and push
+      - name: Build and push by digest
+        # No tag yet: a tag moves only once the image is checked and signed.
         id: build
         run: |
           docker buildx create --use --name release
-          docker buildx build --push --platform linux/amd64,linux/arm64 \
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
             --metadata-file build-metadata.json \
             --provenance=mode=max --sbom=true \
             --build-arg VERSION=${{ steps.meta.outputs.version }} \
@@ -78,9 +82,29 @@ jobs:
             --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
             --label org.opencontainers.image.version=${{ steps.meta.outputs.version }} \
             --label org.opencontainers.image.licenses=Apache-2.0 \
-            ${{ steps.meta.outputs.tags }} .
+            .
           digest=$(jq -er '."containerimage.digest"' build-metadata.json)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Check the published image before signing it
+        # Every platform's SBOM lists both binaries and has provenance; the
+        # amd64 image, run here, reports the release's version from both.
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "$REF" --format '{{ json .SBOM }}' > sbom.json
+          docker buildx imagetools inspect "$REF" --format '{{ json .Provenance }}' > provenance.json
+          for p in linux/amd64 linux/arm64; do
+            for bin in /fusescope-collector /fusescope-schema; do
+              jq -e --arg p "$p" --arg b "$bin" '.[$p].SPDX.packages | any((.sourceInfo // "") | endswith(": " + $b))' sbom.json >/dev/null \
+                || { echo "::error::the $p SBOM does not list $bin"; exit 1; }
+            done
+            jq -e --arg p "$p" '.[$p].SLSA | type == "object"' provenance.json >/dev/null \
+              || { echo "::error::the $p image has no provenance"; exit 1; }
+          done
+          docker pull -q --platform linux/amd64 "$REF"
+          docker tag "$REF" fusescope-collector:release-check
+          scripts/test-image.sh fusescope-collector:release-check "$VERSION" amd64
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign
         # By digest, never by tag; --recursive also signs each platform's manifest.
@@ -91,6 +115,18 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity "${{ github.server_url }}/${{ github.repository }}/.github/workflows/release.yaml@$GITHUB_REF" \
             >/dev/null
+      - name: Point the tags at the signed digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          for t in $TAGS; do args+=(-t "$IMAGE:$t"); done
+          docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
+          for t in $TAGS; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$t" --format '{{ json .Manifest }}' | jq -r .digest)
+            [ "$got" = "$DIGEST" ] || { echo "::error::$IMAGE:$t points at $got, not the signed $DIGEST"; exit 1; }
+          done
 
   # Points :main at main's current head, one at a time. Each run promotes the
   # head's image, not its own commit's, so a pending run that replaces another

@@ -35,6 +35,7 @@ const (
 )
 
 const usage = `usage: fusescope-schema <command> [flags]
+       fusescope-schema --version
 
 commands:
   migrate                          take the lease and migrate
@@ -64,6 +65,14 @@ type Env struct {
 	Coord          coord.Config // timings; zero fields take the defaults
 }
 
+// versionOf is the build's version, recorded in the history (tool_version).
+func versionOf(env Env) string {
+	if env.Version == "" {
+		return "dev"
+	}
+	return env.Version
+}
+
 // releaseTimeout bounds releasing the lease after the run, signal or not.
 const releaseTimeout = 15 * time.Second
 
@@ -74,6 +83,10 @@ func Run(ctx context.Context, env Env) int {
 		return ExitRefused
 	}
 	cmd, args := env.Args[0], env.Args[1:]
+	if cmd == "--version" || cmd == "version" {
+		fmt.Fprintf(env.Stdout, "fusescope-schema version %s\n", versionOf(env))
+		return ExitOK
+	}
 	c := &command{env: env, name: cmd}
 	var register func(*flag.FlagSet)
 	switch cmd {
@@ -161,12 +174,8 @@ func (c *command) session(ctx context.Context) (*chstore.Store, *migrate.Runner,
 		return nil, nil, nil, err
 	}
 	store := chstore.NewStore(conn, c.cfg.Conn.Cluster)
-	version := c.env.Version
-	if version == "" {
-		version = "dev"
-	}
 	r := &migrate.Runner{Store: store, Migrations: all, Databases: c.cfg.Databases, Cluster: c.cfg.Conn.Cluster,
-		Version: version, Host: c.env.Hostname, AfterStatement: c.env.AfterStatement}
+		Version: versionOf(c.env), Host: c.env.Hostname, AfterStatement: c.env.AfterStatement}
 	return store, r, conn.Close, nil
 }
 

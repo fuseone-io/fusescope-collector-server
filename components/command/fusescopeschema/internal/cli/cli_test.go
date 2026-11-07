@@ -245,6 +245,23 @@ func TestWithLeaseKeepsTheMainError(t *testing.T) {
 	}
 }
 
+// --version prints the version the binary was built with, as the collector's
+// does, and needs no configuration.
+func TestVersion(t *testing.T) {
+	for _, args := range [][]string{{"--version"}, {"version"}} {
+		var out, errOut bytes.Buffer
+		code := Run(context.Background(), Env{Args: args, Getenv: env(nil), Stdout: &out, Stderr: &errOut, Version: "1.2.3+abc"})
+		if code != ExitOK || out.String() != "fusescope-schema version 1.2.3+abc\n" || errOut.Len() > 0 {
+			t.Fatalf("Run(%v) = %d, %q, %q", args, code, out.String(), errOut.String())
+		}
+	}
+	var out bytes.Buffer
+	Run(context.Background(), Env{Args: []string{"--version"}, Getenv: env(nil), Stdout: &out, Stderr: &out})
+	if out.String() != "fusescope-schema version dev\n" {
+		t.Fatalf("without a version: %q", out.String())
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"frobnicate"}, {"repair", "--endpoint", "h:9000"}, {"repair", "--endpoint", "h:9000", "--id", "1", "--mark", "maybe"}, {"check", "--wait", "soon"}} {
 		var out, errOut bytes.Buffer
