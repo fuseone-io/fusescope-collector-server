@@ -7,6 +7,11 @@ How `fusescope-schema` creates and migrates the SigNoz-compatible ClickHouse sch
   object in a cluster that the fork 0.145.0 migrated with replication on (135 objects in
   `signoz_traces`, `signoz_logs`, `signoz_metrics`, `signoz_meter`, `signoz_metadata` and
   `signoz_analytics`), from a black-box run (`observed/0.145.0/run.yaml`).
+- **[obs rows]**: the rows of `signoz_metadata.column_evolution_metadata` the same run left,
+  [`observed/0.145.0/rows/signoz_metadata.column_evolution_metadata.jsonl`](observed/0.145.0/rows/signoz_metadata.column_evolution_metadata.jsonl).
+  The capture records inserts from every user, so it does not tell whether the fork's migrator or
+  its collector wrote them. They are there on every fork install either way, and neither
+  `fusescope-schema`'s `0001` nor `fusescope-collector` writes them (§5.3).
 - **[be]**: the FuseScope backend's DDL and reads, cited where used.
 - **[ch]**: ClickHouse documentation: distributed DDL, KeeperMap, the `system` tables.
 
@@ -279,7 +284,8 @@ tables, then distributed tables, then materialized views after their targets.
   that read to equal the artifact on every replica. Another test runs `0001` on an empty cluster
   and compares the result with the artifact, so neither is checked against itself.
 - The checksum is the SHA-256 of the id, the name, `reversible`, the statements and the
-  post-conditions, and a test pins it. The preconditions are the previous migration's
+  post-conditions, and of the data statements and data conditions when a migration has any
+  (§5.2). A test pins it. The preconditions are the previous migration's
   post-conditions, covered by that migration's checksum. A history row is accepted only with this
   binary's id, name and checksum.
 - The placeholders render as quoted identifiers (`{db:<role>}`, `{cluster}`) or as string
@@ -291,13 +297,98 @@ tables, then distributed tables, then materialized views after their targets.
 
 1. Under the lease, insert `migrations(id, …, state = started, token = <lease token>)`. Strict
    mode fails if the `id` exists.
-2. Run each statement `ON CLUSTER {cluster}` with `distributed_ddl_output_mode = throw` and
+2. Run each DDL statement `ON CLUSTER {cluster}` with `distributed_ddl_output_mode = throw` and
    `distributed_ddl_task_timeout`, so every host has applied it or the statement fails.
    - Before each statement, the runner checks that its lease is still valid (§6) and that every
      replica shows it (§3.2). If either fails, it stops.
-3. Check the post-conditions on every replica.
+   A data statement (§5.2) runs once, through the connected server, as §5.2 says.
+3. Check the post-conditions on every replica: the structure (§4.1) and the data conditions
+   (§5.2).
 4. `ALTER TABLE migrations UPDATE state = 'done', finished_at = now64(3) WHERE id = N AND
    token = <lease token>`. Strict mode makes it fail if another lease generation wrote the row.
+
+### 5.2 Data conditions
+
+A migration may also own rows. It then has, besides its structure:
+
+- **data statements**: `INSERT … SELECT` statements, each marked as data in the migration file.
+  They are not run `ON CLUSTER`. Each runs once, through the connected server, into the
+  Distributed table with `distributed_foreground_insert = 1`. Every row then lands on the shard its
+  sharding key picks, as the backend's inserts do, and the statement returns only after that
+  shard has written it. Every data statement must be idempotent by key: it inserts only the keys
+  that no shard holds yet, so running it again inserts nothing;
+- **data conditions**, cumulative like the post-conditions: a later migration carries them
+  forward unless it changes them. Each condition names:
+  - a replicated local table by role, such as `{db:metadata}.column_evolution_metadata`;
+  - its **key**: the table's whole sorting key, which must equal the `sorting_key` in the
+    structural post-conditions;
+  - its **scope**: a predicate on the key columns, selecting the rows the condition owns. Rows
+    outside the scope are not the condition's business;
+  - its **rows**: the exact set of keys in the scope, and for each a constraint on every other
+    column: a value, or "greater than zero".
+
+  The checksum covers the data statements, each with its kind, and the data conditions. A
+  migration with neither hashes exactly as before, so `0001`'s pinned checksum does not change.
+
+**Reading.** On every replica of every shard, the local table is read in the scope, grouped by
+the key. Every other column is read as the engine merges it: for
+`SimpleAggregateFunction(f, T)`, `f(column)`. Unmerged parts therefore read as the merged row.
+The replicas of one shard must show the same rows. A replica that differs is re-read every
+500 ms for up to 10 seconds, as in §3.2, since replication may lag behind an insert. If it still
+differs, that is a divergence (§7.4). Then the shards are united. A key held by more than one
+shard is a contradiction, since each key must be one row in the cluster.
+
+A data condition is checked in two ways:
+
+- **It holds** when the keys in the scope across the cluster are exactly its rows, each on one
+  shard, and every constraint holds. This is a post-condition. `migrate` checks it after the
+  migration's statements and before `done`, and for every `done` migration on later runs.
+  `check` and `status` check it the same way, and so does `repair --mark done` (§10.1).
+- **It admits** a pending migration when every key in the scope is one of its rows, on one shard,
+  with its constraints met. Missing keys are what the migration inserts. Anything else is a
+  contradiction, refused before the `started` row is written (§7.8), and nothing is written.
+  `check` and `plan` report the same refusal. A partial state is admitted, and only the missing
+  rows are inserted.
+
+### 5.3 `0002 column_evolution_baseline`
+
+A fork install leaves five rows in `signoz_metadata.column_evolution_metadata` [obs rows]. The
+backend reads them, through the Distributed table, ordered by `release_time` (`pkg/telemetrymetadata/metadata.go`,
+about line 2447 [be]), to decide which column holds a field for a time range. With no rows at
+all, it falls back to every candidate column (`SelectEvolutionsForColumns`,
+`pkg/types/querybuildertypes/querybuildertypesv5/evolution.go`, about line 23 [be]): the legacy
+maps. An install by `0001` alone has no rows, so the backend would read it unlike a fork install.
+The rows are the schema's bootstrap state, not telemetry, so `0002` writes them.
+
+- **Statements:** no DDL. One data statement inserts, through
+  `{db:metadata}.distributed_column_evolution_metadata`, the rows below whose key no shard holds.
+  Every v1 row it inserts takes one instant, `toUnixTimestamp64Nano(now64(9))`, evaluated once for
+  the statement. That is nanoseconds, the unit the backend reads (`release_time` is
+  `SimpleAggregateFunction(min, Float64)` holding nanoseconds since the epoch [obs]); `now()` is in
+  seconds and would be read as a time in 1970. The v0 rows take `0`.
+- **Structure:** `0002`'s post-conditions equal `0001`'s.
+- **Data condition:** the table's key is
+  `(signal, column_name, column_type, field_context, field_name, version)` [obs]. The scope is
+  `field_name = '__all__'`, the base rows. Rows for promoted paths, whose `field_name` is the path
+  and which the backend writes itself (`PromotePaths`, `pkg/telemetrymetadata/body_json_metadata.go`,
+  about line 466 [be]), are outside the scope and allowed. The rows, from [obs rows]:
+
+  | `signal` | `column_name` | `column_type` | `field_context` | `version` | `release_time` |
+  |---|---|---|---|---|---|
+  | `logs` | `resource` | `JSON()` | `resource` | 1 | > 0 |
+  | `logs` | `resources_string` | `Map(LowCardinality(String), Float64)` | `resource` | 0 | 0 |
+  | `traces` | `attributes` | `JSON()` | `attribute` | 1 | > 0 |
+  | `traces` | `resource` | `JSON()` | `resource` | 1 | > 0 |
+  | `traces` | `resources_string` | `Map(LowCardinality(String), Float64)` | `resource` | 0 | 0 |
+
+  `field_name` is `__all__` in each. The type text of `resources_string` is as observed, and it
+  is compared byte for byte.
+- **Existing rows are kept:** adoption writes nothing when all five are there, and their
+  `release_time` stays as the fork wrote it. A partial state receives only the missing rows.
+  Another `__all__` row, such as a base row with another type or version, is a contradiction:
+  `0002` refuses before `started` (§7.8). So does a v0 row whose `release_time` is not 0, or a
+  v1 row whose `release_time` is not greater than 0.
+- **Not reversible.** After `0002`, going back to the fork's migrator is not supported (§10).
 
 ## 6. Lease
 
@@ -359,10 +450,14 @@ interrupted, so §7.3 refuses: the next generation never resumes the previous on
 2. a recorded checksum differs from the binary's for the same `id`;
 3. a row is `started` and its `token` is not the current lease's, or the lease has expired: the
    migration was interrupted;
-4. the live schema differs from the post-conditions of the `done` migrations, beyond §8;
+4. the live schema differs from the post-conditions of the `done` migrations, beyond §8, or a
+   `done` migration's data condition does not hold (§5.2);
 5. the starting point is "anything else" (§4);
 6. the precheck fails (§2.1);
-7. the TLS settings break ADR 0004.
+7. the TLS settings break ADR 0004;
+8. a pending migration's data condition does not admit the live rows (§5.2): a key in its scope
+   that is not one of its rows, a key on more than one shard, or a constraint broken. This is
+   checked before the `started` row is written.
 
 `check` reports these the same way (exit 1), with one difference. A `started` row whose token is
 the current lease's, with an unexpired lease, is **in progress**: `check` returns 3, and with
@@ -403,7 +498,16 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 
 | Case | Expected |
 |---|---|
-| Fresh install | the live schema equals [obs]; history `0001` done |
+| Fresh install | the live schema equals [obs] and the five base rows of §5.3 are there, the v1 rows with one `release_time` in nanoseconds within the run and the v0 rows with 0; history `0001` and `0002` done |
+| Adopting a fork install (the fork image run as a black box) | `0001` adopted; `0002` inserts nothing; every row's bytes and `release_time` unchanged |
+| A cluster made by chart 0.162.0 (`fusescope-schema` 0.4.0): `0001` done, the table empty | `0002` inserts the five rows |
+| Some of the five rows present (each subset tested: the v0 rows only, one v1 row only, four of five) | only the missing rows inserted; the present ones unchanged |
+| A contradictory base row (`traces`/`attributes`/`__all__` with another `column_type` or `version`), a v0 row with `release_time` ≠ 0, a v1 row with `release_time` 0, the same key on two shards | refused (§7.8) before `started`; history and table unchanged |
+| Promoted-path rows (`field_name` ≠ `__all__`) before and after `0002` | allowed; untouched |
+| A base row deleted after `0002` is `done` | `check`, `status` and `migrate` refuse (§7.4), naming the row |
+| The response to `0002`'s insert lost (the connection cut after the statement is sent) | exit 4; `status` shows whether the data condition holds; `repair --mark done` succeeds when it holds and is refused when it does not; `--mark absent` refused (not reversible) |
+| A replica of the row's shard lagging behind the insert | the post-condition waits for it within the re-read window, then holds; a replica that never catches up is a divergence |
+| Each `0002` case above, with Keeper and with ZooKeeper, on the 2 × 2 cluster | the same results |
 | Adopting a cluster the fork 0.145.0 migrated (the fork image run as a black box) | `0001` adopted; nothing re-created; data still readable |
 | The same, after the backend promoted fields, added RUM columns and changed retention | adopted (§8); a promoted column with a changed codec is refused |
 | Running `migrate` twice | the second run is a no-op |
@@ -451,13 +555,14 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | Precheck failures (§7.6) | Add what is named, for example the `shard` and `replica` macros, and restart ClickHouse |
 | No `keeper_map_path_prefix` (exit 2, §2.1) | Set it in the server configuration, the same on every replica, and restart ClickHouse; the next run retries. The chart's ClickHouse sets it, and its Job retries while the pods restart |
 | A bad migration | There is no automatic rollback. Restore from backup, or write a forward migration that corrects it |
-| Going back to the fork's migrator | Possible only while the history holds `0001` alone: the fork's own history and the [obs] schema are untouched. After any later migration it is not supported |
+| A data condition broken (§7.4, §7.8) | `status` names each row missing, extra or different. Restore the base row as §5.3 lists it, or delete the contradictory one, by hand, then rerun. Rows outside the scope are never the cause |
+| Going back to the fork's migrator | Possible only while the history holds `0001` alone: the fork's own history and the [obs] schema are untouched. After any later migration, `0002` included, it is not supported |
 
 ### 10.1 `repair`
 
 `repair` takes the lease, checks on every replica, and refuses unless:
 
-- **`--mark done`**: every post-condition of migration `N` holds (§4.1, §8). The row becomes
+- **`--mark done`**: every post-condition of migration `N` holds (§4.1, §5.2, §8). The row becomes
   `done` with the current token.
 - **`--mark absent`**: `N` is reversible, no migration after `N` is recorded, and the live
   structure of every object `N` touches equals `N`'s pre-conditions exactly: created objects
