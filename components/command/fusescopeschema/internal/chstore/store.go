@@ -25,7 +25,9 @@ const Database = coord.Database
 const replicaKey = "hostName() || '/' || toString(serverUUID())"
 
 // ErrNoKeeperMapPrefix: the server has no keeper_map_path_prefix, which no
-// system table shows (§2.1, §11); the bootstrap's first create reports it.
+// system table shows (§2.1, §11); the bootstrap's first create reports it. It
+// is retryable (exit 2): a server restarting with the setting, as the chart's
+// ClickHouse does on an upgrade, has it moments later.
 var ErrNoKeeperMapPrefix = errors.New("KeeperMap is disabled: set keeper_map_path_prefix in the ClickHouse server configuration")
 
 var (

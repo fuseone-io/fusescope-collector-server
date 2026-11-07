@@ -227,7 +227,7 @@ func refusal(err error) bool {
 	for _, target := range []error{
 		migrate.ErrInterrupted, migrate.ErrUnknownMigration, migrate.ErrChecksum, migrate.ErrRepairRefused,
 		coord.ErrInterrupted, coord.ErrUnknownLayout, coord.ErrDivergent, coord.ErrConfig,
-		chstore.ErrPrecheck, chstore.ErrNoKeeperMapPrefix, chstore.ErrInvalidConfig, ErrUsage,
+		chstore.ErrPrecheck, chstore.ErrInvalidConfig, ErrUsage,
 	} {
 		if errors.Is(err, target) {
 			return true
