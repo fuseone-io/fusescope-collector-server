@@ -473,16 +473,24 @@ upgrade that changes neither leaves a running Job alone. An upgrade that changes
 the Job: Helm, or Argo CD, deletes the old one. If the old Job was still migrating, its pod gets
 `SIGTERM`, stops before its next statement, and exits 4 (§1).
 
-- **Symptom.** After such an upgrade, the new Job fails at once with exit 1, interrupted (§7.3).
-  The collectors' init container waits until `check --wait` passes, then fails the pod.
-- **Diagnosis.**
-  - `fusescope-schema status` shows the migration `started`, with its lease token. The lease is
-    free or expired, and the schema differs from that migration's post-conditions, listed.
-  - `fusescope-schema check` exits 1.
+- **Symptom.** The new Job and the collectors' `check --wait` fail with exit 1 while the
+  interrupted row remains (§7.3), and the collectors' pods keep failing in their init container.
+  One window comes first. If the stopped run could not release its lease, the lease stays valid,
+  under the started row's token, until it expires. Until then `check` reports the migration in
+  progress (3) and the new Job waits for the lease.
+- **Diagnosis.** `fusescope-schema status` shows:
+  - the `started` row;
+  - the current lease state;
+  - any differences from that migration's post-conditions.
+
+  `fusescope-schema check` exits 1 once the lease is free or expired.
 - **Do not just run `migrate` again**, by hand or with another `runId`. It refuses the started
   migration (§7.3), and it would not finish it in any case. Never edit the history by hand
   (§10).
-- **Recovery,** by §10.1, from the state `status` shows:
+- **Recovery,** by §10.1, from the state `status` shows. The lease may need to expire before
+  `repair` can acquire it.
+  - **Zero differences** (the run stopped after its last statement, before marking it done): run
+    `repair --id N --mark done` directly.
   - **The migration's statements ran in part.**
     1. Finish the remaining statements by hand. Each is idempotent (§5).
     2. Check that `status` shows no difference from its post-conditions.
