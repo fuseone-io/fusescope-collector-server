@@ -427,8 +427,11 @@ observed on 25.12 with `fusescope-schema` 0.4.0, which then exits 4 with `0001` 
   re-created. Any other definer, no definer, or another `SQL SECURITY` (`NONE`; ClickHouse refuses
   `INVOKER` for a materialized view, observed on 25.12) is drift (§7.4) on that replica. The post
   files store neither field: they are set from the statements when the migrations load.
-- **Changing the migrator's user** after an install leaves the views bound to the previous one,
-  which is then another definer (§10).
+- **Changing the migrator's user** after an install leaves the views bound to the previous one.
+  When that one is not `default`, it is then another definer: drift (§10). When it is `default`
+  (a fork or 0.4.0 install), the views stay accepted under any later user, since the live schema
+  does not tell a legacy `default` from a previous migrator's user; they keep refreshing as
+  `default`.
 
 ## 6. Lease
 
@@ -607,7 +610,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | A bad migration | There is no automatic rollback. Restore from backup, or write a forward migration that corrects it |
 | A data condition broken (§7.4, §7.8) | `status` names each row missing, extra or different. Restore the base row as §5.3 lists it, or delete the contradictory one, by hand, then rerun. Rows outside the scope are never the cause |
 | `0001` started after `UNKNOWN_USER` (0.4.0 on a ClickHouse without `default`, §5.4) | `status` lists the objects still missing. Create them by hand from `0001_base.sql`, connected as the migrator's user, with the placeholders replaced and `DEFINER = default` as `DEFINER = CURRENT_USER`; then `repair --id 1 --mark done` (§10.1) and run 0.4.1 or later |
-| The migrator's user changed after an install (§5.4) | On every replica, `ALTER TABLE signoz_metrics.<view> MODIFY SQL SECURITY DEFINER DEFINER = <new user>` for each of the seven views, then rerun |
+| The migrator's user changed after an install whose views are bound to a user other than `default` (§5.4) | On every replica, `ALTER TABLE signoz_metrics.<view> MODIFY SQL SECURITY DEFINER DEFINER = <new user>` for each of the seven views, then rerun. Views bound to `default` need nothing: they stay accepted |
 | Going back to the fork's migrator | Possible only while the history holds `0001` alone: the fork's own history and the [obs] schema are untouched. After any later migration, `0002` included, it is not supported |
 
 ### 10.1 `repair`
