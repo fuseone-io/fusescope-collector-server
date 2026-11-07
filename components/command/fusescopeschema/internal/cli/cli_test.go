@@ -90,7 +90,7 @@ func TestExitCodes(t *testing.T) {
 	transport := errors.New("connection reset by peer")
 	refusals := []error{
 		drift, migrate.ErrInterrupted, migrate.ErrUnknownMigration, migrate.ErrChecksum, migrate.ErrRepairRefused,
-		coord.ErrInterrupted, coord.ErrUnknownLayout, coord.ErrDivergent, chstore.ErrPrecheck, chstore.ErrNoKeeperMapPrefix,
+		coord.ErrInterrupted, coord.ErrUnknownLayout, coord.ErrDivergent, coord.ErrConfig, chstore.ErrPrecheck, chstore.ErrNoKeeperMapPrefix,
 		chstore.ErrInvalidConfig, ErrUsage,
 	}
 	for _, err := range refusals {
@@ -105,7 +105,7 @@ func TestExitCodes(t *testing.T) {
 			t.Errorf("repair %v = %d, want 1", err, got)
 		}
 	}
-	for _, err := range []error{transport, coord.ErrLeaseTimeout, coord.ErrLeaseLost, context.Canceled, context.DeadlineExceeded} {
+	for _, err := range []error{transport, coord.ErrLeaseTimeout, coord.ErrLeaseLost, coord.ErrUnavailable, context.Canceled, context.DeadlineExceeded} {
 		if got := migrateCode(migrate.Result{}, err); got != ExitRetry {
 			t.Errorf("migrate %v = %d, want 2", err, got)
 		}
@@ -172,6 +172,16 @@ func TestWaitCheck(t *testing.T) {
 			}
 		})
 	}
+	t.Run("an attempt that never answers ends at the deadline", func(t *testing.T) {
+		start := time.Now()
+		got := waitCheck(context.Background(), 200*time.Millisecond, time.Second, func(ctx context.Context) int {
+			<-ctx.Done() // a connection accepted that never replies
+			return ExitRetry
+		}, time.Now, sleepCtx)
+		if got != ExitRetry || time.Since(start) > 5*time.Second {
+			t.Fatalf("waitCheck = %d after %s, want 2 at the deadline", got, time.Since(start))
+		}
+	})
 	t.Run("a signal ends the wait with the last answer", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		var now time.Time

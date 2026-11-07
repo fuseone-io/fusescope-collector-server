@@ -51,9 +51,12 @@ var (
 	// ErrLeaseLost: the holder could not renew in time; it must issue no
 	// further statement (§6).
 	ErrLeaseLost = errors.New("the lease was lost")
-	// ErrDivergent: a replica shows another identity or lease, or the replicas
-	// cannot all be read (§3.2, §7.6).
+	// ErrDivergent: a replica shows another identity, layout or lease than
+	// the others (§3.2, §7.6): a refusal.
 	ErrDivergent = errors.New("a replica is out of step with the cluster's coordination")
+	// ErrUnavailable: a replica, or the listing of them, could not be read.
+	// It still loses a held lease, but a later run may succeed.
+	ErrUnavailable = errors.New("a replica could not be read")
 	// ErrConfig: the timings or the owner would break the fencing.
 	ErrConfig = errors.New("invalid coordination configuration")
 )
@@ -168,7 +171,7 @@ func listReplicas(ctx context.Context, s interface {
 }) ([]string, error) {
 	rs, err := s.Replicas(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: enumerating the replicas: %v", ErrDivergent, err)
+		return nil, fmt.Errorf("%w: enumerating the replicas: %v", ErrUnavailable, err)
 	}
 	if len(rs) == 0 {
 		return nil, fmt.Errorf("%w: the cluster lists no replica", ErrDivergent)
@@ -216,7 +219,7 @@ func (c *Coordinator) checkIdentity(ctx context.Context) error {
 	}
 	ids, err := c.store.ReplicaIdentities(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDivergent, err)
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	want := ids[rs[0]]
 	if err := matchReplicas(rs, ids, func(r, id string) error {
@@ -411,7 +414,7 @@ func (c *Coordinator) compareReplicas(ctx context.Context, want Lease) error {
 		}
 		leases, err := c.store.ReplicaLeases(ctx)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrDivergent, err)
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 		mismatch := matchReplicas(rs, leases, func(r string, got Lease) error {
 			if got != want {

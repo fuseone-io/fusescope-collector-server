@@ -320,11 +320,23 @@ func (c *command) inspect(ctx context.Context, store *chstore.Store, r *migrate.
 	if err := store.Precheck(ctx); err != nil {
 		return migrate.State{}, nil, err
 	}
-	lease, now, err := store.LeaseIfPresent(ctx)
+	// fusescope_schema on every replica first: the history and the lease are
+	// then read on the connected server only.
+	complete, err := coord.InspectLayout(ctx, store)
 	if err != nil {
 		return migrate.State{}, nil, err
 	}
+	var lease *coord.Lease
+	now := int64(0)
+	if complete {
+		if lease, now, err = store.LeaseIfPresent(ctx); err != nil {
+			return migrate.State{}, nil, err
+		}
+	}
 	st, err := r.Inspect(ctx, lease, now)
+	if err == nil && !complete && st.Verdict == migrate.UpToDate {
+		st.Verdict = migrate.Pending // migrate completes the coordination
+	}
 	return st, lease, err
 }
 
@@ -393,7 +405,14 @@ func waitCheck(ctx context.Context, wait, every time.Duration, once func(context
 	now func() time.Time, sleep func(context.Context, time.Duration) error) int {
 	deadline := now().Add(wait)
 	for {
-		code := once(ctx)
+		actx, cancel := ctx, func() {}
+		if wait > 0 {
+			// Each attempt ends at the deadline, so a server that accepts and
+			// never replies cannot hold the wait past it.
+			actx, cancel = context.WithTimeout(ctx, deadline.Sub(now()))
+		}
+		code := once(actx)
+		cancel()
 		if code == ExitOK || code == ExitRefused || wait == 0 || ctx.Err() != nil {
 			return code
 		}

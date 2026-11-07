@@ -30,13 +30,23 @@ The chart's Job runs `migrate`, and the collector's init container runs `check -
   marked `started` decides first: any error after the insert of its row was sent exits 4, unless
   the store proved that no row of this run exists. Then a refusal exits 1, and anything else 2.
 - `check`, `plan` and `status` run the read-only precheck, read, and write nothing, not even the
-  bootstrap of `fusescope_schema`. Their codes:
+  bootstrap of `fusescope_schema`.
+  - They first check `fusescope_schema` on every replica as the bootstrap would, without
+    writing. None of it is valid, and so is this layout only partly, which leaves `migrate`
+    pending. A table this binary does not know, a changed one, another coordination version or
+    another cluster identity is refused.
+  - Only then do they read the history and the lease, on the connected server.
+  - Their codes:
   - `check`: 2 is a connection error. With `--wait` it polls through connection errors, since
-    ClickHouse may come up later, and exits 2 if the last attempt failed.
+    ClickHouse may come up later, and exits 2 if the last attempt failed. Every attempt is bounded
+    by the wait's deadline, so a server that accepts and never replies cannot hold it longer.
   - `plan`: 0, 1 when refused, 2 on a connection error.
   - `status`: 0 whenever it could read, printing a refusal as part of the report; 2 on a connection
     error.
 - A usage or configuration error exits 1 before connecting.
+- A replica that cannot be read, including the listing of the replicas, is retryable: exit 2, or
+  4 once a migration is started. It still loses a held lease (§6). A replica that answers with
+  another identity, layout or lease is a divergence and exits 1.
 - The first `SIGINT` or `SIGTERM` stops a run before its next statement. The current statement may
   finish, the lease is released, and the exit code follows the table: 4 once a migration was
   started. A second signal ends the process.

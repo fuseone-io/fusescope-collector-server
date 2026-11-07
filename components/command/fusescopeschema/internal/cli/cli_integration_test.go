@@ -315,3 +315,65 @@ func TestIntegrationSIGTERM(t *testing.T) {
 		t.Fatalf("history %+v, want 0001 started", h)
 	}
 }
+
+// check, plan and status read fusescope_schema on every replica: an unknown
+// table on one replica is refused, partial coordination is pending; neither
+// writes.
+func TestIntegrationReadOnlyCommandsInspectTheCoordination(t *testing.T) {
+	addrs := clusterAddrs(t)
+	clean(t, addrs[0])
+	bg := context.Background()
+	requireCode(t, run(bg, t, addrs[0], nil, "migrate"), ExitOK, "migrate")
+
+	other := conn(t, addrs[2])
+	if err := other.Exec(bg, "CREATE TABLE fusescope_schema.probe (k String) ENGINE = Memory"); err != nil {
+		t.Fatal(err)
+	}
+	for cmd, want := range map[string]int{"check": ExitRefused, "plan": ExitRefused, "status": ExitOK} {
+		r := run(bg, t, addrs[0], nil, cmd)
+		requireCode(t, r, want, cmd+" with an unknown table on one replica")
+		requireNoWrites(t, r)
+		if !strings.Contains(r.stdout+r.stderr, "unknown table fusescope_schema.probe") {
+			t.Fatalf("%s does not name the table: %q %q", cmd, r.stdout, r.stderr)
+		}
+	}
+	if err := other.Exec(bg, "DROP TABLE fusescope_schema.probe SYNC"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := conn(t, addrs[3]).Exec(bg, "DROP TABLE fusescope_schema.meta SYNC"); err != nil {
+		t.Fatal(err)
+	}
+	r := run(bg, t, addrs[0], nil, "check")
+	requireCode(t, r, ExitPending, "check with meta missing on one replica")
+	requireNoWrites(t, r)
+	requireCode(t, run(bg, t, addrs[0], nil, "migrate"), ExitOK, "migrate completes the coordination")
+	requireCode(t, run(bg, t, addrs[0], nil, "check"), ExitOK, "check after")
+}
+
+// A replica that is down is retryable: 2, also once --wait passes.
+func TestIntegrationAReplicaDownIsRetryable(t *testing.T) {
+	addrs := clusterAddrs(t)
+	compose := os.Getenv("FUSESCOPE_SCHEMA_TEST_COMPOSE")
+	if compose == "" {
+		if os.Getenv("FUSESCOPE_SCHEMA_TEST_REQUIRED") == "1" {
+			t.Fatal("FUSESCOPE_SCHEMA_TEST_COMPOSE is not set")
+		}
+		t.Skip("FUSESCOPE_SCHEMA_TEST_COMPOSE not set")
+	}
+	clean(t, addrs[0])
+	bg := context.Background()
+	requireCode(t, run(bg, t, addrs[0], nil, "migrate"), ExitOK, "migrate")
+	dc := func(args ...string) {
+		if out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("docker compose %v: %v\n%s", args, err, out)
+		}
+	}
+	dc("stop", "ch-2-2")
+	t.Cleanup(func() { dc("start", "ch-2-2") })
+	for _, args := range [][]string{{"check"}, {"check", "--wait", "3s"}, {"migrate"}} {
+		requireCode(t, run(bg, t, addrs[0], nil, args...), ExitRetry, strings.Join(args, " ")+" with ch-2-2 down")
+	}
+	dc("start", "ch-2-2")
+	requireCode(t, run(bg, t, addrs[0], nil, "check", "--wait", "2m"), ExitOK, "check --wait once ch-2-2 is back")
+}

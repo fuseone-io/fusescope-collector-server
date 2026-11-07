@@ -146,7 +146,7 @@ func replicaLayouts(ctx context.Context, s LayoutStore) (map[string]map[string]T
 	}
 	layouts, err := s.ReplicaLayouts(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDivergent, err)
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err := matchReplicas(rs, layouts, func(string, map[string]TableLayout) error { return nil }); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDivergent, err)
@@ -186,7 +186,7 @@ func checkStructures(layouts map[string]map[string]TableLayout) error {
 func checkVersion(ctx context.Context, s LayoutStore, required bool) error {
 	versions, err := s.ReplicaMeta(ctx, "coordination")
 	if err != nil {
-		return fmt.Errorf("%w: reading the coordination version: %v", ErrDivergent, err)
+		return fmt.Errorf("%w: reading the coordination version: %v", ErrUnavailable, err)
 	}
 	for _, r := range slices.Sorted(maps.Keys(versions)) {
 		if v := versions[r]; v != coordinationVersion {
@@ -225,7 +225,7 @@ func checkComplete(ctx context.Context, s LayoutStore) error {
 	}
 	ids, err := s.ReplicaMeta(ctx, "cluster_id")
 	if err != nil {
-		return fmt.Errorf("%w: reading the cluster identity: %v", ErrDivergent, err)
+		return fmt.Errorf("%w: reading the cluster identity: %v", ErrUnavailable, err)
 	}
 	rs, err := listReplicas(ctx, s)
 	if err != nil {
