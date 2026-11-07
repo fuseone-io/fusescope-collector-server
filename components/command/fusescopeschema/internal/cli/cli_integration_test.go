@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -413,46 +415,55 @@ func dockerCompose(compose string, args ...string) error {
 }
 
 // The coordination service, one node or one member of an ensemble, stopped
-// during a migration and started again (§9): the run exits by §1, the rerun
-// follows §7, and the failed update leaves the history as it was.
+// during a migration and started again (§9). Safety holds whatever the
+// availability: 0 only with an ensemble, and then everything is done; 4
+// leaves 0001 started with no statement sent after the lease was lost, the
+// rerun refused and recovery only through §7. Never 1, 2 or a hang.
 func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	addrs := clusterAddrs(t)
 	compose, members := composeOf(t)
 	clean(t, addrs[0])
+	bg := context.Background()
 	// The member the migrator's server holds its session on: losing it fails
 	// that server's requests in flight, not only a quiet follower's.
-	rows, err := conn(t, addrs[0]).Rows(context.Background(), "SELECT host FROM system.zookeeper_connection", 1)
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("system.zookeeper_connection: %v %v", rows, err)
+	rows, err := conn(t, addrs[0]).Rows(bg, "SELECT host FROM system.zookeeper_connection", 1)
+	if err != nil || len(rows) != 1 || !slices.Contains(members, rows[0][0]) {
+		t.Fatalf("system.zookeeper_connection: %v %v, members %v", rows, err, members)
 	}
 	victim, single := rows[0][0], len(members) == 1
 	t.Cleanup(func() { _ = dockerCompose(compose, "start", victim) })
-	bg := context.Background()
 	var restarted sync.WaitGroup
+	var othersUp error
 	hook := func(_ uint32, i int) error {
-		if i == 20 {
-			if err := dockerCompose(compose, "stop", victim); err != nil {
-				return err
-			}
-			restarted.Add(1)
-			go func() {
-				defer restarted.Done()
-				time.Sleep(8 * time.Second)
-				if err := dockerCompose(compose, "start", victim); err != nil {
-					t.Error(err)
-				}
-			}()
+		if i != 20 {
+			return nil
 		}
+		if err := dockerCompose(compose, "stop", victim); err != nil {
+			return err
+		}
+		othersUp = othersRunning(compose, members, victim)
+		restarted.Add(1)
+		go func() {
+			defer restarted.Done()
+			time.Sleep(8 * time.Second)
+			if err := dockerCompose(compose, "start", victim); err != nil {
+				t.Error(err)
+			}
+		}()
 		return nil
 	}
 	short := coord.Config{LeaseFor: 20 * time.Second, RenewEvery: 2 * time.Second, LostAfter: 5 * time.Second, RereadFor: 5 * time.Second, ClockSkew: 5 * time.Second}
-	r := runEnv(bg, t, addrs[0], func(e *Env) { e.AfterStatement, e.Coord = hook, short }, "migrate")
+	ctx, cancel := context.WithTimeout(bg, 5*time.Minute)
+	defer cancel()
+	r := runEnv(ctx, t, addrs[0], func(e *Env) { e.AfterStatement, e.Coord = hook, short }, "migrate")
 	restarted.Wait()
-	t.Logf("migrate with %s stopped (%d members): exit %d\n%s", victim, len(members), r.code, r.stderr)
-	if single && r.code == ExitOK {
-		t.Fatal("migrate succeeded without its only coordination node")
+	if ctx.Err() != nil {
+		t.Fatalf("migrate hung past 5 minutes: %s", r.stderr)
 	}
-	// The service is back: check answers again, with no error.
+	if othersUp != nil {
+		t.Fatal(othersUp)
+	}
+	t.Logf("migrate with %s stopped (%d members): exit %d\n%s", victim, len(members), r.code, r.stderr)
 	if c := run(bg, t, addrs[1], nil, "check", "--wait", "3m"); c.code == ExitRetry {
 		t.Fatalf("check after the restart = 2: %s", c.stderr)
 	}
@@ -467,12 +478,17 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 		}
 		return out
 	}
-	switch r.code {
-	case ExitOK:
+	switch {
+	case r.code == ExitOK && !single:
+		if h := history(); len(h) != 1 || !strings.Contains(h[0], "Done:true") {
+			t.Fatalf("history after exit 0: %v, want 0001 done", h)
+		}
 		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after a migrate that rode out the loss")
-	case ExitRetry:
-		requireCode(t, run(bg, t, addrs[1], nil, "migrate", "--lock-timeout", "2m"), ExitOK, "the rerun after exit 2")
-	case ExitStarted:
+		if again := run(bg, t, addrs[3], nil, "migrate"); again.code != ExitOK || strings.Contains(again.stdout, "applied") {
+			t.Fatalf("a second migrate = %d: %s", again.code, again.stdout)
+		}
+	case r.code == ExitStarted:
+		requireNoStatementAfterTheLoss(t, r)
 		before := history()
 		if len(before) != 1 || !strings.Contains(before[0], "Done:false") {
 			t.Fatalf("history after exit 4: %v, want 0001 started", before)
@@ -482,7 +498,66 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 		if after := history(); strings.Join(after, "|") != strings.Join(before, "|") {
 			t.Fatalf("the history changed: %v, then %v", before, after)
 		}
+		// Recovery through §7 only: finish by hand, repair, migrate.
+		all, err := migrations.All()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := conn(t, addrs[0])
+		for _, stmt := range all[0].Statements {
+			if err := c.ExecDiscard(bg, migrations.Render(stmt, schema.DefaultDatabases, "cluster")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		requireCode(t, run(bg, t, addrs[2], nil, "repair", "--id", "1", "--mark", "done", "--lock-timeout", "2m"), ExitOK, "repair --mark done")
+		requireCode(t, run(bg, t, addrs[1], nil, "migrate"), ExitOK, "migrate after the repair")
+		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after the repair")
 	default:
-		t.Fatalf("migrate with the coordination lost = %d, want 0, 2 or 4", r.code)
+		t.Fatalf("migrate with the coordination lost (%d members) = %d, want 4, or 0 with an ensemble", len(members), r.code)
+	}
+}
+
+// othersRunning requires every member but the one stopped to be running.
+func othersRunning(compose string, members []string, stopped string) error {
+	out, err := exec.Command("docker", "compose", "-f", compose, "ps", "--status", "running", "--services").Output()
+	if err != nil {
+		return err
+	}
+	running := strings.Fields(string(out))
+	for _, m := range members {
+		if m == stopped && slices.Contains(running, m) {
+			return fmt.Errorf("%s is still running", m)
+		}
+		if m != stopped && !slices.Contains(running, m) {
+			return fmt.Errorf("%s stopped too, only %s should have", m, stopped)
+		}
+	}
+	return nil
+}
+
+var stmtErrRe = regexp.MustCompile(`0001 base: (before )?statement (\d+)`)
+
+// requireNoStatementAfterTheLoss: the run's error names the statement it
+// stopped at, and the run sent exactly the statements before it (the lease
+// lost before it), or up to it (it failed itself).
+func requireNoStatementAfterTheLoss(t *testing.T, r result) {
+	t.Helper()
+	m := stmtErrRe.FindStringSubmatch(r.stderr)
+	if m == nil {
+		t.Fatalf("the error names no statement: %s", r.stderr)
+	}
+	n, _ := strconv.Atoi(m[2])
+	want := n
+	if m[1] != "" {
+		want = n - 1
+	}
+	sent := 0
+	for _, q := range r.queries {
+		if strings.HasPrefix(q, "CREATE ") && strings.Contains(q, " ON CLUSTER ") && !strings.Contains(q, "fusescope_schema") {
+			sent++
+		}
+	}
+	if sent != want {
+		t.Fatalf("%d statements sent, the run stopped at statement %d (%q): want %d", sent, n, m[0], want)
 	}
 }
