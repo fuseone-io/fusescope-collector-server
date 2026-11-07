@@ -55,6 +55,10 @@ func stringLiteral(s string) string {
 
 func exprCheck(want, got string) check { return check{want: want, got: got} }
 
+func position(o Object, name string) int {
+	return slices.IndexFunc(o.Columns, func(c Column) bool { return c.Name == name })
+}
+
 func hasColumn(o Object, name string) (Column, bool) {
 	i := slices.IndexFunc(o.Columns, func(c Column) bool { return c.Name == name })
 	if i < 0 {
@@ -75,7 +79,8 @@ func allowedColumn(table string, c Column, live Object) [][]check {
 	}
 	if base, ok := strings.CutSuffix(c.Name, "_exists"); ok && c.Type == "Bool" {
 		if mapColumn, key, _, ok := promoted(base); ok {
-			if _, present := hasColumn(live, base); present {
+			// The backend adds the _exists column right after its column.
+			if position(live, base) >= 0 && position(live, base) < position(live, c.Name) {
 				alts = append(alts, []check{exprCheck("if(mapContains("+mapColumn+", "+stringLiteral(key)+") != 0, true, false)", c.DefaultExpression)})
 			}
 		}
@@ -87,18 +92,120 @@ func allowedColumn(table string, c Column, live Object) [][]check {
 // _retention_days_cold DEFAULT the custom logs retention rewrites.
 var retentionTables = []string{"logs.logs_v2", "logs.distributed_logs_v2", "logs.logs_v2_resource", "logs.distributed_logs_v2_resource"}
 
-// allowedColumnChange allows a new DEFAULT value of a retention column, its
-// type and everything else unchanged.
+// resourceRetentionTables match their rules on labels rather than on
+// resources_string.
+var resourceRetentionTables = []string{"logs.logs_v2_resource", "logs.distributed_logs_v2_resource"}
+
+var (
+	daysRe         = regexp.MustCompile(`^\d+$`)
+	literalRe      = regexp.MustCompile(`^'(?:[^'\\]|\\.)*'$`)
+	resourcesKeyRe = regexp.MustCompile(`^resources_string\[('(?:[^'\\]|\\.)*')\]$`)
+	labelsKeyRe    = regexp.MustCompile(`^JSONExtractString\(labels, ('(?:[^'\\]|\\.)*')\)$`)
+)
+
+// allowedColumnChange allows a new DEFAULT of a retention column, its type
+// and everything else unchanged: for _retention_days_cold a number, for
+// _retention_days a number or the multiIf the custom retention builds
+// (buildMultiIfExpression).
 func allowedColumnChange(table string, want, got Column) [][]check {
 	if !slices.Contains(retentionTables, table) || want.Name != "_retention_days" && want.Name != "_retention_days_cold" {
 		return nil
 	}
 	same := want
 	same.DefaultExpression = got.DefaultExpression
-	if got != same || want.Type != "UInt16" || got.DefaultKind != "DEFAULT" || got.DefaultExpression == "" {
+	if got != same || want.Type != "UInt16" || got.DefaultKind != "DEFAULT" {
 		return nil
 	}
-	return [][]check{{}}
+	if daysRe.MatchString(got.DefaultExpression) {
+		return [][]check{{}}
+	}
+	if want.Name != "_retention_days" {
+		return nil
+	}
+	rebuilt, ok := retentionMultiIf(got.DefaultExpression, slices.Contains(resourceRetentionTables, table))
+	if !ok {
+		return nil
+	}
+	return [][]check{{exprCheck(rebuilt, got.DefaultExpression)}}
+}
+
+// retentionMultiIf reads the rules out of a canonical multiIf, tolerating the
+// parentheses the server adds, and rebuilds the text the backend writes for
+// them: multiIf(<key> IN (<values>) AND …, <days>, …, <default days>), where
+// <key> is resources_string['k'], or JSONExtractString(labels, 'k') on the
+// resource tables. Anything that does not read as such rules fails.
+func retentionMultiIf(expr string, resource bool) (string, bool) {
+	inner, ok := call(expr, "multiIf")
+	if !ok {
+		return "", false
+	}
+	args, err := SplitTop(inner, ",")
+	if err != nil || len(args) < 3 || len(args)%2 == 0 || !daysRe.MatchString(args[len(args)-1]) {
+		return "", false
+	}
+	keyRe := resourcesKeyRe
+	if resource {
+		keyRe = labelsKeyRe
+	}
+	var out []string
+	for i := 0; i+1 < len(args); i += 2 {
+		if !daysRe.MatchString(args[i+1]) {
+			return "", false
+		}
+		parts, err := SplitTop(unwrap(args[i]), " AND ")
+		if err != nil {
+			return "", false
+		}
+		var conds []string
+		for _, part := range parts {
+			sides, err := SplitTop(unwrap(part), " IN ")
+			if err != nil || len(sides) != 2 {
+				return "", false
+			}
+			key := keyRe.FindStringSubmatch(unwrap(sides[0]))
+			values, err := SplitTop(unwrap(sides[1]), ",")
+			if key == nil || err != nil {
+				return "", false
+			}
+			for _, v := range values {
+				if !literalRe.MatchString(v) {
+					return "", false
+				}
+			}
+			left := "resources_string[" + key[1] + "]"
+			if resource {
+				left = "JSONExtractString(labels, " + key[1] + ")"
+			}
+			conds = append(conds, left+" IN ("+strings.Join(values, ", ")+")")
+		}
+		out = append(out, strings.Join(conds, " AND "), args[i+1])
+	}
+	return "multiIf(" + strings.Join(append(out, args[len(args)-1]), ", ") + ")", true
+}
+
+// call returns the arguments of s when s is exactly one call of fn.
+func call(s, fn string) (string, bool) {
+	rest, ok := strings.CutPrefix(s, fn+"(")
+	if !ok || !strings.HasSuffix(rest, ")") {
+		return "", false
+	}
+	inner := rest[:len(rest)-1]
+	if _, err := SplitTop(inner, ","); err != nil {
+		return "", false
+	}
+	return inner, true
+}
+
+// unwrap removes parentheses around the whole of s.
+func unwrap(s string) string {
+	for {
+		s = strings.TrimSpace(s)
+		inner, ok := call(s, "")
+		if !ok {
+			return s
+		}
+		s = inner
+	}
 }
 
 // indexTypeRe is the index types the backend accepts (promotetypes'

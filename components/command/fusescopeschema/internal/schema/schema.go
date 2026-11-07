@@ -37,6 +37,9 @@ const (
 	KindTable            Kind = "table"
 	KindDistributed      Kind = "distributed"
 	KindMaterializedView Kind = "materialized_view"
+	// KindDictionary is compared only as present or not: no migration creates
+	// a dictionary yet, so one found is an extra object (§4.1).
+	KindDictionary Kind = "dictionary"
 )
 
 // Snapshot is one replica's telemetry schema, keyed by "<role>.<name>". Every

@@ -6,6 +6,7 @@ package schema
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -105,6 +106,16 @@ func promotedString(key string) []Column {
 	}
 }
 
+func retention(table, column, def string) func(Snapshot) Snapshot {
+	return func(s Snapshot) Snapshot {
+		o := s[table]
+		i := slices.IndexFunc(o.Columns, func(c Column) bool { return c.Name == column })
+		o.Columns[i].DefaultExpression = def
+		s[table] = o
+		return s
+	}
+}
+
 // Each §8 pattern, with a nearly identical change that must still count.
 func TestAllowList(t *testing.T) {
 	number := Column{Name: "attribute_number_http$$status", Type: "Float64", DefaultKind: "DEFAULT", DefaultExpression: "attributes_number['http.status']", Codec: "CODEC(ZSTD(1))"}
@@ -146,6 +157,26 @@ func TestAllowList(t *testing.T) {
 		}, false},
 		{"promoted column on a table §8 does not name", func(s Snapshot) Snapshot {
 			return withColumns(s, "logs.tag_attributes_v2", promotedString("http.route")[0])
+		}, false},
+		{"promoted columns of two keys, interleaved with their _exists", func(s Snapshot) Snapshot {
+			return withColumns(s, "logs.logs_v2", append(promotedString("a"), promotedString("b")...)...)
+		}, true},
+		{"a promoted column moved before a base column", func(s Snapshot) Snapshot {
+			o := s["logs.logs_v2"]
+			o.Columns = append(promotedString("http.route"), o.Columns...)
+			s["logs.logs_v2"] = o
+			return s
+		}, false},
+		{"a promoted column between base columns", func(s Snapshot) Snapshot {
+			o := s["logs.logs_v2"]
+			cols := append([]Column{o.Columns[0]}, promotedString("http.route")...)
+			o.Columns = append(cols, o.Columns[1:]...)
+			s["logs.logs_v2"] = o
+			return s
+		}, false},
+		{"an _exists column before its promoted column", func(s Snapshot) Snapshot {
+			cols := promotedString("http.route")
+			return withColumns(s, "logs.logs_v2", cols[1], cols[0])
 		}, false},
 		{"an _exists column without its promoted column", func(s Snapshot) Snapshot {
 			return withColumns(s, "logs.logs_v2", promotedString("http.route")[1])
@@ -230,12 +261,32 @@ func TestAllowList(t *testing.T) {
 		{"_retention_days DEFAULT changed on the logs and logs-resource tables", func(s Snapshot) Snapshot {
 			for _, table := range []string{"logs.logs_v2", "logs.distributed_logs_v2", "logs.logs_v2_resource"} {
 				o := s[table]
-				o.Columns[len(o.Columns)-2].DefaultExpression = "multiIf(resources_string['service.name'] IN ['api'], 30, 15)"
+				o.Columns[len(o.Columns)-2].DefaultExpression = "multiIf(resources_string['service.name'] IN ('api'), 30, 15)"
+				if table == "logs.logs_v2_resource" {
+					o.Columns[len(o.Columns)-2].DefaultExpression = "multiIf(JSONExtractString(labels, 'service.name') IN ('api'), 30, 15)"
+				}
 				o.Columns[len(o.Columns)-1].DefaultExpression = "7"
 				s[table] = o
 			}
 			return s
 		}, true},
+		{"_retention_days as a plain number", retention("logs.logs_v2", "_retention_days", "30"), true},
+		{"_retention_days as the backend's multiIf on a resource table", retention("logs.logs_v2_resource", "_retention_days", "multiIf(JSONExtractString(labels, 'service.name') IN ('api'), 30, 15)"), true},
+		{"_retention_days as a multiIf with several rules and conditions", retention("logs.distributed_logs_v2", "_retention_days",
+			"multiIf(resources_string['service.name'] IN ('api', 'web') AND resources_string['env'] IN ('prod'), 30, resources_string['team'] IN ('a'), 7, 15)"), true},
+		{"_retention_days as arithmetic", retention("logs.logs_v2", "_retention_days", "7 + 1"), false},
+		{"_retention_days as an arbitrary function", retention("logs.logs_v2", "_retention_days", "toUInt16(rand() % 30)"), false},
+		{"_retention_days as a multiIf over attributes", retention("logs.logs_v2", "_retention_days", "multiIf(attributes_string['service.name'] IN ('api'), 30, 15)"), false},
+		{"_retention_days as a multiIf with labels on the logs table", retention("logs.logs_v2", "_retention_days", "multiIf(JSONExtractString(labels, 'service.name') IN ('api'), 30, 15)"), false},
+		{"_retention_days as a multiIf with = instead of IN", retention("logs.logs_v2", "_retention_days", "multiIf(resources_string['service.name'] = 'api', 30, 15)"), false},
+		{"_retention_days as a multiIf with OR", retention("logs.logs_v2", "_retention_days", "multiIf(resources_string['a'] IN ('x') OR resources_string['b'] IN ('y'), 30, 15)"), false},
+		{"_retention_days as a multiIf whose days are computed", retention("logs.logs_v2", "_retention_days", "multiIf(resources_string['a'] IN ('x'), 30 * 2, 15)"), false},
+		{"_retention_days as a multiIf without a default", retention("logs.logs_v2", "_retention_days", "multiIf(resources_string['a'] IN ('x'), 30)"), false},
+		{"_retention_days as a multiIf matching a computed value", retention("logs.logs_v2", "_retention_days", "multiIf(resources_string['a'] IN (lower('X')), 30, 15)"), false},
+		{"_retention_days_cold as a number", retention("logs.logs_v2", "_retention_days_cold", "7"), true},
+		{"_retention_days_cold as a multiIf", retention("logs.logs_v2", "_retention_days_cold", "multiIf(resources_string['a'] IN ('x'), 30, 15)"), false},
+		{"_retention_days_cold as arithmetic", retention("logs.logs_v2", "_retention_days_cold", "7 + 1"), false},
+		{"_retention_days_cold negative", retention("logs.logs_v2", "_retention_days_cold", "-1"), false},
 		{"_retention_days with another type", func(s Snapshot) Snapshot {
 			o := s["logs.logs_v2"]
 			o.Columns[len(o.Columns)-2].Type = "UInt32"

@@ -218,13 +218,25 @@ func compareColumns(replica, name string, want, got Object) []pending {
 	for _, c := range want.Columns {
 		wantByName[c.Name] = c
 	}
+	// The backend adds columns with ADD COLUMN, at the end: an extra column
+	// before an expected one is drift whatever its shape.
+	lastExpected := -1
+	for i, c := range got.Columns {
+		if _, expected := wantByName[c.Name]; expected {
+			lastExpected = i
+		}
+	}
 	var kept []Column
-	for _, c := range got.Columns {
+	for i, c := range got.Columns {
 		if _, expected := wantByName[c.Name]; expected {
 			kept = append(kept, c)
 			continue
 		}
-		out = append(out, pending{diff: Diff{Replica: replica, Object: name, Kind: Extra, Part: "column " + c.Name, Got: c.String()}, alts: allowedColumn(name, c, got)})
+		p := pending{diff: Diff{Replica: replica, Object: name, Kind: Extra, Part: "column " + c.Name, Got: c.String()}}
+		if i > lastExpected {
+			p.alts = allowedColumn(name, c, got)
+		}
+		out = append(out, p)
 	}
 	gotByName := map[string]Column{}
 	for _, c := range kept {

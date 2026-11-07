@@ -137,7 +137,7 @@ func TestIntegrationBackendChangesAreAllowed(t *testing.T) {
 		exec(t, c,
 			"ALTER TABLE signoz_logs."+table+" ON CLUSTER cluster ADD COLUMN IF NOT EXISTS `attribute_string_http$$route` String DEFAULT attributes_string['http.route'] CODEC(ZSTD(1))",
 			"ALTER TABLE signoz_logs."+table+" ON CLUSTER cluster ADD COLUMN IF NOT EXISTS `attribute_string_http$$route_exists` bool DEFAULT if(mapContains(attributes_string, 'http.route') != 0, true, false) CODEC(ZSTD(1))",
-			"ALTER TABLE signoz_logs."+table+" ON CLUSTER cluster MODIFY COLUMN _retention_days UInt16 DEFAULT multiIf(resources_string['service.name'] IN ['api'], 30, 15)",
+			"ALTER TABLE signoz_logs."+table+" ON CLUSTER cluster MODIFY COLUMN _retention_days UInt16 DEFAULT multiIf(resources_string['service.name'] IN ('api', 'web') AND resources_string['env'] IN ('prod'), 30, resources_string['team'] IN ('a'), 7, 15)",
 			"ALTER TABLE signoz_logs."+table+" ON CLUSTER cluster MODIFY COLUMN _retention_days_cold UInt16 DEFAULT 7",
 		)
 	}
@@ -147,6 +147,9 @@ func TestIntegrationBackendChangesAreAllowed(t *testing.T) {
 			"ALTER TABLE `signoz_traces`.`"+table+"` ON CLUSTER `cluster` ADD COLUMN IF NOT EXISTS `resource_string_fusescope$$rum$$platform` String DEFAULT resources_string['fusescope.rum.platform'] CODEC(ZSTD(1))",
 			"ALTER TABLE `signoz_traces`.`"+table+"` ON CLUSTER `cluster` ADD COLUMN IF NOT EXISTS `resource_string_fusescope$$rum$$platform_exists` Bool DEFAULT if(mapContains(resources_string, 'fusescope.rum.platform') != 0, true, false) CODEC(ZSTD(1))",
 		)
+	}
+	for _, table := range []string{"logs_v2_resource", "distributed_logs_v2_resource"} {
+		exec(t, c, "ALTER TABLE signoz_logs."+table+" ON CLUSTER cluster MODIFY COLUMN _retention_days UInt16 DEFAULT multiIf(JSONExtractString(labels, 'service.name') IN ('api'), 30, 15)")
 	}
 	exec(t, c,
 		"ALTER TABLE signoz_logs.logs_v2 ON CLUSTER cluster ADD INDEX IF NOT EXISTS `attribute_string_http$$route_idx` (`attribute_string_http$$route`) TYPE bloom_filter(0.01)  GRANULARITY 64",
@@ -174,13 +177,16 @@ func TestIntegrationNearlyAllowedChangesAreDrift(t *testing.T) {
 		"ALTER TABLE signoz_logs.logs_v2 ON CLUSTER cluster ADD COLUMN `attribute_string_http$$route` String DEFAULT attributes_string['http.route'] CODEC(ZSTD(3))",
 		"ALTER TABLE signoz_logs.logs_v2 ON CLUSTER cluster ADD INDEX `body_v2.user.name_string_tokenbf_v1` assumeNotNull(dynamicElement(body_v2.user.name, 'String')) TYPE tokenbf_v1(10000, 2, 0) GRANULARITY 1",
 		"ALTER TABLE signoz_traces.trace_summary ON CLUSTER cluster MODIFY TTL toDateTime(start) + INTERVAL 2592000 SECOND DELETE SETTINGS materialize_ttl_after_modify=0",
+		"ALTER TABLE signoz_logs.logs_v2_resource ON CLUSTER cluster MODIFY COLUMN _retention_days UInt16 DEFAULT 7 + 1",
+		"ALTER TABLE signoz_traces.signoz_index_v3 ON CLUSTER cluster ADD COLUMN `attribute_string_zz$$first` String DEFAULT attributes_string['zz.first'] CODEC(ZSTD(1)) FIRST",
 	)
 	diffs := compare(t, s, want)
 	parts := map[string]int{}
 	for _, d := range diffs {
 		parts[d.Object+" "+d.Part]++
 	}
-	for _, p := range []string{"logs.logs_v2 column attribute_string_http$$route", "logs.logs_v2 index body_v2.user.name_string_tokenbf_v1", "traces.trace_summary ttl"} {
+	for _, p := range []string{"logs.logs_v2 column attribute_string_http$$route", "logs.logs_v2 index body_v2.user.name_string_tokenbf_v1", "traces.trace_summary ttl",
+		"logs.logs_v2_resource column _retention_days", "traces.signoz_index_v3 column attribute_string_zz$$first"} {
 		if parts[p] != 4 {
 			t.Errorf("%s: drift on %d replicas, want 4 (diffs %v)", p, parts[p], diffs)
 		}
@@ -194,5 +200,20 @@ func TestIntegrationDriftOnOneReplicaCounts(t *testing.T) {
 	diffs := compare(t, s, want)
 	if len(diffs) != 1 || diffs[0].Part != "column extra" || !strings.HasPrefix(diffs[0].Replica, "ch-2-1/") {
 		t.Fatalf("diffs %v, want one extra column on ch-2-1", diffs)
+	}
+}
+
+// A dictionary no migration creates is an extra object.
+func TestIntegrationADictionaryIsAnExtraObject(t *testing.T) {
+	s, _, want := observedCluster(t)
+	exec(t, s.conn, "CREATE DICTIONARY signoz_logs.extra_dict ON CLUSTER cluster (k UInt64, v String) PRIMARY KEY k SOURCE(NULL()) LAYOUT(FLAT()) LIFETIME(0)")
+	diffs := compare(t, s, want)
+	if len(diffs) != 4 {
+		t.Fatalf("diffs %v, want the dictionary extra on 4 replicas", diffs)
+	}
+	for _, d := range diffs {
+		if d.Object != "logs.extra_dict" || d.Kind != schema.Extra || d.Got != string(schema.KindDictionary) {
+			t.Fatalf("diff %v", d)
+		}
 	}
 }

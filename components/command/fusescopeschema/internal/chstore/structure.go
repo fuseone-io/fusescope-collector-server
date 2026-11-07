@@ -44,21 +44,57 @@ func (s *Store) canonical(ctx context.Context, f form, texts []string) ([]string
 		for i, t := range texts[start:end] {
 			lits[i] = quote(f.prefix + t)
 		}
-		rows, err := s.conn.Rows(ctx, "SELECT formatQuerySingleLine(q) FROM (SELECT arrayJoin(["+strings.Join(lits, ", ")+"]) AS q)", 1)
+		rows, err := s.conn.Rows(ctx, "SELECT toString(i), formatQuerySingleLine(a[i]) FROM (SELECT ["+strings.Join(lits, ", ")+"] AS a) ARRAY JOIN arrayEnumerate(a) AS i ORDER BY i", 2)
 		if err != nil {
 			return nil, fmt.Errorf("formatQuery: %w", err)
 		}
-		if len(rows) != end-start {
-			return nil, fmt.Errorf("formatQuery returned %d rows for %d texts", len(rows), end-start)
+		formatted, err := byIndex(rows, end-start)
+		if err != nil {
+			return nil, err
 		}
-		for i, r := range rows {
-			c, ok := strings.CutPrefix(r[0], f.cut)
-			if c, ok = strings.CutSuffix(c, f.suffix); !ok {
-				return nil, fmt.Errorf("formatQuery of %q gave %q", texts[start+i], r[0])
+		for i, got := range formatted {
+			c, err := f.unwrap(got)
+			if err != nil {
+				return nil, fmt.Errorf("formatQuery of %q: %w", texts[start+i], err)
 			}
-			out = append(out, strings.TrimSpace(c))
+			out = append(out, c)
 		}
 		start = end
+	}
+	return out, nil
+}
+
+// unwrap cuts the form's wrapper off a formatted text, refusing one that
+// does not carry it.
+func (f form) unwrap(formatted string) (string, error) {
+	c, ok := strings.CutPrefix(formatted, f.cut)
+	if !ok {
+		return "", fmt.Errorf("%q does not start with %q", formatted, f.cut)
+	}
+	if c, ok = strings.CutSuffix(c, f.suffix); !ok {
+		return "", fmt.Errorf("%q does not end with %q", formatted, f.suffix)
+	}
+	// The suffix must close the wrapper, not the text's own last call.
+	if _, err := schema.SplitTop(c, ","); err != nil {
+		return "", fmt.Errorf("%q is not wrapped as %q…%q: %w", formatted, f.cut, f.suffix, err)
+	}
+	return strings.TrimSpace(c), nil
+}
+
+// byIndex orders rows of (1-based index, text), requiring each index of 1..n
+// exactly once.
+func byIndex(rows [][]string, n int) ([]string, error) {
+	if len(rows) != n {
+		return nil, fmt.Errorf("formatQuery returned %d rows for %d texts", len(rows), n)
+	}
+	out := make([]string, n)
+	seen := make([]bool, n)
+	for _, r := range rows {
+		i, err := strconv.Atoi(r[0])
+		if err != nil || i < 1 || i > n || seen[i-1] {
+			return nil, fmt.Errorf("formatQuery returned index %q for %d texts", r[0], n)
+		}
+		seen[i-1], out[i-1] = true, r[1]
 	}
 	return out, nil
 }
@@ -299,6 +335,8 @@ func (s *Store) snapshots(ctx context.Context, raw map[string]map[string]*rawObj
 				obj.EngineArgs = append(obj.EngineArgs, a)
 			}
 			switch o.engine {
+			case "Dictionary":
+				obj.Kind = schema.KindDictionary
 			case "Distributed":
 				obj.Kind = schema.KindDistributed
 			case "MaterializedView":
