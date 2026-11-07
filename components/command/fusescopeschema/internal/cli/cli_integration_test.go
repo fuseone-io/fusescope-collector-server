@@ -420,13 +420,18 @@ func harnessOf(t *testing.T) (string, []string, string) {
 
 // quorumProbe proves the surviving members still form one ensemble with a
 // quorum: a throwaway key written through the first is read through the
-// second, then removed. It retries for 30 s, as a new leader is elected.
+// second, then removed, its absence read back through the first. Each step
+// is retried within one 30 s window, as a leader is elected and a member
+// catches up.
 func quorumProbe(compose, kind string, survivors []string) error {
 	key := fmt.Sprintf("/fusescope-schema-probe-%d", time.Now().UnixNano())
 	value := "probe-" + key[len("/fusescope-schema-probe-"):]
 	cli := func(member string, args ...string) (string, error) {
 		var full []string
 		if kind == "keeper" {
+			for i, a := range args[1:] {
+				args[i+1] = "'" + a + "'"
+			}
 			full = []string{"exec", "-T", member, "clickhouse-keeper-client", "-h", "localhost", "-p", "9181", "-q", strings.Join(args, " ")}
 		} else {
 			full = append([]string{"exec", "-T", member, "zkCli.sh", "-server", "localhost:2181"}, args...)
@@ -434,34 +439,52 @@ func quorumProbe(compose, kind string, survivors []string) error {
 		out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, full...)...).CombinedOutput()
 		return string(out), err
 	}
-	quote := func(s string) string {
-		if kind == "keeper" {
-			return "'" + s + "'"
+	deadline := time.Now().Add(30 * time.Second)
+	step := func(what string, try func() error) error {
+		var last error
+		for {
+			if last = try(); last == nil {
+				return nil
+			}
+			if !time.Now().Before(deadline) {
+				return fmt.Errorf("the surviving members %v, %s: %w", survivors, what, last)
+			}
+			time.Sleep(time.Second)
 		}
-		return s
 	}
-	var last error
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
-		out, err := cli(survivors[0], "create", quote(key), quote(value))
+	first, second := survivors[0], survivors[1]
+	if err := step("write a key through "+first, func() error {
+		out, err := cli(first, "create", key, value)
 		if err != nil || kind == "zookeeper" && !strings.Contains(out, "Created") {
-			last = fmt.Errorf("create %s through %s: %v %s", key, survivors[0], err, out)
-			continue
+			return fmt.Errorf("create %s: %v %s", key, err, out)
 		}
-		out, err = cli(survivors[1], "get", quote(key))
-		if err != nil || !slices.Contains(strings.Fields(out), value) {
-			return fmt.Errorf("%s wrote %s, %s reads %q (%v): not one ensemble", survivors[0], key, survivors[1], out, err)
-		}
-		_, _ = cli(survivors[1], kindRemove(kind), quote(key))
 		return nil
+	}); err != nil {
+		return err
 	}
-	return fmt.Errorf("the surviving members %v hold no quorum: %v", survivors, last)
-}
-
-func kindRemove(kind string) string {
+	if err := step("read it through "+second, func() error {
+		out, err := cli(second, "get", key)
+		if err != nil || !slices.Contains(strings.Fields(out), value) {
+			return fmt.Errorf("%s reads %q (%v), want %s", key, out, err, value)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	exists, remove := "stat", "delete"
 	if kind == "keeper" {
-		return "rm"
+		exists, remove = "exists", "rm"
 	}
-	return "delete"
+	return step("remove it and read its absence through "+first, func() error {
+		_, _ = cli(second, remove, key) // a retry after a removal that took finds nothing to remove
+		out, err := cli(first, exists, key)
+		absent := kind == "keeper" && err == nil && strings.TrimSpace(out) == "0" ||
+			kind == "zookeeper" && strings.Contains(out, "Node does not exist")
+		if !absent {
+			return fmt.Errorf("%s still reads as present: %q (%v)", key, out, err)
+		}
+		return nil
+	})
 }
 
 func dockerCompose(compose string, args ...string) error {
