@@ -5,6 +5,7 @@ package coord
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -62,6 +63,20 @@ func InspectLayout(ctx context.Context, s LayoutStore) (complete bool, _ error) 
 	case n == 0 || !identified:
 		return false, nil
 	}
+	// The same lease on every replica must also be one the protocol writes,
+	// as the bootstrap requires.
+	l, ok, err := s.ReadLease(ctx)
+	switch {
+	case errors.Is(err, ErrUnknownLayout):
+		return false, err
+	case err != nil:
+		return false, fmt.Errorf("%w: reading the lease row: %v", ErrUnavailable, err)
+	case !ok:
+		return false, nil
+	}
+	if err := checkLease(l); err != nil {
+		return false, fmt.Errorf("%w: %v", ErrUnknownLayout, err)
+	}
 	return true, nil
 }
 
@@ -94,7 +109,9 @@ func checkIdentities(ctx context.Context, s LayoutStore, layouts map[string]map[
 }
 
 // agreeingRows reads every layout table on every replica until all replicas
-// show the same rows, or the re-read window passes.
+// show the same rows, or the re-read window passes. Only the whole window
+// establishes a divergence: ctx ending first answers nothing, which is
+// ErrUnavailable.
 func agreeingRows(ctx context.Context, s LayoutStore, replicas []string) (map[string][]string, error) {
 	deadline := time.Now().Add(inspectRereadFor)
 	for {
@@ -125,7 +142,7 @@ func agreeingRows(ctx context.Context, s LayoutStore, replicas []string) (map[st
 			return nil, differ
 		}
 		if err := sleepCtx(ctx, min(inspectRereadEvery, time.Until(deadline))); err != nil {
-			return nil, differ
+			return nil, fmt.Errorf("%w: rows still differ when the check ended (%v): %v", ErrUnavailable, err, differ)
 		}
 	}
 }

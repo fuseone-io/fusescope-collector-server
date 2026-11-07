@@ -88,6 +88,18 @@ func TestInspectLayout(t *testing.T) {
 			s.maps["/copy"] = copied
 			s.replicas["ch-2-2"] = "/copy"
 		}, false, ErrDivergent},
+		{"a lease row with an owner and token 0, on every replica", func(s *fakeStore) {
+			complete(s)
+			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 0}
+		}, false, ErrUnknownLayout},
+		{"a lease row with a token and no expiry, on every replica", func(s *fakeStore) {
+			complete(s)
+			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 3}
+		}, false, ErrUnknownLayout},
+		{"the lease row unreadable", func(s *fakeStore) {
+			complete(s)
+			s.readLeaseErr = errors.New("connection reset")
+		}, false, ErrUnavailable},
 		{"a replica briefly behind on the lease", func(s *fakeStore) {
 			complete(s)
 			s.maps["/shared"].lease = &Lease{Owner: "A", Token: 1, ExpiresMs: 5}
@@ -109,5 +121,23 @@ func TestInspectLayout(t *testing.T) {
 				t.Fatalf("InspectLayout wrote: creates %v, inserts %v", s.creates, s.inserts)
 			}
 		})
+	}
+}
+
+// The context ending while rows still differ answers nothing: a retryable
+// error, not a divergence, which only the whole re-read window establishes.
+func TestInspectLayoutCutShortIsUnavailable(t *testing.T) {
+	every, window := inspectRereadEvery, inspectRereadFor
+	inspectRereadEvery, inspectRereadFor = 5*time.Millisecond, time.Hour
+	t.Cleanup(func() { inspectRereadEvery, inspectRereadFor = every, window })
+	s := newFakeStore(replicas...)
+	complete(s)
+	s.maps["/shared"].lease = &Lease{Owner: "A", Token: 1, ExpiresMs: 5}
+	s.rowsLag["ch-2-2"] = 1 << 30
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := InspectLayout(ctx, s.as("ch-1-1"))
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrDivergent) {
+		t.Fatalf("InspectLayout = %v, want ErrUnavailable and not ErrDivergent", err)
 	}
 }
