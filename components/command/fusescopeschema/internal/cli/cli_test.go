@@ -90,7 +90,7 @@ func TestExitCodes(t *testing.T) {
 	transport := errors.New("connection reset by peer")
 	refusals := []error{
 		drift, migrate.ErrInterrupted, migrate.ErrUnknownMigration, migrate.ErrChecksum, migrate.ErrRepairRefused,
-		coord.ErrInterrupted, coord.ErrUnknownLayout, coord.ErrDivergent, coord.ErrConfig, chstore.ErrPrecheck, chstore.ErrNoKeeperMapPrefix,
+		coord.ErrInterrupted, coord.ErrUnknownLayout, coord.ErrDivergent, coord.ErrConfig, chstore.ErrPrecheck,
 		chstore.ErrInvalidConfig, ErrUsage,
 	}
 	for _, err := range refusals {
@@ -105,7 +105,10 @@ func TestExitCodes(t *testing.T) {
 			t.Errorf("repair %v = %d, want 1", err, got)
 		}
 	}
-	for _, err := range []error{transport, coord.ErrLeaseTimeout, coord.ErrLeaseLost, coord.ErrUnavailable, context.Canceled, context.DeadlineExceeded} {
+	// KeeperMap without keeper_map_path_prefix is retryable: the setting may be
+	// on its way, as while the operator restarts ClickHouse with it, and the
+	// bootstrap wrote nothing to the telemetry databases (spec §2.1).
+	for _, err := range []error{transport, coord.ErrLeaseTimeout, coord.ErrLeaseLost, coord.ErrUnavailable, chstore.ErrNoKeeperMapPrefix, context.Canceled, context.DeadlineExceeded} {
 		if got := migrateCode(migrate.Result{}, err); got != ExitRetry {
 			t.Errorf("migrate %v = %d, want 2", err, got)
 		}
