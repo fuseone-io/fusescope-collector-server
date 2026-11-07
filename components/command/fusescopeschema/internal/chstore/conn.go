@@ -102,6 +102,17 @@ func (c Config) options() (ch.Options, error) {
 // renewal can run beside a DDL statement.
 type Conn struct {
 	pool *chpool.Pool
+	// trace, when set, sees every query, for tests.
+	trace func(query string)
+}
+
+// Trace makes f see every query this connection runs.
+func (c *Conn) Trace(f func(query string)) { c.trace = f }
+
+func (c *Conn) traced(query string) {
+	if c.trace != nil {
+		c.trace(query)
+	}
 }
 
 func Dial(ctx context.Context, c Config) (*Conn, error) {
@@ -123,7 +134,16 @@ func (c *Conn) Close() { c.pool.Close() }
 
 // Exec runs a statement with the given settings.
 func (c *Conn) Exec(ctx context.Context, query string, settings ...ch.Setting) error {
+	c.traced(query)
 	return c.pool.Do(ctx, ch.Query{Body: query, Settings: settings})
+}
+
+// ExecDiscard runs a statement whose result, such as the per-host status of a
+// DDL statement ON CLUSTER, is read and dropped.
+func (c *Conn) ExecDiscard(ctx context.Context, query string, settings ...ch.Setting) error {
+	c.traced(query)
+	var res proto.Results
+	return c.pool.Do(ctx, ch.Query{Body: query, Settings: settings, Result: res.Auto(), OnResult: func(context.Context, proto.Block) error { return nil }})
 }
 
 // Rows runs a query whose n columns are all String, and returns its rows.
@@ -134,6 +154,7 @@ func (c *Conn) Rows(ctx context.Context, query string, n int) ([][]string, error
 		cols[i] = new(proto.ColStr)
 		res[i] = proto.ResultColumn{Data: cols[i]}
 	}
+	c.traced(query)
 	var rows [][]string
 	err := c.pool.Do(ctx, ch.Query{
 		Body:   query,

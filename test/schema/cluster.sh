@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # A 2x2 ClickHouse cluster with Keeper or ZooKeeper for fusescope-schema's
 # integration tests (docs/spec/fusescope-schema.md §9). The four servers'
-# native ports are 127.0.0.1:19001..19004.
+# native ports are 127.0.0.1:19001..19004. The same servers also form the
+# cluster fusescope-custom, for a custom cluster name.
 #   test/schema/cluster.sh up [keeper|zookeeper]   prints the cluster's directory,
 #                                                  whose addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
 #   test/schema/cluster.sh down DIR
@@ -64,7 +65,11 @@ X
 <remote_servers><cluster>
 <shard><internal_replication>true</internal_replication><replica><host>ch-1-1</host><port>9000</port></replica><replica><host>ch-1-2</host><port>9000</port></replica></shard>
 <shard><internal_replication>true</internal_replication><replica><host>ch-2-1</host><port>9000</port></replica><replica><host>ch-2-2</host><port>9000</port></replica></shard>
-</cluster></remote_servers></clickhouse>
+</cluster>
+<fusescope-custom>
+<shard><internal_replication>true</internal_replication><replica><host>ch-1-1</host><port>9000</port></replica><replica><host>ch-1-2</host><port>9000</port></replica></shard>
+<shard><internal_replication>true</internal_replication><replica><host>ch-2-1</host><port>9000</port></replica><replica><host>ch-2-2</host><port>9000</port></replica></shard>
+</fusescope-custom></remote_servers></clickhouse>
 X
     printf '  %s:\n    image: %s\n    hostname: %s\n    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}\n    ports: ["127.0.0.1:1900%d:9000"]\n    volumes: [./%s.xml:/etc/clickhouse-server/config.d/test.xml:ro]\n    depends_on: [coord]\n' "$n" "$CH" "$n" "$i" "$n"
   done
