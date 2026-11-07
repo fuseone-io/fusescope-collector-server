@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/coord"
+	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/migrate"
 )
 
 // These tests need a real cluster: test/schema/cluster.sh up [keeper|zookeeper]
@@ -303,5 +304,26 @@ func TestIntegrationBootstrapRefusesANewerVersionWithoutWriting(t *testing.T) {
 		if _, ok := tables["migrations"]; ok {
 			t.Fatalf("replica %s: migrations created despite the refusal", r)
 		}
+	}
+}
+
+// InsertStarted proves a row absent only when it reads none of this run's:
+// another run's row with the id is not written by this one.
+func TestIntegrationInsertStartedClassifiesTheOutcome(t *testing.T) {
+	addrs := bootstrapped(t)
+	s := NewStore(dial(t, addrs[0]), "cluster")
+	ctx := context.Background()
+	mine := migrate.Row{ID: 1, Name: "base", Checksum: strings.Repeat("a", 64), Token: 5}
+	if err := s.InsertStarted(ctx, mine, "test", "h"); err != nil {
+		t.Fatalf("InsertStarted = %v", err)
+	}
+	if err := s.InsertStarted(ctx, mine, "test", "h"); err != nil {
+		t.Fatalf("InsertStarted of this run's row again = %v", err)
+	}
+	other := mine
+	other.Token = 6
+	err := NewStore(dial(t, addrs[3]), "cluster").InsertStarted(ctx, other, "test", "h")
+	if !errors.Is(err, migrate.ErrNotWritten) || !errors.Is(err, ErrHistoryConflict) {
+		t.Fatalf("InsertStarted over another run's row = %v, want ErrNotWritten and ErrHistoryConflict", err)
 	}
 }

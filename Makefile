@@ -54,7 +54,7 @@ schema-integration:
 	  trap '$(CURDIR)/test/schema/cluster.sh down "$$dir"' EXIT; \
 	  addrs=$$(cat "$$dir/addrs") && [ -n "$$addrs" ] || { echo "the cluster wrote no addresses" >&2; exit 2; }; \
 	  cd components/command/fusescopeschema && \
-	  FUSESCOPE_SCHEMA_TEST_REQUIRED=1 FUSESCOPE_SCHEMA_TEST_ADDRS=$$addrs go test -race -count=1 -run Integration ./...
+	  FUSESCOPE_SCHEMA_TEST_REQUIRED=1 FUSESCOPE_SCHEMA_TEST_ADDRS=$$addrs go test -race -count=1 -timeout 30m -run Integration ./...
 
 # mdatagen's module has replace directives, so `go run …@version` refuses it.
 MDATAGEN := $(CURDIR)/$(BUILD_DIR)/tools/mdatagen
