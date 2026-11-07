@@ -71,6 +71,9 @@ type Config struct {
 	// ClockSkew is the largest difference allowed between the replicas'
 	// clocks (§2.1); the lease must outlast LostAfter by it.
 	ClockSkew time.Duration // 30 s
+	// AllowInterrupted takes an expired lease over a started migration
+	// instead of refusing it: only repair does, to record the outcome (§10.1).
+	AllowInterrupted bool
 }
 
 func (c Config) withDefaults() Config {
@@ -257,7 +260,7 @@ func (c *Coordinator) Acquire(ctx context.Context) (Lease, error) {
 				if err != nil {
 					return Lease{}, err
 				}
-				if started {
+				if started && !c.cfg.AllowInterrupted {
 					return Lease{}, fmt.Errorf("%w (owner %s, token %d)", ErrInterrupted, l.Owner, l.Token)
 				}
 			}

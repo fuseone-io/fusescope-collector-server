@@ -11,6 +11,7 @@ import (
 
 	"github.com/ClickHouse/ch-go"
 
+	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/coord"
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/migrate"
 )
 
@@ -44,8 +45,14 @@ func parseRow(r []string) (migrate.Row, error) {
 	return migrate.Row{ID: uint32(id), Name: r[1], Checksum: r[2], Done: r[3] == "done", Adopted: r[4] == "true", Token: token}, nil
 }
 
-// History reads fusescope_schema.migrations, ordered by id.
+// History reads fusescope_schema.migrations, ordered by id; without the table
+// (no bootstrap yet) it is empty. It never creates anything, so check, plan
+// and status can read it.
 func (s *Store) History(ctx context.Context) ([]migrate.Row, error) {
+	present, err := s.hasTable(ctx, "migrations")
+	if err != nil || !present {
+		return nil, err
+	}
 	rows, err := s.conn.Rows(ctx, "SELECT "+historyColumns+" FROM "+s.table("migrations")+" ORDER BY id", 6)
 	if err != nil {
 		return nil, err
@@ -134,4 +141,56 @@ func (s *Store) MarkDone(ctx context.Context, id uint32, token uint64) error {
 	}
 	before.Done = true
 	return s.confirm(ctx, before)
+}
+
+func (s *Store) hasTable(ctx context.Context, table string) (bool, error) {
+	rows, err := s.conn.Rows(ctx, fmt.Sprintf("SELECT toString(count()) FROM system.tables WHERE database = %s AND name = %s", quote(Database), quote(table)), 1)
+	if err != nil {
+		return false, err
+	}
+	return rows[0][0] != "0", nil
+}
+
+// LeaseIfPresent reads the lease row, nil before the bootstrap, and the
+// server's time; it writes nothing.
+func (s *Store) LeaseIfPresent(ctx context.Context) (*coord.Lease, int64, error) {
+	now, err := s.ServerNowMs(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	present, err := s.hasTable(ctx, "lease")
+	if err != nil || !present {
+		return nil, now, err
+	}
+	l, ok, err := s.ReadLease(ctx)
+	if err != nil || !ok {
+		return nil, now, err
+	}
+	return &l, now, nil
+}
+
+func (s *Store) RepairDone(ctx context.Context, id uint32, oldToken, newToken uint64) error {
+	before, ok, err := s.row(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok || before.Done || before.Token != oldToken {
+		return fmt.Errorf("%w: %04d is %+v, want started by token %d", ErrHistoryConflict, id, before, oldToken)
+	}
+	if err := s.tryWrite(ctx, fmt.Sprintf("ALTER TABLE %s UPDATE state = 'done', token = %d, finished_at = now64(3) WHERE id = %d AND token = %d AND state = 'started'",
+		s.table("migrations"), newToken, id, oldToken)); err != nil {
+		return err
+	}
+	before.Done, before.Token = true, newToken
+	return s.confirm(ctx, before)
+}
+
+func (s *Store) DeleteRow(ctx context.Context, id uint32, token uint64) error {
+	if err := s.tryWrite(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = %d AND token = %d", s.table("migrations"), id, token)); err != nil {
+		return err
+	}
+	if _, ok, err := s.row(ctx, id); err != nil || ok {
+		return errors.Join(err, fmt.Errorf("%w: %04d is still recorded after the delete", ErrHistoryConflict, id))
+	}
+	return nil
 }

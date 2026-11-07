@@ -135,6 +135,22 @@ func TestAcquireRefusesAnExpiredLeaseOverAStartedMigration(t *testing.T) {
 	}
 }
 
+// repair takes the lease an interrupted migration left, to record its outcome.
+func TestRepairTakesTheLeaseOverAnInterruptedMigration(t *testing.T) {
+	s := cluster(t)
+	if _, err := newCoordinator(s, "ch-1-1", "A").Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.maps["/shared"].started[1] = true
+	s.advance((6 * time.Minute).Milliseconds())
+	repair := newCoordinator(s, "ch-2-1", "repair")
+	repair.cfg.AllowInterrupted = true
+	held, err := repair.Acquire(context.Background())
+	if err != nil || held.Owner != "repair" || held.Token != 2 {
+		t.Fatalf("Acquire = %+v, %v", held, err)
+	}
+}
+
 func TestRenewExtendsTheLease(t *testing.T) {
 	s := cluster(t)
 	c := newCoordinator(s, "ch-1-1", "A")

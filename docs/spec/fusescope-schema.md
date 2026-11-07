@@ -26,6 +26,28 @@ only their observed structure is part of [obs]. The target of every migration is
 
 The chart's Job runs `migrate`, and the collector's init container runs `check --wait 10m`.
 
+- Exit codes come from typed errors only, never from a message's text. For `migrate`, a migration
+  marked `started` decides first: any error after the insert of its row was sent exits 4, unless
+  the store proved that no row of this run exists. Then a refusal exits 1, and anything else 2.
+- `check`, `plan` and `status` run the read-only precheck, read, and write nothing, not even the
+  bootstrap of `fusescope_schema`. Their codes:
+  - `check`: 2 is a connection error. With `--wait` it polls through connection errors, since
+    ClickHouse may come up later, and exits 2 if the last attempt failed.
+  - `plan`: 0, 1 when refused, 2 on a connection error.
+  - `status`: 0 whenever it could read, printing a refusal as part of the report; 2 on a connection
+    error.
+- A usage or configuration error exits 1 before connecting.
+- The first `SIGINT` or `SIGTERM` stops a run before its next statement. The current statement may
+  finish, the lease is released, and the exit code follows the table: 4 once a migration was
+  started. A second signal ends the process.
+- Releasing the lease uses a context of its own, so a signal still releases it. A failed release is
+  a warning: the run's outcome and exit code stand, and the lease expires on its own.
+- `repair` takes the lease even when it expired over the interrupted migration it repairs; `migrate`
+  refuses that lease (§6).
+- Settings come from defaults, then a JSON file (`--config`, or `FUSESCOPE_SCHEMA_CONFIG`), then
+  `FUSESCOPE_SCHEMA_<FLAG>` variables, then flags. An unknown file key, a `password` key and
+  `FUSESCOPE_SCHEMA_PASSWORD` are refused (ADR 0004). No output shows the password.
+
 ## 2. Connection
 
 The settings are the ones `fusescope_clickhouse` takes, from flags, environment variables or a
