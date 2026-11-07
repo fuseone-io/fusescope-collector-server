@@ -58,8 +58,8 @@ sleep 30
 
 ch "SYSTEM FLUSH LOGS" >/dev/null
 ch "SELECT DISTINCT arrayStringConcat(tables, ',') AS tables, replaceRegexpAll(query, '(?is)\\s+(VALUES|FORMAT)\\s.*$', '') AS statement
-    FROM system.query_log WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND has(databases, 'system') = 0
-      AND NOT arrayExists(t -> t LIKE '%.schema_migrations%', tables)
+    FROM system.query_log AS q WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND has(databases, 'system') = 0
+      AND NOT arrayExists(t -> t LIKE '%.schema_migrations%', q.tables)
     ORDER BY tables, statement FORMAT JSONEachRow" > "$out/inserts.jsonl"
 
 ch "SELECT database, name, engine FROM system.tables WHERE database LIKE 'signoz%' ORDER BY database, name FORMAT TSV" \
