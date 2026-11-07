@@ -173,6 +173,10 @@ func compareObject(replica, name string, want, got Object) []pending {
 	diff("target", want.Target, got.Target)
 	diff("refresh", want.Refresh, got.Refresh)
 	diff("query", want.Query, got.Query)
+	if want.SQLSecurity != "" {
+		diff("sql security", want.SQLSecurity, got.SQLSecurity)
+		diff("definer", want.Definer, got.Definer)
+	}
 	if want.TTL != got.TTL {
 		out = append(out, pending{diff: Diff{Replica: replica, Object: name, Kind: Changed, Part: "ttl", Want: want.TTL, Got: got.TTL}, alts: allowedTTL(name, got.TTL)})
 	}

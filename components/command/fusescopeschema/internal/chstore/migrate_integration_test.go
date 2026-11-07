@@ -101,7 +101,12 @@ type run struct {
 // a fresh, traced connection.
 func newRun(t *testing.T, addr string, databases map[string]string, cluster string, cfg coord.Config) *run {
 	t.Helper()
-	c := dial(t, addr)
+	return newRunAs(t, addr, "default", databases, cluster, cfg)
+}
+
+func newRunAs(t *testing.T, addr, user string, databases map[string]string, cluster string, cfg coord.Config) *run {
+	t.Helper()
+	c := dialAs(t, addr, user)
 	rec := &recorder{}
 	c.Trace(rec.record)
 	s := NewStore(c, cluster)

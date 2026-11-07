@@ -15,7 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -92,15 +94,73 @@ var entries = []entry{
 func All() ([]Migration, error) {
 	all := make([]Migration, 0, len(entries))
 	var prev Migration
+	var bound []string
 	for _, e := range entries {
 		m, err := load(e, prev)
 		if err != nil {
 			return nil, err
 		}
+		views, err := boundViews(m.Statements)
+		if err != nil {
+			return nil, fmt.Errorf("%04d %s: %w", m.ID, m.Name, err)
+		}
+		for _, v := range views {
+			if _, ok := m.Post[v]; !ok {
+				return nil, fmt.Errorf("%04d %s binds %s, which its post-conditions do not hold", m.ID, m.Name, v)
+			}
+		}
+		bound = append(bound, views...)
+		m.Post = withDefiners(m.Post, bound)
 		all = append(all, m)
 		prev = m
 	}
 	return all, Check(all)
+}
+
+// definerDefault binds a view to the user default, as seven views of [obs]
+// are; Render binds them to the user that runs the statement instead, with
+// definerCurrent (§5.4).
+const (
+	definerDefault = "DEFINER = default SQL SECURITY DEFINER"
+	definerCurrent = "DEFINER = CURRENT_USER SQL SECURITY DEFINER"
+)
+
+var viewRe = regexp.MustCompile(`^CREATE MATERIALIZED VIEW IF NOT EXISTS \{db:(\w+)\}\.(\w+) `)
+
+// boundViews returns the views, "<role>.<name>", whose statement binds them
+// with definerDefault: once, in a materialized view's own statement.
+func boundViews(statements []string) ([]string, error) {
+	var out []string
+	for _, s := range statements {
+		switch n := strings.Count(s, definerDefault); {
+		case n == 0:
+			continue
+		case n > 1:
+			return nil, fmt.Errorf("%q %d times in one statement: %.80s", definerDefault, n, s)
+		}
+		m := viewRe.FindStringSubmatch(s)
+		if m == nil {
+			return nil, fmt.Errorf("%q outside a materialized view: %.80s", definerDefault, s)
+		}
+		out = append(out, m[1]+"."+m[2])
+	}
+	return out, nil
+}
+
+// withDefiners returns post with each bound view that it holds expecting SQL
+// SECURITY DEFINER and DefinerPlaceholder, the fields no post file stores.
+func withDefiners(post schema.Snapshot, bound []string) schema.Snapshot {
+	if len(bound) == 0 {
+		return post
+	}
+	out := maps.Clone(post)
+	for _, v := range bound {
+		if o, ok := out[v]; ok {
+			o.Definer, o.SQLSecurity = schema.DefinerPlaceholder, "DEFINER"
+			out[v] = o
+		}
+	}
+	return out
 }
 
 // load reads a migration's files. Without a post-conditions or data file it
@@ -201,8 +261,9 @@ func (m Migration) Checksum() string {
 
 // Render replaces the placeholders with the configured names: '{cluster}' and
 // '{db:<role>}' as string literals, {cluster} and {db:<role>} as identifiers.
+// It also binds the views definerDefault binds to the user that runs it.
 func Render(statement string, databases map[string]string, cluster string) string {
-	pairs := []string{"'" + schema.ClusterPlaceholder + "'", literal(cluster), schema.ClusterPlaceholder, identifier(cluster)}
+	pairs := []string{"'" + schema.ClusterPlaceholder + "'", literal(cluster), schema.ClusterPlaceholder, identifier(cluster), definerDefault, definerCurrent}
 	for _, role := range schema.Roles {
 		p := schema.RolePlaceholder(role)
 		pairs = append(pairs, "'"+p+"'", literal(databases[role]), p, identifier(databases[role]))

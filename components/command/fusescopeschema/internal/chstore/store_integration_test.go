@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,21 @@ func coordinator(t *testing.T, addr string, cfg coord.Config) *coord.Coordinator
 
 func dial(t *testing.T, addr string) *Conn {
 	t.Helper()
-	c, err := Dial(context.Background(), Config{Endpoint: addr, Username: "default", Cluster: "cluster", TLS: TLSConfig{Insecure: true}, DialTimeout: 5 * time.Second})
+	return dialAs(t, addr, "default")
+}
+
+// dialAs connects as user: default, or one of test/schema/cluster.sh's users,
+// whose password is their name.
+func dialAs(t *testing.T, addr, user string) *Conn {
+	t.Helper()
+	cfg := Config{Endpoint: addr, Username: user, Cluster: "cluster", TLS: TLSConfig{Insecure: true}, DialTimeout: 5 * time.Second}
+	if user != "default" {
+		cfg.PasswordFile = filepath.Join(t.TempDir(), "password")
+		if err := os.WriteFile(cfg.PasswordFile, []byte(user), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := Dial(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

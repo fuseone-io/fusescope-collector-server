@@ -304,6 +304,67 @@ func TestRender(t *testing.T) {
 	}
 }
 
+// The seven views [obs] binds to default render bound to the connected
+// user, 0001's text and checksum as released, and every migration's
+// post-conditions compare their definer and SQL security (§5.4).
+func TestBaseViewsRenderBoundToTheConnectedUser(t *testing.T) {
+	var views []string
+	for _, w := range []string{"last_30m", "last_5m", "last_60s", "sum_30m", "sum_5m", "sum_60s_cumulative", "sum_60s_delta"} {
+		views = append(views, "metrics.samples_v4_reduced_"+w+"_mv")
+	}
+	slices.Sort(views)
+	m := base(t)
+	if n := strings.Count(Join(m.Statements), definerDefault); n != len(views) {
+		t.Fatalf("0001 holds %q %d times, want %d", definerDefault, n, len(views))
+	}
+	rendered := Render(Join(m.Statements), schema.DefaultDatabases, "cluster")
+	if strings.Contains(rendered, definerDefault) || strings.Count(rendered, definerCurrent) != len(views) || strings.Count(rendered, "DEFINER = ") != len(views) {
+		t.Fatalf("rendered 0001 holds %q %d times and %q %d times", definerDefault, strings.Count(rendered, definerDefault), definerCurrent, strings.Count(rendered, definerCurrent))
+	}
+	all, err := All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mi := range all {
+		var bound []string
+		for k, o := range mi.Post {
+			if o.SQLSecurity != "" || o.Definer != "" {
+				if o.SQLSecurity != "DEFINER" || o.Definer != schema.DefinerPlaceholder {
+					t.Errorf("%04d: %s is %s, %s", mi.ID, k, o.SQLSecurity, o.Definer)
+				}
+				bound = append(bound, k)
+			}
+		}
+		slices.Sort(bound)
+		if !slices.Equal(bound, views) {
+			t.Fatalf("%04d compares the definers of %v, want %v", mi.ID, bound, views)
+		}
+	}
+}
+
+func TestBoundViews(t *testing.T) {
+	view := "CREATE MATERIALIZED VIEW IF NOT EXISTS {db:metrics}.v_mv ON CLUSTER {cluster}\nTO {db:metrics}.t\n" + definerDefault + "\nAS SELECT 1"
+	tests := []struct {
+		name       string
+		statements []string
+		want       []string
+		err        bool
+	}{
+		{"none", []string{"CREATE TABLE t", "CREATE MATERIALIZED VIEW IF NOT EXISTS {db:metrics}.w_mv ON CLUSTER {cluster} TO {db:metrics}.t AS SELECT 1"}, nil, false},
+		{"one view", []string{"CREATE TABLE t", view}, []string{"metrics.v_mv"}, false},
+		{"the clause outside a view", []string{"CREATE TABLE {db:metrics}.t ON CLUSTER {cluster} COMMENT '" + definerDefault + "'"}, nil, true},
+		{"the clause twice", []string{view + " " + definerDefault}, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := boundViews(tt.statements)
+			if (err != nil) != tt.err || !slices.Equal(got, tt.want) {
+				t.Fatalf("boundViews = %v, %v; want %v, error %t", got, err, tt.want, tt.err)
+			}
+		})
+	}
+}
+
 func TestSplitJoin(t *testing.T) {
 	in := []string{"CREATE DATABASE a", "CREATE TABLE b\n(\n    `x` String DEFAULT ';'\n)"}
 	if got := Split(Join(in)); !slices.Equal(got, in) {

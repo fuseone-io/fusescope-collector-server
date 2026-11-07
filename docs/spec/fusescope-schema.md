@@ -13,7 +13,7 @@ How `fusescope-schema` creates and migrates the SigNoz-compatible ClickHouse sch
   its collector wrote them. They are there on every fork install either way, and neither
   `fusescope-schema`'s `0001` nor `fusescope-collector` writes them (§5.3).
 - **[be]**: the FuseScope backend's DDL and reads, cited where used.
-- **[ch]**: ClickHouse documentation: distributed DDL, KeeperMap, the `system` tables.
+- **[ch]**: ClickHouse documentation: distributed DDL, KeeperMap, the `system` tables, and `DEFINER = CURRENT_USER` for views (SQL security, release 24.2).
 
 The fork's migration source and list are never read, and its history tables are never queried:
 only their observed structure is part of [obs]. The target of every migration is the schema in
@@ -232,7 +232,7 @@ Schemas are compared as structures read from `system` tables on every replica
 | Column (`system.columns`) | name, position, type, `default_kind`, `default_expression`, `compression_codec`, `comment` |
 | Data-skipping index (`system.data_skipping_indices`) | name, type and its arguments, expression, granularity |
 | Projection | name and query |
-| Materialized view | target table and, for a refreshable one, the `REFRESH` clause, both from `create_table_query`; the query from `system.tables.as_select` |
+| Materialized view | target table and, for a refreshable one, the `REFRESH` clause, both from `create_table_query`; the query from `system.tables.as_select`; for the seven views of §5.4, the definer (`system.tables.definer`) and `SQL SECURITY` (from `create_table_query` without its query) |
 | Distributed table | cluster, database, table, sharding key |
 | Dictionary | presence only, for now: no migration creates a dictionary, so one found is an extra object. Its source, layout, structure and lifetime are compared from the first migration that creates one |
 
@@ -247,6 +247,7 @@ Schemas are compared as structures read from `system` tables on every replica
   custom names compare: a qualifier in an expression or query, a materialized view's target, and
   a Distributed table's database argument.
 - The cluster name in a Distributed table's arguments is replaced by `{cluster}`.
+- A view's definer is replaced by `{definer}` when it is the connected user or `default` (§5.4).
 - Columns keep their position. A column §8 allows must come after every expected column, since
   the backend adds them with `ADD COLUMN` and no `FIRST` or `AFTER`, and an `_exists` column after
   its promoted column.
@@ -408,6 +409,27 @@ The rows are the schema's bootstrap state, not telemetry, so `0002` writes them.
   v1 row whose `release_time` is not greater than 0.
 - **Not reversible.** After `0002`, going back to the fork's migrator is not supported (§10).
 
+### 5.4 View definers
+
+Seven refreshable views of [obs], `signoz_metrics.samples_v4_reduced_{last_30m, last_5m,
+last_60s, sum_30m, sum_5m, sum_60s_cumulative, sum_60s_delta}_mv`, are created with
+`DEFINER = default SQL SECURITY DEFINER`, and `0001`'s statements hold that text. A refresh runs
+as the definer. On a ClickHouse without a user `default`, creating them fails (`UNKNOWN_USER`,
+observed on 25.12 with `fusescope-schema` 0.4.0, which then exits 4 with `0001` started).
+
+- **Rendering:** each statement's exact text `DEFINER = default SQL SECURITY DEFINER` renders as
+  `DEFINER = CURRENT_USER SQL SECURITY DEFINER`, which binds the view to the user that creates it
+  [ch]. A statement holds it at most once, and only in a materialized view's own statement:
+  loading the migrations fails otherwise. `0001`'s text and checksum stay as released.
+- **Comparison:** for these seven views, in every migration's post-conditions, `SQL SECURITY` is
+  `DEFINER` and the definer is the connected user or `default`. `default` is what the fork and
+  `fusescope-schema` 0.4.0 leave, so their installs are accepted as they are and nothing is
+  re-created. Any other definer, no definer, or another `SQL SECURITY` (`NONE`; ClickHouse refuses
+  `INVOKER` for a materialized view, observed on 25.12) is drift (§7.4) on that replica. The post
+  files store neither field: they are set from the statements when the migrations load.
+- **Changing the migrator's user** after an install leaves the views bound to the previous one,
+  which is then another definer (§10).
+
 ## 6. Lease
 
 The lease is the single row `lease(migrate)`. Every change is a conditional update in strict
@@ -532,6 +554,9 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | The run's context cancelled during the re-reads of a lagging replica, before the 10 s pass | exit 2 before `started`, 4 after; never a divergence |
 | A later migration widening `0002`'s rows (a test-only `0003` adding a sixth base row) | before it, `0002`'s set must hold and `0003`'s must admit; after it, only `0003`'s set is checked, and the sixth row is not refused |
 | A migration with data statements or changed data conditions marked reversible | loading the migrations fails |
+| Fresh install connected as a user that is not `default` (§5.4) | on each of the four replicas, the seven views exist, are bound to that user with `SQL SECURITY DEFINER`, and refresh; `0001`'s checksum is the released one; a second run is a no-op |
+| Adopting the fork's views, bound to `default`, connected as another user | `0001` adopted; no view touched; the views still bound to `default` and refreshing |
+| One view on one replica bound to a third user, another with `SQL SECURITY NONE` | drift on that replica, naming the definer and the `SQL SECURITY`; nothing written |
 | Each `0002` case above, with Keeper and with ZooKeeper, on the 2 × 2 cluster | the same results |
 | Adopting a cluster the fork 0.145.0 migrated (the fork image run as a black box) | `0001` adopted; nothing re-created; data still readable |
 | The same, after the backend promoted fields, added RUM columns and changed retention | adopted (§8); a promoted column with a changed codec is refused |
@@ -581,6 +606,8 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | No `keeper_map_path_prefix` (exit 2, §2.1) | Set it in the server configuration, the same on every replica, and restart ClickHouse; the next run retries. The chart's ClickHouse sets it, and its Job retries while the pods restart |
 | A bad migration | There is no automatic rollback. Restore from backup, or write a forward migration that corrects it |
 | A data condition broken (§7.4, §7.8) | `status` names each row missing, extra or different. Restore the base row as §5.3 lists it, or delete the contradictory one, by hand, then rerun. Rows outside the scope are never the cause |
+| `0001` started after `UNKNOWN_USER` (0.4.0 on a ClickHouse without `default`, §5.4) | `status` lists the objects still missing. Create them by hand from `0001_base.sql`, connected as the migrator's user, with the placeholders replaced and `DEFINER = default` as `DEFINER = CURRENT_USER`; then `repair --id 1 --mark done` (§10.1) and run 0.4.1 or later |
+| The migrator's user changed after an install (§5.4) | On every replica, `ALTER TABLE signoz_metrics.<view> MODIFY SQL SECURITY DEFINER DEFINER = <new user>` for each of the seven views, then rerun |
 | Going back to the fork's migrator | Possible only while the history holds `0001` alone: the fork's own history and the [obs] schema are untouched. After any later migration, `0002` included, it is not supported |
 
 ### 10.1 `repair`
