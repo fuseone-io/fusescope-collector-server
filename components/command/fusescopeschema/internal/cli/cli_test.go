@@ -88,8 +88,9 @@ func TestLoadRefusals(t *testing.T) {
 func TestExitCodes(t *testing.T) {
 	drift := &migrate.DriftError{Diffs: []schema.Diff{{Replica: "r", Object: "o", Kind: schema.Missing}}}
 	transport := errors.New("connection reset by peer")
+	contradiction := &migrate.DataError{Diffs: []schema.Diff{{Replica: "s1", Object: "o", Kind: schema.Extra}}}
 	refusals := []error{
-		drift, migrate.ErrInterrupted, migrate.ErrUnknownMigration, migrate.ErrChecksum, migrate.ErrRepairRefused,
+		drift, contradiction, migrate.ErrInterrupted, migrate.ErrUnknownMigration, migrate.ErrChecksum, migrate.ErrRepairRefused,
 		coord.ErrInterrupted, coord.ErrUnknownLayout, coord.ErrDivergent, coord.ErrConfig, chstore.ErrPrecheck,
 		chstore.ErrInvalidConfig, ErrUsage,
 	}
@@ -131,7 +132,7 @@ func TestExitCodes(t *testing.T) {
 			t.Errorf("check %s = %d, want %d", verdict, got, want)
 		}
 	}
-	if checkCode(migrate.State{}, drift) != ExitRefused || checkCode(migrate.State{}, transport) != ExitRetry {
+	if checkCode(migrate.State{}, drift) != ExitRefused || checkCode(migrate.State{}, contradiction) != ExitRefused || checkCode(migrate.State{}, transport) != ExitRetry {
 		t.Error("check's refusal or transport code")
 	}
 }

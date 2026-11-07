@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/coord"
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/migrations"
@@ -33,6 +34,90 @@ type fakeStore struct {
 	insertErr     error
 	insertWritten bool
 	markDoneErr   error
+	// rows is the data conditions' table by shard and replica; insert, when
+	// set, is what a data statement does to it, else it inserts the missing
+	// base rows on s1.
+	rows      schema.DataRead
+	insert    func(*fakeStore)
+	dataReads int
+	// lagging hides the rows from r2 for that many reads; dataErr fails reads.
+	lagging   int
+	dataErr   error
+	dataExecs int
+}
+
+var fakeShards = map[string][]string{"s1": {"r1", "r2"}, "s2": {"r3", "r4"}}
+
+func (f *fakeStore) DataRows(_ context.Context, c schema.DataCondition, merged, _ map[string]string) (schema.DataRead, error) {
+	f.dataReads++
+	if f.dataErr != nil {
+		return nil, f.dataErr
+	}
+	if merged["release_time"] != "min" {
+		return nil, fmt.Errorf("release_time merged with %q", merged["release_time"])
+	}
+	out := schema.DataRead{}
+	for g, rs := range fakeShards {
+		out[g] = map[string][]schema.LiveRow{}
+		for _, r := range rs {
+			out[g][r] = nil
+			for _, row := range f.rows[g][r] {
+				if c.Scope["field_name"] == "" || row.Key[4] == c.Scope["field_name"] {
+					out[g][r] = append(out[g][r], row)
+				}
+			}
+		}
+	}
+	if f.lagging > 0 {
+		f.lagging--
+		out["s1"]["r2"] = nil
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ExecData(context.Context, string) error {
+	f.dataExecs++
+	f.executed = append(f.executed, "data")
+	if f.insert != nil {
+		f.insert(f)
+		return nil
+	}
+	all, _ := migrations.All()
+	present := map[string]bool{}
+	for _, rs := range f.rows {
+		for _, rows := range rs {
+			for _, row := range rows {
+				present[strings.Join(row.Key, "|")] = true
+			}
+		}
+	}
+	for _, want := range all[1].Data[0].Rows {
+		if !present[strings.Join(want.Key, "|")] {
+			f.addRow("s1", baseRow(want.Key, "1794010640653742600"))
+		}
+	}
+	return nil
+}
+
+// addRow puts a row on every replica of shard g.
+func (f *fakeStore) addRow(g string, row schema.LiveRow) {
+	if f.rows == nil {
+		f.rows = schema.DataRead{}
+	}
+	if f.rows[g] == nil {
+		f.rows[g] = map[string][]schema.LiveRow{}
+	}
+	for _, r := range fakeShards[g] {
+		f.rows[g][r] = append(f.rows[g][r], row)
+	}
+}
+
+// baseRow is a row of key; a v0 row's release_time is always 0.
+func baseRow(key []string, release string) schema.LiveRow {
+	if key[5] == "0" {
+		release = "0"
+	}
+	return schema.LiveRow{Key: key, Values: map[string]string{"release_time": release}}
 }
 
 func (f *fakeStore) Expressions(_ context.Context, in []string) ([]string, error) { return in, nil }
@@ -124,7 +209,8 @@ func setup(t *testing.T) (*fakeStore, *fakeLease, *Runner, migrations.Migration)
 	m := all[0]
 	s := &fakeStore{post: m.Post, total: len(m.Statements)}
 	l := &fakeLease{token: 7}
-	r := &Runner{Store: s, Lease: l, Migrations: all, Databases: schema.DefaultDatabases, Cluster: "cluster", Version: "test", Host: "h"}
+	r := &Runner{Store: s, Lease: l, Migrations: all[:1], Databases: schema.DefaultDatabases, Cluster: "cluster", Version: "test", Host: "h",
+		Sleep: func(context.Context, time.Duration) error { return nil }}
 	return s, l, r, m
 }
 

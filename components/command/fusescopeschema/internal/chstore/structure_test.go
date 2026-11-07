@@ -50,3 +50,23 @@ func TestByIndex(t *testing.T) {
 		}
 	}
 }
+
+// create_table_query and as_select as ClickHouse 25.12 prints a
+// materialized view (§5.4).
+func TestViewSecurity(t *testing.T) {
+	const head = "CREATE MATERIALIZED VIEW default.v TO default.dst (`x` UInt8) "
+	const query = "SELECT x FROM default.src"
+	tests := []struct{ create, query, want string }{
+		{head + "DEFINER = migrator SQL SECURITY DEFINER AS " + query, query, "DEFINER"},
+		{head + "DEFINER = `odd user` SQL SECURITY DEFINER AS " + query, query, "DEFINER"},
+		{head + "SQL SECURITY NONE AS " + query, query, "NONE"},
+		{head + "AS " + query, query, ""},
+		{head + "AS SELECT x, 'a) SQL SECURITY NONE' AS s FROM default.src", "SELECT x, 'a) SQL SECURITY NONE' AS s FROM default.src", ""},
+		{head + "SQL SECURITY NONE AS " + query, "SELECT 1", ""},
+	}
+	for _, tt := range tests {
+		if got := viewSecurity(tt.create, tt.query); got != tt.want {
+			t.Errorf("viewSecurity(%q) = %q, want %q", tt.create, got, tt.want)
+		}
+	}
+}

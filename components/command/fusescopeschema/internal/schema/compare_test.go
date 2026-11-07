@@ -29,7 +29,7 @@ func sample() Snapshot {
 			Columns:    []Column{{Name: "fingerprint", Type: "UInt64"}},
 		},
 		"meter.samples_agg_1d_mv": {
-			Kind: KindMaterializedView, Target: "{db:meter}.samples_agg_1d",
+			Kind: KindMaterializedView, Target: "{db:meter}.samples_agg_1d", Definer: DefinerPlaceholder, SQLSecurity: "DEFINER",
 			Query: "SELECT fingerprint, intDiv(unix_milli, 86400000) * 86400000 AS unix_milli FROM {db:meter}.samples",
 		},
 	}
@@ -82,6 +82,9 @@ func TestCompare(t *testing.T) {
 		{"a materialized view's query", set("meter.samples_agg_1d_mv", func(o *Object) { o.Query = strings.Replace(o.Query, "86400000", "3600000", 2) }), []string{"changed meter.samples_agg_1d_mv query"}},
 		{"a materialized view's refresh", set("meter.samples_agg_1d_mv", func(o *Object) { o.Refresh = "REFRESH EVERY 5 MINUTE APPEND" }), []string{"changed meter.samples_agg_1d_mv refresh"}},
 		{"a materialized view's target", set("meter.samples_agg_1d_mv", func(o *Object) { o.Target = "{db:meter}.samples" }), []string{"changed meter.samples_agg_1d_mv target"}},
+		{"a view bound to a third user", set("meter.samples_agg_1d_mv", func(o *Object) { o.Definer = "intruder" }), []string{"changed meter.samples_agg_1d_mv definer"}},
+		{"a view with no definer", set("meter.samples_agg_1d_mv", func(o *Object) { o.Definer = "" }), []string{"changed meter.samples_agg_1d_mv definer"}},
+		{"a view with another SQL security", set("meter.samples_agg_1d_mv", func(o *Object) { o.SQLSecurity = "NONE" }), []string{"changed meter.samples_agg_1d_mv sql security"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,6 +111,23 @@ func TestCompare(t *testing.T) {
 				t.Errorf("%d canonicalisation calls, want at most one per kind", canon.calls)
 			}
 		})
+	}
+}
+
+// A view whose expected structure names no SQL security has its definer and
+// mode left uncompared (§5.4).
+func TestCompareLeavesUnnamedDefinersAlone(t *testing.T) {
+	want := sample()
+	mv := want["meter.samples_agg_1d_mv"]
+	mv.Definer, mv.SQLSecurity = "", ""
+	want["meter.samples_agg_1d_mv"] = mv
+	live := map[string]Snapshot{"r1": sample()}
+	o := live["r1"]["meter.samples_agg_1d_mv"]
+	o.Definer, o.SQLSecurity = "intruder", "NONE"
+	live["r1"]["meter.samples_agg_1d_mv"] = o
+	diffs, err := Compare(context.Background(), want, live, &fakeCanon{})
+	if err != nil || len(diffs) != 0 {
+		t.Fatalf("Compare = %v, %v; want no difference", diffs, err)
 	}
 }
 

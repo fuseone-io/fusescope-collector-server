@@ -1,0 +1,93 @@
+[
+  {
+    "table": "metadata.column_evolution_metadata",
+    "key": [
+      "signal",
+      "column_name",
+      "column_type",
+      "field_context",
+      "field_name",
+      "version"
+    ],
+    "scope": {
+      "field_name": "__all__"
+    },
+    "rows": [
+      {
+        "key": [
+          "logs",
+          "resource",
+          "JSON()",
+          "resource",
+          "__all__",
+          "1"
+        ],
+        "values": {
+          "release_time": {
+            "positive": true
+          }
+        }
+      },
+      {
+        "key": [
+          "logs",
+          "resources_string",
+          "Map(LowCardinality(String), Float64)",
+          "resource",
+          "__all__",
+          "0"
+        ],
+        "values": {
+          "release_time": {
+            "equals": "0"
+          }
+        }
+      },
+      {
+        "key": [
+          "traces",
+          "attributes",
+          "JSON()",
+          "attribute",
+          "__all__",
+          "1"
+        ],
+        "values": {
+          "release_time": {
+            "positive": true
+          }
+        }
+      },
+      {
+        "key": [
+          "traces",
+          "resource",
+          "JSON()",
+          "resource",
+          "__all__",
+          "1"
+        ],
+        "values": {
+          "release_time": {
+            "positive": true
+          }
+        }
+      },
+      {
+        "key": [
+          "traces",
+          "resources_string",
+          "Map(LowCardinality(String), Float64)",
+          "resource",
+          "__all__",
+          "0"
+        ],
+        "values": {
+          "release_time": {
+            "equals": "0"
+          }
+        }
+      }
+    ]
+  }
+]

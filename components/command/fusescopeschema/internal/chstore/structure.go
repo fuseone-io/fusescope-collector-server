@@ -149,12 +149,29 @@ func (c *canonSet) run(ctx context.Context, s *Store) error {
 // TO target from create_table_query.
 var mvRe = regexp.MustCompile("^CREATE MATERIALIZED VIEW (?:`[^`]*`|[^\\s.`]+)\\.(?:`[^`]*`|[^\\s`]+) (?:(REFRESH .*?) )?TO ((?:`[^`]*`|[^\\s.`]+)\\.(?:`[^`]*`|[^\\s(`]+))")
 
+// securityRe reads a view's SQL SECURITY at the end of create_table_query
+// without its query: after the DEFINER clause, if any (§5.4).
+var securityRe = regexp.MustCompile("\\) (?:DEFINER = (?:`[^`]*`|[^\\s`]+) )?SQL SECURITY (\\w+)$")
+
+// viewSecurity returns a view's SQL SECURITY, "" when create_table_query
+// names none or does not end with the view's query.
+func viewSecurity(create, asSelect string) string {
+	head, ok := strings.CutSuffix(create, " AS "+asSelect)
+	if !ok {
+		return ""
+	}
+	if m := securityRe.FindStringSubmatch(head); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // rawObject is one object as the system tables show it, before
 // canonicalisation.
 type rawObject struct {
 	db, name                                        string
 	engine, engineFull, sorting, primary, partition string
-	sampling, asSelect, create                      string
+	sampling, asSelect, create, definer             string
 	columns                                         []schema.Column
 	indexes                                         []schema.Index
 	projections                                     []schema.Projection
@@ -188,7 +205,7 @@ func (s *Store) ReplicaSnapshots(ctx context.Context, databases map[string]strin
 		}
 		raw[r] = map[string]*rawObject{}
 	}
-	tables, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", database, name, engine, engine_full, sorting_key, primary_key, partition_key, sampling_key, as_select, create_table_query"+from("tables")+in, 11)
+	tables, err := s.conn.Rows(ctx, "SELECT "+replicaKey+", database, name, engine, engine_full, sorting_key, primary_key, partition_key, sampling_key, as_select, create_table_query, definer"+from("tables")+in, 12)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +214,7 @@ func (s *Store) ReplicaSnapshots(ctx context.Context, databases map[string]strin
 		if !ok {
 			return nil, fmt.Errorf("replica %s answered but is not listed in the cluster", t[0])
 		}
-		objs[t[1]+"."+t[2]] = &rawObject{db: t[1], name: t[2], engine: t[3], engineFull: t[4], sorting: t[5], primary: t[6], partition: t[7], sampling: t[8], asSelect: t[9], create: t[10]}
+		objs[t[1]+"."+t[2]] = &rawObject{db: t[1], name: t[2], engine: t[3], engineFull: t[4], sorting: t[5], primary: t[6], partition: t[7], sampling: t[8], asSelect: t[9], create: t[10], definer: t[11]}
 	}
 	object := func(r []string) (*rawObject, error) {
 		o := raw[r[0]][r[1]+"."+r[2]]
@@ -243,17 +260,25 @@ func (s *Store) ReplicaSnapshots(ctx context.Context, databases map[string]strin
 		}
 		o.projections = append(o.projections, schema.Projection{Name: p[3], Query: p[4]})
 	}
-	return s.snapshots(ctx, raw, roles)
+	user, err := s.conn.Rows(ctx, "SELECT currentUser()", 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(user) != 1 {
+		return nil, fmt.Errorf("currentUser() returned %d rows", len(user))
+	}
+	return s.snapshots(ctx, raw, roles, user[0][0])
 }
 
 // snapshots canonicalises every replica's objects in one pass and replaces
 // database and cluster names with their placeholders.
-func (s *Store) snapshots(ctx context.Context, raw map[string]map[string]*rawObject, roles map[string]string) (map[string]schema.Snapshot, error) {
+func (s *Store) snapshots(ctx context.Context, raw map[string]map[string]*rawObject, roles map[string]string, user string) (map[string]schema.Snapshot, error) {
 	type parsed struct {
-		raw     *rawObject
-		engine  schema.Engine
-		target  string
-		refresh string
+		raw      *rawObject
+		engine   schema.Engine
+		target   string
+		refresh  string
+		security string
 	}
 	all := map[string]map[string]parsed{}
 	set := &canonSet{byForm: map[form]map[string]string{}}
@@ -274,6 +299,7 @@ func (s *Store) snapshots(ctx context.Context, raw map[string]map[string]*rawObj
 					return nil, fmt.Errorf("%s on %s: a materialized view without a TO target", key, r)
 				}
 				p.refresh, p.target = m[1], m[2]
+				p.security = viewSecurity(o.create, o.asSelect)
 			}
 			for _, a := range p.engine.Args {
 				set.add(formExpression, a)
@@ -343,6 +369,10 @@ func (s *Store) snapshots(ctx context.Context, raw map[string]map[string]*rawObj
 				obj.Kind, obj.Engine = schema.KindMaterializedView, ""
 				obj.Target = schema.ReplaceDatabases(p.target, roles)
 				obj.Refresh = p.refresh
+				obj.SQLSecurity, obj.Definer = p.security, o.definer
+				if o.definer == user || o.definer == "default" {
+					obj.Definer = schema.DefinerPlaceholder
+				}
 			}
 			if obj.Kind != schema.KindMaterializedView {
 				for _, c := range o.columns {

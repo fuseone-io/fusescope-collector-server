@@ -30,6 +30,10 @@ const ClusterPlaceholder = "{cluster}"
 
 func RolePlaceholder(role string) string { return "{db:" + role + "}" }
 
+// DefinerPlaceholder replaces a view's definer when it is the connected user
+// or default, the two definers a view 0001 binds may have (§5.4).
+const DefinerPlaceholder = "{definer}"
+
 // Kind is what an object is.
 type Kind string
 
@@ -70,6 +74,11 @@ type Object struct {
 	Target  string `json:"target,omitempty"`
 	Refresh string `json:"refresh,omitempty"`
 	Query   string `json:"query,omitempty"`
+	// Definer and SQLSecurity are a view's DEFINER and SQL SECURITY. In the
+	// post-conditions they are set from the statements, never stored (§5.4),
+	// and only then compared.
+	Definer     string `json:"-"`
+	SQLSecurity string `json:"-"`
 }
 
 type Column struct {

@@ -7,7 +7,8 @@
 #   test/schema/cluster.sh up [keeper|zookeeper] [1|3]   prints the cluster's directory, whose
 #                                                        addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
 #                                                        members file the coordination members, and
-#                                                        coordination file keeper or zookeeper
+#                                                        coordination file keeper or zookeeper;
+#                                                        users migrator and intruder, password = name
 #   test/schema/cluster.sh down DIR
 set -euo pipefail
 MARKER=.fusescope-schema-cluster
@@ -54,6 +55,10 @@ for m in $MEMBERS; do
   zk_nodes+="<node><host>$m</host><port>$PORT</port></node>"
   zk_servers+="${zk_servers:+,}$m:2888:3888"
 done
+# migrator and intruder, besides default, on every server: the views' definer
+# with a migrator that is not default, and another definer (§5.4).
+user() { printf '<%s><password>%s</password><networks><ip>::/0</ip></networks><profile>default</profile><quota>default</quota><access_management>1</access_management></%s>' "$1" "$1" "$1"; }
+echo "<clickhouse><users>$(user migrator)$(user intruder)</users></clickhouse>" > users.xml
 {
   echo "services:"
   for m in $MEMBERS; do
@@ -89,7 +94,7 @@ X
 <shard><internal_replication>true</internal_replication><replica><host>ch-2-1</host><port>9000</port></replica><replica><host>ch-2-2</host><port>9000</port></replica></shard>
 </fusescope-custom></remote_servers></clickhouse>
 X
-    printf '  %s:\n    image: %s\n    hostname: %s\n    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}\n    ports: ["127.0.0.1:1900%d:9000"]\n    volumes: [./%s.xml:/etc/clickhouse-server/config.d/test.xml:ro]\n    depends_on: [%s]\n' "$n" "$CH" "$n" "$i" "$n" "${MEMBERS// /, }"
+    printf '  %s:\n    image: %s\n    hostname: %s\n    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}\n    ports: ["127.0.0.1:1900%d:9000"]\n    volumes: [./%s.xml:/etc/clickhouse-server/config.d/test.xml:ro, ./users.xml:/etc/clickhouse-server/users.d/test.xml:ro]\n    depends_on: [%s]\n' "$n" "$CH" "$n" "$i" "$n" "${MEMBERS// /, }"
   done
 } > compose.yaml
 docker compose up -d >compose.log 2>&1 || { cat compose.log >&2; exit 2; }
