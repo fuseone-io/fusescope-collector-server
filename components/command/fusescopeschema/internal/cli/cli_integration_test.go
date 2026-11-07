@@ -218,8 +218,10 @@ func TestIntegrationInterruptedThenRepaired(t *testing.T) {
 			t.Fatalf("repair wrote outside fusescope_schema: %.160s", q)
 		}
 	}
-	requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after the repair")
+	// 0002 is still pending, and the migrate after the repair runs it.
+	requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitPending, "check after the repair")
 	requireCode(t, run(bg, t, addrs[1], nil, "migrate"), ExitOK, "migrate after the repair")
+	requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after the migrate")
 }
 
 // check --wait returns 0 once a concurrent migrate is done.
@@ -663,4 +665,45 @@ func requireNoStatementAfterTheLoss(t *testing.T, r result) {
 	if sent != want {
 		t.Fatalf("%d statements sent, the run stopped at statement %d (%q): want %d", sent, n, m[0], want)
 	}
+}
+
+// status, with 0001 done and the table as chart 0.162.0 left it, reports the
+// next migration's admission and exits 0: the three rows 0002 would insert
+// when two are there (check 3), the extra row when one contradicts (check 1).
+func TestIntegrationStatusReportsTheNextMigrationsRows(t *testing.T) {
+	addrs := clusterAddrs(t)
+	clean(t, addrs[0])
+	bg := context.Background()
+	requireCode(t, run(bg, t, addrs[0], nil, "migrate"), ExitOK, "migrate")
+	c := conn(t, addrs[0])
+	for _, q := range []string{
+		"DELETE FROM fusescope_schema.migrations WHERE id = 2 SETTINGS keeper_map_strict_mode = 1",
+		"TRUNCATE TABLE signoz_metadata.column_evolution_metadata ON CLUSTER cluster SYNC SETTINGS distributed_ddl_output_mode = 'none'",
+	} {
+		if err := c.Exec(bg, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert := func(values string) {
+		t.Helper()
+		if err := c.Exec(bg, "INSERT INTO signoz_metadata.distributed_column_evolution_metadata (signal, column_name, column_type, field_context, field_name, version, release_time) SETTINGS distributed_foreground_insert = 1, insert_deduplicate = 0 VALUES "+values); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("('logs', 'resources_string', 'Map(LowCardinality(String), Float64)', 'resource', '__all__', 0, 0), ('traces', 'resources_string', 'Map(LowCardinality(String), Float64)', 'resource', '__all__', 0, 0)")
+	st := run(bg, t, addrs[1], nil, "status")
+	requireCode(t, st, ExitOK, "status with two rows")
+	if !strings.Contains(st.stdout, "0002 column_evolution_baseline inserts 3 rows:") || strings.Count(st.stdout, ", __all__, 1)") != 3 {
+		t.Fatalf("status printed %q", st.stdout)
+	}
+	requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitPending, "check with two rows")
+
+	insert("('traces', 'attributes', 'Map(String, String)', 'attribute', '__all__', 1, 5)")
+	st = run(bg, t, addrs[2], nil, "status")
+	requireCode(t, st, ExitOK, "status with a contradiction")
+	if !strings.Contains(st.stdout, "refused:") || !strings.Contains(st.stdout, "(traces, attributes, Map(String, String), attribute, __all__, 1) is extra") {
+		t.Fatalf("status printed %q", st.stdout)
+	}
+	requireCode(t, run(bg, t, addrs[2], nil, "check"), ExitRefused, "check with a contradiction")
+	requireCode(t, run(bg, t, addrs[2], nil, "migrate"), ExitRefused, "migrate with a contradiction")
 }

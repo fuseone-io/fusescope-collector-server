@@ -221,7 +221,8 @@ func withLease(ctx context.Context, stderr io.Writer, acquire func(context.Conte
 
 func refusal(err error) bool {
 	var drift *migrate.DriftError
-	if errors.As(err, &drift) {
+	var contra *migrate.DataError
+	if errors.As(err, &drift) || errors.As(err, &contra) {
 		return true
 	}
 	for _, target := range []error{
@@ -393,7 +394,14 @@ func (c *command) pending(r *migrate.Runner, st migrate.State) string {
 	for _, id := range st.Pending {
 		parts = append(parts, c.migrationName(r, id))
 	}
-	return "pending: " + strings.Join(parts, ", ")
+	out := "pending: " + strings.Join(parts, ", ")
+	if len(st.Inserts) > 0 && len(st.Pending) > 0 {
+		out += fmt.Sprintf("\n%s inserts %d rows:", c.migrationName(r, st.Pending[0]), len(st.Inserts))
+		for _, d := range st.Inserts {
+			out += "\n  " + d.Object
+		}
+	}
+	return out
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -501,6 +509,16 @@ func (c *command) status(ctx context.Context) int {
 		c.out("lease: free (token %d)", lease.Token)
 	default:
 		c.out("lease: held by %s (token %d, expires %s)", lease.Owner, lease.Token, time.UnixMilli(lease.ExpiresMs).UTC().Format(time.RFC3339))
+	}
+	if u := st.Unfinished; u != nil {
+		if len(u.Diffs) == 0 {
+			c.out("interrupted %s: its post-conditions hold; repair --id %d --mark done records it", c.migrationName(r, u.ID), u.ID)
+		} else {
+			c.out("interrupted %s: %d of its post-conditions do not hold:", c.migrationName(r, u.ID), len(u.Diffs))
+			for _, d := range u.Diffs {
+				c.out("  %s", d)
+			}
+		}
 	}
 	switch {
 	case err != nil:

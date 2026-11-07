@@ -8,14 +8,15 @@ Clean-room: nothing here comes from the fork's migrator.
   `status` and `repair --id N --mark done|absent` (spec §1), in `internal/cli`.
 - `internal/migrate`: the starting point and the runner under the lease. It also holds the
   read-only inspection behind `check`, `plan` and `status`, and `repair`.
-- `internal/migrations`: the migrations compiled in, starting with `0001 base`, and their
-  post-conditions.
-- `internal/schema`: the structural comparison and the backend's allow-list (spec §4.1, §8).
+- `internal/migrations`: the migrations compiled in, `0001 base` and `0002
+  column_evolution_baseline`, with their post-conditions and data conditions (spec §5).
+- `internal/schema`: the structural comparison, the backend's allow-list and the data conditions
+  (spec §4.1, §5.2, §8).
 - `internal/coord`: the coordination protocol, independent of ClickHouse: the bootstrap of
   `fusescope_schema`, the cluster identity and the lease (spec §3, §6).
 - `internal/chstore`: everything that runs on ClickHouse: the connection (TLS 1.3, password from a
-  file), the precheck, the coordination and history tables, and the structure read from the system
-  tables.
+  file), the precheck, the coordination and history tables, the structure read from the system
+  tables, and the rows a data condition owns.
 
 Integration tests need a real 2x2 cluster:
 
@@ -23,4 +24,5 @@ Integration tests need a real 2x2 cluster:
 make schema-integration COORDINATION=keeper     # or zookeeper
 ```
 
-Still to come: the binary in the collector's image, and the chart, devenv and suites.
+The binary ships in the collector's image as `/fusescope-schema`, and the chart runs it (chart
+0.162.0).

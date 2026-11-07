@@ -4,6 +4,8 @@
 package migrations
 
 import (
+	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -22,10 +24,135 @@ func base(t *testing.T) Migration {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 1 || all[0].ID != 1 || all[0].Name != "base" {
-		t.Fatalf("migrations = %+v", all)
+	if len(all) < 2 || all[0].ID != 1 || all[0].Name != "base" {
+		t.Fatalf("migrations: %d, the first %04d %s", len(all), all[0].ID, all[0].Name)
 	}
 	return all[0]
+}
+
+// baselineChecksum pins 0002 (§5.3).
+const baselineChecksum = "5f4cb909199e347087f5fb4354100aff7a94bb79ee479118e04eed77ff157f5b"
+
+func baseline(t *testing.T) Migration {
+	t.Helper()
+	all, err := All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[1].ID != 2 || all[1].Name != "column_evolution_baseline" {
+		t.Fatalf("migrations: %d", len(all))
+	}
+	return all[1]
+}
+
+func TestBaselineChecksumIsPinned(t *testing.T) {
+	if got := baseline(t).Checksum(); got != baselineChecksum {
+		t.Fatalf("0002's checksum is %s, pinned %s", got, baselineChecksum)
+	}
+}
+
+// 0002 has one data statement and no DDL, the structure of 0001, and the
+// five base rows of §5.3 [obs rows].
+func TestBaselineIsTheFiveBaseRows(t *testing.T) {
+	m, b := baseline(t), base(t)
+	if len(m.Statements) != 1 || !IsData(m.Statements[0]) {
+		t.Fatalf("0002's statements: %q", m.Statements)
+	}
+	if m.Reversible || !reflect.DeepEqual(m.Post, b.Post) || !reflect.DeepEqual(m.Pre, b.Post) || len(m.Affected()) != 0 {
+		t.Fatal("0002 must be irreversible and keep 0001's structure")
+	}
+	if len(b.Data) != 0 || len(m.Data) != 1 {
+		t.Fatalf("data conditions: 0001 %d, 0002 %d", len(b.Data), len(m.Data))
+	}
+	c := m.Data[0]
+	if c.Table != "metadata.column_evolution_metadata" || !reflect.DeepEqual(c.Scope, map[string]string{"field_name": "__all__"}) {
+		t.Fatalf("condition %+v", c)
+	}
+	var rows []string
+	for _, r := range c.Rows {
+		rows = append(rows, strings.Join(r.Key, "|")+" "+r.Values["release_time"].String())
+	}
+	want := []string{
+		"logs|resource|JSON()|resource|__all__|1 > 0",
+		"logs|resources_string|Map(LowCardinality(String), Float64)|resource|__all__|0 0",
+		"traces|attributes|JSON()|attribute|__all__|1 > 0",
+		"traces|resource|JSON()|resource|__all__|1 > 0",
+		"traces|resources_string|Map(LowCardinality(String), Float64)|resource|__all__|0 0",
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("rows\n%s\nwant\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+	// The statement inserts the same five rows, v1 at one instant in
+	// nanoseconds and v0 at 0, and only those no shard holds.
+	stmt := m.Statements[0]
+	for _, r := range c.Rows {
+		k := r.Key
+		tuple := fmt.Sprintf("('%s', '%s', '%s', '%s', '%s', %s)", k[0], k[1], k[2], k[3], k[4], k[5])
+		if !strings.Contains(stmt, tuple) {
+			t.Errorf("the statement does not insert %s", tuple)
+		}
+	}
+	for _, part := range []string{
+		"INSERT INTO {db:metadata}.distributed_column_evolution_metadata",
+		"if(version = 0, 0., toFloat64(toUnixTimestamp64Nano(now64(9))))",
+		"NOT IN (\n    SELECT signal, column_name, column_type, field_context, field_name, version\n    FROM {db:metadata}.distributed_column_evolution_metadata)",
+	} {
+		if !strings.Contains(stmt, part) {
+			t.Errorf("the statement lacks %q", part)
+		}
+	}
+}
+
+// A migration that owns rows cannot be reversible; data conditions must fit
+// the structure (§5.2).
+func TestCheckRefusesInconsistentMigrations(t *testing.T) {
+	all, err := All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Check(all); err != nil {
+		t.Fatalf("Check = %v", err)
+	}
+	reversible := func(all []Migration) { all[1].Reversible = true }
+	widened := func(all []Migration) {
+		next := all[1]
+		next.ID, next.Statements, next.Reversible = 3, nil, true
+		c := next.Data[0]
+		c.Rows = append(slices.Clone(c.Rows), schema.DataRow{Key: []string{"logs", "attributes", "JSON()", "attribute", "__all__", "1"}, Values: c.Rows[0].Values})
+		next.Data = []schema.DataCondition{c}
+		all[1].Reversible = false
+		copy(all, append(all[:2:2], next))
+	}
+	for name, change := range map[string]func([]Migration){"a reversible 0002": reversible} {
+		c := slices.Clone(all)
+		change(c)
+		if err := Check(c); err == nil {
+			t.Errorf("%s: Check accepted it", name)
+		}
+	}
+	c := append(slices.Clone(all), Migration{})
+	widened(c)
+	c[2].Reversible = true
+	if err := Check(c); err == nil || !strings.Contains(err.Error(), "owns rows") {
+		t.Errorf("a reversible migration widening the rows: Check = %v", err)
+	}
+	c[2].Reversible = false
+	if err := Check(c); err != nil {
+		t.Errorf("an irreversible migration widening the rows: Check = %v", err)
+	}
+	c = append(slices.Clone(all), all[1])
+	c[2].ID, c[2].Statements, c[2].Reversible = 3, []string{"ALTER TABLE x ON CLUSTER {cluster} ADD COLUMN y String"}, true
+	if err := Check(c); err != nil {
+		t.Errorf("a reversible DDL migration keeping the rows: Check = %v", err)
+	}
+	c[2].Statements, c[2].Reversible = []string{DataMarker + "INSERT …"}, false
+	if err := Check(c); err == nil || !strings.Contains(err.Error(), "no data conditions of its own") {
+		t.Errorf("a data statement with 0002's conditions unchanged: Check = %v", err)
+	}
+	c[2].Data = []schema.DataCondition{{Table: "metadata.nope"}}
+	if err := Check(c); err == nil {
+		t.Error("a condition on a table not in the structure: Check accepted it")
+	}
 }
 
 func TestBaseChecksumIsPinned(t *testing.T) {

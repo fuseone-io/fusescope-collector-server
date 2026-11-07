@@ -59,6 +59,13 @@ func (r *Runner) Repair(ctx context.Context, id uint32, mark Mark) error {
 		if err := r.compare(ctx, m, live); err != nil {
 			return fmt.Errorf("%w: %04d's post-conditions do not hold: %w", ErrRepairRefused, id, err)
 		}
+		if err := r.holds(ctx, m); err != nil {
+			var drift *DriftError
+			if !errors.As(err, &drift) {
+				return err
+			}
+			return fmt.Errorf("%w: %04d's post-conditions do not hold: %w", ErrRepairRefused, id, err)
+		}
 		if row.Done {
 			return nil
 		}

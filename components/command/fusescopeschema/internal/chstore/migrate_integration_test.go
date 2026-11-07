@@ -6,6 +6,7 @@ package chstore
 import (
 	"context"
 	"errors"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -150,22 +151,25 @@ func requireBase(t *testing.T, s *Store, databases map[string]string) {
 	}
 }
 
-// From scratch, 0001 builds exactly the observed schema; a second run is a
+// From scratch, 0001 builds exactly the observed schema and 0002 its five
+// base rows, the v1 rows at one instant in nanoseconds; a second run is a
 // no-op.
 func TestIntegrationFreshInstallRunsBase(t *testing.T) {
 	addrs := clusterAddrs(t)
 	emptyCluster(t, dial(t, addrs[0]), schema.DefaultDatabases, "cluster")
 	r := newRun(t, addrs[0], schema.DefaultDatabases, "cluster", coord.Config{})
+	from := time.Now().UnixNano()
 	res, err := r.runner.Migrate(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Point != migrate.PointEmpty || len(res.Applied) != 1 {
+	if res.Point != migrate.PointEmpty || len(res.Applied) != 2 {
 		t.Fatalf("result %+v", res)
 	}
 	requireBase(t, r.store, schema.DefaultDatabases)
+	requireInsertedAt(t, r.store, schema.DefaultDatabases, from, time.Now().UnixNano())
 	history, err := r.store.History(context.Background())
-	if err != nil || len(history) != 1 || !history[0].Done || history[0].Adopted || history[0].Checksum != base(t).Checksum() {
+	if err != nil || len(history) != 2 || !history[0].Done || history[0].Adopted || history[0].Checksum != base(t).Checksum() || !history[1].Done {
 		t.Fatalf("history %+v, %v", history, err)
 	}
 	requireNoHistoryRead(t, r.rec.all())
@@ -181,7 +185,7 @@ func TestIntegrationFreshInstallRunsBase(t *testing.T) {
 	if w := telemetryWrites(again.rec.all()); len(w) > 0 {
 		t.Fatalf("the second run wrote: %v", w)
 	}
-	if h, _ := again.store.History(context.Background()); len(h) != 1 || h[0] != history[0] {
+	if h, _ := again.store.History(context.Background()); len(h) != 2 || h[0] != history[0] || h[1] != history[1] {
 		t.Fatalf("history changed: %+v", h)
 	}
 	requireNoHistoryRead(t, again.rec.all())
@@ -202,32 +206,40 @@ func TestIntegrationCustomNames(t *testing.T) {
 	}
 	requireBase(t, r.store, databases)
 	for _, q := range telemetryWrites(r.rec.all()) {
+		if strings.HasPrefix(q, "INSERT INTO `fs_metadata`.distributed_column_evolution_metadata") {
+			continue // 0002's data statement, through the Distributed table (§5.2)
+		}
 		if !strings.Contains(q, "ON CLUSTER `fusescope-custom`") {
 			t.Fatalf("a statement outside the custom cluster: %.120s", q)
 		}
 	}
 }
 
-// The fork's schema is adopted: 0001 recorded done and adopted, no telemetry
-// object created or changed.
+// A fork install is adopted: 0001 recorded done and adopted, 0002 done with
+// the fork's rows as they are; no telemetry object or row created or changed.
 func TestIntegrationForkSchemaIsAdopted(t *testing.T) {
 	addrs := clusterAddrs(t)
 	c := dial(t, addrs[0])
 	applyObserved(t, c)
+	applyObservedRows(t, c)
 	emptyCluster(t, c, map[string]string{}, "cluster")
 	r := newRun(t, addrs[2], schema.DefaultDatabases, "cluster", coord.Config{})
+	before := baseRows(t, r.store, schema.DefaultDatabases)
 	res, err := r.runner.Migrate(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Point != migrate.PointFork || len(res.Applied) != 0 {
+	if res.Point != migrate.PointFork || len(res.Applied) != 1 || res.Applied[0] != 2 {
 		t.Fatalf("result %+v", res)
 	}
 	if w := telemetryWrites(r.rec.all()); len(w) > 0 {
 		t.Fatalf("the adoption wrote to the telemetry databases: %v", w)
 	}
+	if after := baseRows(t, r.store, schema.DefaultDatabases); !reflect.DeepEqual(after, before) {
+		t.Fatalf("the fork's rows changed:\n%v\n%v", before, after)
+	}
 	h, err := r.store.History(context.Background())
-	if err != nil || len(h) != 1 || !h[0].Done || !h[0].Adopted || h[0].Checksum != base(t).Checksum() {
+	if err != nil || len(h) != 2 || !h[0].Done || !h[0].Adopted || h[0].Checksum != base(t).Checksum() || !h[1].Done || h[1].Adopted {
 		t.Fatalf("history %+v, %v", h, err)
 	}
 	requireBase(t, r.store, schema.DefaultDatabases)
@@ -331,6 +343,7 @@ func TestIntegrationRepairMarkAbsent(t *testing.T) {
 	emptyCluster(t, dial(t, addrs[0]), schema.DefaultDatabases, "cluster")
 	ctx := context.Background()
 	r := newRun(t, addrs[0], schema.DefaultDatabases, "cluster", coord.Config{})
+	r.runner.Migrations = []migrations.Migration{base(t)}
 	if _, err := r.runner.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/coord"
 	"github.com/fuseone-io/fusescope-collector-server/components/command/fusescopeschema/internal/migrations"
@@ -44,6 +45,13 @@ type Store interface {
 	MarkDone(ctx context.Context, id uint32, token uint64) error
 	// ExecDDL runs a statement ON CLUSTER and waits for every host.
 	ExecDDL(ctx context.Context, statement string) error
+	// ExecData runs a data statement once, through the connected server,
+	// into a Distributed table, returning once each shard wrote (§5.2).
+	ExecData(ctx context.Context, statement string) error
+	// DataRows reads a data condition's table in its scope on every replica,
+	// by replication group, each column outside the key read with its merge
+	// function. A replica that does not answer is an error.
+	DataRows(ctx context.Context, c schema.DataCondition, merged, databases map[string]string) (schema.DataRead, error)
 	// RepairDone marks a started row done under the current lease token,
 	// and DeleteRow deletes a row; both confirm by reading back (§10.1).
 	RepairDone(ctx context.Context, id uint32, oldToken, newToken uint64) error
@@ -76,6 +84,21 @@ var (
 	// does not exist.
 	ErrNotWritten = errors.New("the history row was not written")
 )
+
+// DataError lists how the live rows contradict a pending migration's data
+// conditions (§7.8). Nothing was written.
+type DataError struct {
+	Against string
+	Diffs   []schema.Diff
+}
+
+func (e *DataError) Error() string {
+	lines := make([]string, 0, len(e.Diffs))
+	for _, d := range e.Diffs {
+		lines = append(lines, "  "+d.String())
+	}
+	return fmt.Sprintf("the rows contradict %s's data conditions in %d places (see the runbook, §10):\n%s", e.Against, len(e.Diffs), strings.Join(lines, "\n"))
+}
 
 // DriftError lists how the live schema differs from what it must be (§7.4,
 // §7.5).
@@ -112,7 +135,16 @@ type Runner struct {
 	// AfterStatement, when set, runs after each statement; a test uses it to
 	// stop a run midway, as a crash would.
 	AfterStatement func(migration uint32, statement int) error
+	// Sleep waits between re-reads of a lagging replica; nil sleeps.
+	Sleep func(ctx context.Context, d time.Duration) error
 }
+
+// A replica that differs from the others of its shard is re-read every
+// rereadEvery, rereads times, before it counts as a divergence (§5.2).
+const (
+	rereadEvery = 500 * time.Millisecond
+	rereads     = 20
+)
 
 // Migrate reads the history and the live schema, decides the starting point,
 // and runs what is pending. Every refusal happens before any write.
@@ -137,6 +169,9 @@ func (r *Runner) Migrate(ctx context.Context) (Result, error) {
 	case done > 0:
 		res.Point = PointManaged
 		if err := r.compare(ctx, r.Migrations[done-1], live); err != nil {
+			return res, err
+		}
+		if err := r.holds(ctx, r.Migrations[done-1]); err != nil {
 			return res, err
 		}
 	case empty(live):
@@ -219,6 +254,10 @@ func (r *Runner) compare(ctx context.Context, m migrations.Migration, live map[s
 // migration's started row may exist: from the moment the insert is sent,
 // unless the store proves it absent.
 func (r *Runner) run(ctx context.Context, m migrations.Migration) (started bool, _ error) {
+	missing, err := r.admit(ctx, m)
+	if err != nil {
+		return false, err
+	}
 	if err := r.Lease.Valid(ctx); err != nil {
 		return false, err
 	}
@@ -226,15 +265,24 @@ func (r *Runner) run(ctx context.Context, m migrations.Migration) (started bool,
 	if err := r.Store.InsertStarted(ctx, Row{ID: m.ID, Name: m.Name, Checksum: m.Checksum(), Token: token}, r.Version, r.Host); err != nil {
 		return !errors.Is(err, ErrNotWritten), fmt.Errorf("record started: %w", err)
 	}
-	return true, r.statements(ctx, m, token)
+	return true, r.statements(ctx, m, token, len(missing) > 0)
 }
 
-func (r *Runner) statements(ctx context.Context, m migrations.Migration, token uint64) error {
+// statements runs m's statements; its data statements only when insert, that
+// is when a row it owns is missing: with every row there, nothing is written.
+func (r *Runner) statements(ctx context.Context, m migrations.Migration, token uint64, insert bool) error {
 	for i, stmt := range m.Statements {
+		if migrations.IsData(stmt) && !insert {
+			continue
+		}
 		if err := r.Lease.Valid(ctx); err != nil {
 			return fmt.Errorf("before statement %d: %w", i+1, err)
 		}
-		if err := r.Store.ExecDDL(ctx, migrations.Render(stmt, r.Databases, r.Cluster)); err != nil {
+		exec, text := r.Store.ExecDDL, stmt
+		if migrations.IsData(stmt) {
+			exec, text = r.Store.ExecData, strings.TrimPrefix(stmt, migrations.DataMarker)
+		}
+		if err := exec(ctx, migrations.Render(text, r.Databases, r.Cluster)); err != nil {
 			return fmt.Errorf("statement %d: %w", i+1, err)
 		}
 		if r.AfterStatement != nil {
@@ -250,8 +298,101 @@ func (r *Runner) statements(ctx context.Context, m migrations.Migration, token u
 	if err := r.compare(ctx, m, live); err != nil {
 		return fmt.Errorf("post-conditions: %w", err)
 	}
+	if err := r.holds(ctx, m); err != nil {
+		return fmt.Errorf("post-conditions: %w", err)
+	}
 	if err := r.Lease.Valid(ctx); err != nil {
 		return err
 	}
 	return r.Store.MarkDone(ctx, m.ID, token)
+}
+
+// holds requires m's data conditions to hold (§5.2): a broken one is drift
+// (§7.4).
+func (r *Runner) holds(ctx context.Context, m migrations.Migration) error {
+	missing, problems, err := r.checkData(ctx, m)
+	if err != nil {
+		return err
+	}
+	if problems = append(problems, missing...); len(problems) > 0 {
+		return &DriftError{Against: fmt.Sprintf("%04d %s's data conditions", m.ID, m.Name), Diffs: problems}
+	}
+	return nil
+}
+
+// admit requires m's data conditions to admit the live rows before m starts
+// (§5.2, §7.8), and returns the rows m inserts.
+func (r *Runner) admit(ctx context.Context, m migrations.Migration) ([]schema.Diff, error) {
+	missing, problems, err := r.checkData(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	if len(problems) > 0 {
+		return nil, &DataError{Against: fmt.Sprintf("%04d %s", m.ID, m.Name), Diffs: problems}
+	}
+	return missing, nil
+}
+
+// checkData reads each of m's data conditions and compares the rows: the
+// owned rows missing, as Missing diffs, and the problems.
+func (r *Runner) checkData(ctx context.Context, m migrations.Migration) (missing, problems []schema.Diff, _ error) {
+	for _, c := range m.Data {
+		groups, err := r.readData(ctx, m, c)
+		if err != nil {
+			return nil, nil, err
+		}
+		absent, wrong := c.Check(groups)
+		for _, row := range absent {
+			missing = append(missing, schema.Diff{Replica: "cluster", Object: c.Table + " row (" + strings.Join(row.Key, ", ") + ")", Kind: schema.Missing})
+		}
+		problems = append(problems, wrong...)
+	}
+	return missing, problems, nil
+}
+
+// readData reads c until every replica of each shard shows the same rows,
+// re-reading a lagging one for up to 10 s; one that still differs is a
+// divergence (§7.4). A read error, or the context ending, is returned as it
+// is: retryable, never a divergence.
+func (r *Runner) readData(ctx context.Context, m migrations.Migration, c schema.DataCondition) (map[string][]schema.LiveRow, error) {
+	merged, err := c.Merged(m.Post)
+	if err != nil {
+		return nil, err
+	}
+	sleep := r.Sleep
+	if sleep == nil {
+		sleep = sleepCtx
+	}
+	for i := 0; ; i++ {
+		read, err := r.Store.DataRows(ctx, c, merged, r.Databases)
+		if err != nil {
+			return nil, err
+		}
+		groups, lagging := read.Agree()
+		if len(lagging) == 0 {
+			return groups, nil
+		}
+		if i == rereads {
+			diffs := make([]schema.Diff, 0, len(lagging))
+			for _, l := range lagging {
+				diffs = append(diffs, schema.Diff{Replica: l, Object: c.Table, Kind: schema.Changed, Part: "rows",
+					Want: "the rows of the other replicas of its shard", Got: "other rows after 10 s"})
+			}
+			return nil, &DriftError{Against: "its shard", Diffs: diffs}
+		}
+		if err := sleep(ctx, rereadEvery); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
