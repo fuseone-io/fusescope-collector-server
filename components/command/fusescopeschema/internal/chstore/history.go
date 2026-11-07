@@ -93,12 +93,23 @@ func (s *Store) insertRow(ctx context.Context, r migrate.Row, state string, vers
 		s.table("migrations"), r.ID, quote(r.Name), quote(r.Checksum), quote(state), r.Adopted, r.Token, finished, quote(version), quote(host)))
 }
 
+// InsertStarted wraps migrate.ErrNotWritten only when a read after the insert
+// shows no row of this run: no row with the id, or another run's.
 func (s *Store) InsertStarted(ctx context.Context, r migrate.Row, version, host string) error {
 	r.Done, r.Adopted = false, false
-	if err := s.insertRow(ctx, r, "started", version, host); err != nil {
-		return err
+	insertErr := s.insertRow(ctx, r, "started", version, host)
+	got, ok, err := s.row(ctx, r.ID)
+	switch {
+	case err != nil:
+		return errors.Join(insertErr, fmt.Errorf("read the started row back: %w", err))
+	case !ok:
+		return errors.Join(migrate.ErrNotWritten, insertErr, fmt.Errorf("%04d is absent after the insert", r.ID))
+	case got.Token != r.Token:
+		return errors.Join(migrate.ErrNotWritten, ErrHistoryConflict, fmt.Errorf("%04d holds %+v", r.ID, got))
+	case got != r:
+		return fmt.Errorf("%w: %04d reads back as %+v, want %+v", ErrHistoryConflict, r.ID, got, r)
 	}
-	return s.confirm(ctx, r)
+	return insertErr
 }
 
 func (s *Store) InsertAdopted(ctx context.Context, r migrate.Row, version, host string) error {

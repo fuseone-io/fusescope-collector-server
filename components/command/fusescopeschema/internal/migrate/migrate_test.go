@@ -6,6 +6,7 @@ package migrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -27,6 +28,11 @@ type fakeStore struct {
 	drift    func(map[string]schema.Snapshot)
 	failExec int // the statement that fails, 1-based; 0 never
 	total    int
+	// insertErr makes InsertStarted fail: written says whether the row was
+	// written anyway, as after a lost reply.
+	insertErr     error
+	insertWritten bool
+	markDoneErr   error
 }
 
 func (f *fakeStore) Expressions(_ context.Context, in []string) ([]string, error) { return in, nil }
@@ -52,9 +58,12 @@ func (f *fakeStore) History(context.Context) ([]Row, error) {
 }
 
 func (f *fakeStore) InsertStarted(_ context.Context, r Row, _, _ string) error {
+	if f.insertErr != nil && !f.insertWritten {
+		return f.insertErr
+	}
 	f.writes = append(f.writes, "started")
 	f.history = append(f.history, r)
-	return nil
+	return f.insertErr
 }
 
 func (f *fakeStore) InsertAdopted(_ context.Context, r Row, _, _ string) error {
@@ -65,6 +74,9 @@ func (f *fakeStore) InsertAdopted(_ context.Context, r Row, _, _ string) error {
 }
 
 func (f *fakeStore) MarkDone(_ context.Context, id uint32, token uint64) error {
+	if f.markDoneErr != nil {
+		return f.markDoneErr
+	}
 	f.writes = append(f.writes, "done")
 	for i := range f.history {
 		if f.history[i].ID == id && f.history[i].Token == token {
@@ -293,6 +305,47 @@ func TestLeaseLostBeforeStartedReportsNothingStarted(t *testing.T) {
 	res, err := r.Migrate(context.Background())
 	if !errors.Is(err, coord.ErrLeaseLost) || res.Started || len(s.writes)+len(s.executed) > 0 {
 		t.Fatalf("Migrate = %+v, %v, writes %v, executed %d", res, err, s.writes, len(s.executed))
+	}
+}
+
+// Started is false only when nothing can have been written; an insert whose
+// outcome is unknown counts as started (§5.1, exit 4).
+func TestStartedOnlyWhenTheRowMayExist(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(*fakeStore)
+		started bool
+	}{
+		{"the insert failed, the row proven absent", func(s *fakeStore) {
+			s.insertErr = fmt.Errorf("%w: connection reset before the reply", ErrNotWritten)
+		}, false},
+		{"the insert's reply was lost, the row written", func(s *fakeStore) {
+			s.insertErr, s.insertWritten = errors.New("connection reset"), true
+		}, true},
+		{"the insert's reply was lost, the row not written", func(s *fakeStore) {
+			s.insertErr = errors.New("connection reset")
+		}, true},
+		{"MarkDone failed", func(s *fakeStore) { s.markDoneErr = errors.New("connection reset") }, true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _, r, _ := setup(t)
+			tt.setup(s)
+			res, err := r.Migrate(context.Background())
+			if err == nil || res.Started != tt.started {
+				t.Fatalf("Migrate = %+v, %v; want Started %v", res, err, tt.started)
+			}
+			if !tt.started && len(s.executed) > 0 {
+				t.Fatalf("%d statements ran without a started row", len(s.executed))
+			}
+		})
+	}
+	s, _, r, _ := setup(t)
+	if res, err := r.Migrate(context.Background()); err != nil || res.Started {
+		t.Fatalf("a confirmed run: %+v, %v; want Started false", res, err)
+	}
+	if !s.history[0].Done {
+		t.Fatal("not marked done")
 	}
 }
 

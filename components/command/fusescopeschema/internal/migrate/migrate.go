@@ -34,7 +34,9 @@ type Store interface {
 	ReplicaSnapshots(ctx context.Context, databases map[string]string) (map[string]schema.Snapshot, error)
 	History(ctx context.Context) ([]Row, error)
 	// InsertStarted and InsertAdopted insert in strict mode and confirm the
-	// row by reading it back; an existing id is an error.
+	// row by reading it back; an existing id is an error. InsertStarted
+	// wraps ErrNotWritten only when it proved that no row of this run
+	// exists; any other error may hide a written row.
 	InsertStarted(ctx context.Context, r Row, version, host string) error
 	InsertAdopted(ctx context.Context, r Row, version, host string) error
 	// MarkDone marks a started row of this lease generation done, confirmed
@@ -66,6 +68,9 @@ var (
 	ErrUnknownMigration = errors.New("the history holds a migration this binary does not know")
 	// ErrChecksum: a recorded checksum differs from this binary's (§7.2).
 	ErrChecksum = errors.New("a recorded migration differs from this binary's")
+	// ErrNotWritten: the store proved that the row this run meant to write
+	// does not exist.
+	ErrNotWritten = errors.New("the history row was not written")
 )
 
 // DriftError lists how the live schema differs from what it must be (§7.4,
@@ -198,14 +203,15 @@ func (r *Runner) compare(ctx context.Context, m migrations.Migration, live map[s
 
 // run runs one migration (§5.1): started, each statement under a valid lease,
 // the post-conditions on every replica, done. It reports whether the
-// migration's started row was written, so a failure leaves it started.
+// migration's started row may exist: from the moment the insert is sent,
+// unless the store proves it absent.
 func (r *Runner) run(ctx context.Context, m migrations.Migration) (started bool, _ error) {
 	if err := r.Lease.Valid(ctx); err != nil {
 		return false, err
 	}
 	token := r.Lease.Held().Token
 	if err := r.Store.InsertStarted(ctx, Row{ID: m.ID, Name: m.Name, Checksum: m.Checksum(), Token: token}, r.Version, r.Host); err != nil {
-		return false, fmt.Errorf("record started: %w", err)
+		return !errors.Is(err, ErrNotWritten), fmt.Errorf("record started: %w", err)
 	}
 	return true, r.statements(ctx, m, token)
 }
