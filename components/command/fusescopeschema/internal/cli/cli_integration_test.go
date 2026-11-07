@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,15 +78,23 @@ type result struct {
 // queries.
 func run(ctx context.Context, t *testing.T, addr string, hook func(uint32, int) error, args ...string) result {
 	t.Helper()
+	return runEnv(ctx, t, addr, func(e *Env) { e.AfterStatement = hook }, args...)
+}
+
+// runEnv is run with the environment adjusted by set.
+func runEnv(ctx context.Context, t *testing.T, addr string, set func(*Env), args ...string) result {
+	t.Helper()
 	var out, errOut bytes.Buffer
 	var mu sync.Mutex
 	var queries []string
 	full := append(append([]string{}, args...), "--endpoint", addr, "--tls-insecure")
-	code := Run(ctx, Env{
+	env := Env{
 		Args: full, Getenv: func(string) string { return "" }, Stdout: &out, Stderr: &errOut, Hostname: "test",
-		Trace:          func(q string) { mu.Lock(); queries = append(queries, q); mu.Unlock() },
-		AfterStatement: hook, CheckEvery: 200 * time.Millisecond,
-	})
+		Trace:      func(q string) { mu.Lock(); queries = append(queries, q); mu.Unlock() },
+		CheckEvery: 200 * time.Millisecond,
+	}
+	set(&env)
+	code := Run(ctx, env)
 	return result{code: code, stdout: out.String(), stderr: errOut.String(), queries: queries}
 }
 
@@ -376,4 +385,104 @@ func TestIntegrationAReplicaDownIsRetryable(t *testing.T) {
 	}
 	dc("start", "ch-2-2")
 	requireCode(t, run(bg, t, addrs[0], nil, "check", "--wait", "2m"), ExitOK, "check --wait once ch-2-2 is back")
+}
+
+// composeOf is the harness's compose file and its coordination members.
+func composeOf(t *testing.T) (string, []string) {
+	t.Helper()
+	compose := os.Getenv("FUSESCOPE_SCHEMA_TEST_COMPOSE")
+	if compose == "" {
+		if os.Getenv("FUSESCOPE_SCHEMA_TEST_REQUIRED") == "1" {
+			t.Fatal("FUSESCOPE_SCHEMA_TEST_COMPOSE is not set")
+		}
+		t.Skip("FUSESCOPE_SCHEMA_TEST_COMPOSE not set")
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(compose), "members"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compose, strings.Fields(string(b))
+}
+
+func dockerCompose(compose string, args ...string) error {
+	out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker compose %v: %w\n%s", args, err, out)
+	}
+	return nil
+}
+
+// The coordination service, one node or one member of an ensemble, stopped
+// during a migration and started again (§9): the run exits by §1, the rerun
+// follows §7, and the failed update leaves the history as it was.
+func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
+	addrs := clusterAddrs(t)
+	compose, members := composeOf(t)
+	clean(t, addrs[0])
+	// The member the migrator's server holds its session on: losing it fails
+	// that server's requests in flight, not only a quiet follower's.
+	rows, err := conn(t, addrs[0]).Rows(context.Background(), "SELECT host FROM system.zookeeper_connection", 1)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("system.zookeeper_connection: %v %v", rows, err)
+	}
+	victim, single := rows[0][0], len(members) == 1
+	t.Cleanup(func() { _ = dockerCompose(compose, "start", victim) })
+	bg := context.Background()
+	var restarted sync.WaitGroup
+	hook := func(_ uint32, i int) error {
+		if i == 20 {
+			if err := dockerCompose(compose, "stop", victim); err != nil {
+				return err
+			}
+			restarted.Add(1)
+			go func() {
+				defer restarted.Done()
+				time.Sleep(8 * time.Second)
+				if err := dockerCompose(compose, "start", victim); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+		return nil
+	}
+	short := coord.Config{LeaseFor: 20 * time.Second, RenewEvery: 2 * time.Second, LostAfter: 5 * time.Second, RereadFor: 5 * time.Second, ClockSkew: 5 * time.Second}
+	r := runEnv(bg, t, addrs[0], func(e *Env) { e.AfterStatement, e.Coord = hook, short }, "migrate")
+	restarted.Wait()
+	t.Logf("migrate with %s stopped (%d members): exit %d\n%s", victim, len(members), r.code, r.stderr)
+	if single && r.code == ExitOK {
+		t.Fatal("migrate succeeded without its only coordination node")
+	}
+	// The service is back: check answers again, with no error.
+	if c := run(bg, t, addrs[1], nil, "check", "--wait", "3m"); c.code == ExitRetry {
+		t.Fatalf("check after the restart = 2: %s", c.stderr)
+	}
+	history := func() []string {
+		h, err := chstore.NewStore(conn(t, addrs[2]), "cluster").History(bg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, row := range h {
+			out = append(out, fmt.Sprintf("%+v", row))
+		}
+		return out
+	}
+	switch r.code {
+	case ExitOK:
+		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after a migrate that rode out the loss")
+	case ExitRetry:
+		requireCode(t, run(bg, t, addrs[1], nil, "migrate", "--lock-timeout", "2m"), ExitOK, "the rerun after exit 2")
+	case ExitStarted:
+		before := history()
+		if len(before) != 1 || !strings.Contains(before[0], "Done:false") {
+			t.Fatalf("history after exit 4: %v, want 0001 started", before)
+		}
+		requireCode(t, run(bg, t, addrs[1], nil, "migrate", "--lock-timeout", "2m"), ExitRefused, "the rerun after exit 4")
+		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitRefused, "check after exit 4")
+		if after := history(); strings.Join(after, "|") != strings.Join(before, "|") {
+			t.Fatalf("the history changed: %v, then %v", before, after)
+		}
+	default:
+		t.Fatalf("migrate with the coordination lost = %d, want 0, 2 or 4", r.code)
+	}
 }
