@@ -46,12 +46,13 @@ components:
 	done
 
 # fusescope-schema against a real 2x2 cluster (test/schema/cluster.sh), with
-# COORDINATION=keeper or zookeeper.
+# COORDINATION=keeper or zookeeper; ENSEMBLE=1 or 3 nodes of it.
 COORDINATION ?= keeper
+ENSEMBLE ?= 1
 # Fails, never skips, without the cluster; the cluster is torn down on any exit.
 # The packages run one at a time (-p 1): they share the one cluster.
 schema-integration:
-	@dir=$$($(CURDIR)/test/schema/cluster.sh up $(COORDINATION)) || exit 2; \
+	@dir=$$($(CURDIR)/test/schema/cluster.sh up $(COORDINATION) $(ENSEMBLE)) || exit 2; \
 	  trap '$(CURDIR)/test/schema/cluster.sh down "$$dir"' EXIT; \
 	  addrs=$$(cat "$$dir/addrs") && [ -n "$$addrs" ] || { echo "the cluster wrote no addresses" >&2; exit 2; }; \
 	  cd components/command/fusescopeschema && \

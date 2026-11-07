@@ -2,9 +2,12 @@
 # A 2x2 ClickHouse cluster with Keeper or ZooKeeper for fusescope-schema's
 # integration tests (docs/spec/fusescope-schema.md §9). The four servers'
 # native ports are 127.0.0.1:19001..19004. The same servers also form the
-# cluster fusescope-custom, for a custom cluster name.
-#   test/schema/cluster.sh up [keeper|zookeeper]   prints the cluster's directory,
-#                                                  whose addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
+# cluster fusescope-custom, for a custom cluster name. The coordination
+# service runs one node or a 3-node ensemble, its members named coord1..N.
+#   test/schema/cluster.sh up [keeper|zookeeper] [1|3]   prints the cluster's directory, whose
+#                                                        addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
+#                                                        members file the coordination members, and
+#                                                        coordination file keeper or zookeeper
 #   test/schema/cluster.sh down DIR
 set -euo pipefail
 MARKER=.fusescope-schema-cluster
@@ -33,33 +36,48 @@ if [ "${1:-}" = down ]; then
   down "$2"
   exit
 fi
-[ "${1:-}" = up ] || { echo "usage: $0 up [keeper|zookeeper] | down DIR" >&2; exit 2; }
+[ "${1:-}" = up ] || { echo "usage: $0 up [keeper|zookeeper] [1|3] | down DIR" >&2; exit 2; }
 COORD=${2:-keeper}
+SIZE=${3:-1}
 case "$COORD" in keeper | zookeeper) ;; *) echo "unknown coordination service $COORD" >&2; exit 2 ;; esac
+case "$SIZE" in 1 | 3) ;; *) echo "the coordination service runs 1 or 3 nodes, not $SIZE" >&2; exit 2 ;; esac
+MEMBERS=$(seq -f 'coord%g' "$SIZE" | tr '\n' ' ')
+MEMBERS=${MEMBERS% }
 DIR=$(mktemp -d "${TMPDIR:-/tmp}/fusescope-schema-cluster.XXXXXX")
 touch "$DIR/$MARKER"
 trap 'down "$DIR"' EXIT # until the cluster is up
 cd "$DIR"
 if [ "$COORD" = keeper ]; then PORT=9181; else PORT=2181; fi
+raft="" zk_nodes="" zk_servers=""
+for m in $MEMBERS; do
+  raft+="<server><id>${m#coord}</id><hostname>$m</hostname><port>9234</port></server>"
+  zk_nodes+="<node><host>$m</host><port>$PORT</port></node>"
+  zk_servers+="${zk_servers:+,}$m:2888:3888"
+done
 {
   echo "services:"
-  if [ "$COORD" = keeper ]; then
-    cat > coord.xml <<X
+  for m in $MEMBERS; do
+    id=${m#coord}
+    if [ "$COORD" = keeper ]; then
+      cat > "$m.xml" <<X
 <clickhouse><logger><level>warning</level><console>1</console></logger><listen_host>0.0.0.0</listen_host>
-<keeper_server><tcp_port>9181</tcp_port><server_id>1</server_id>
+<keeper_server><tcp_port>9181</tcp_port><server_id>$id</server_id>
 <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path><snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
-<raft_configuration><server><id>1</id><hostname>coord</hostname><port>9234</port></server></raft_configuration></keeper_server></clickhouse>
+<raft_configuration>$raft</raft_configuration></keeper_server></clickhouse>
 X
-    printf '  coord:\n    image: %s\n    volumes: [./coord.xml:/etc/clickhouse-keeper/keeper_config.d/k.xml:ro]\n' "$KEEPER"
-  else
-    printf '  coord:\n    image: %s\n    environment: {ALLOW_ANONYMOUS_LOGIN: "yes"}\n' "$ZK"
-  fi
+      printf '  %s:\n    image: %s\n    hostname: %s\n    volumes: [./%s.xml:/etc/clickhouse-keeper/keeper_config.d/k.xml:ro]\n' "$m" "$KEEPER" "$m" "$m"
+    else
+      env="ALLOW_ANONYMOUS_LOGIN: \"yes\", ZOO_SERVER_ID: \"$id\""
+      [ "$SIZE" = 1 ] || env+=", ZOO_SERVERS: \"$zk_servers\", ZOO_LISTEN_ALLIPS_ENABLED: \"yes\""
+      printf '  %s:\n    image: %s\n    hostname: %s\n    environment: {%s}\n' "$m" "$ZK" "$m" "$env"
+    fi
+  done
   i=0
   for n in $NODES; do
     i=$((i + 1))
     cat > "$n.xml" <<X
 <clickhouse><logger><level>warning</level><console>1</console></logger><listen_host>0.0.0.0</listen_host>
-<zookeeper><node><host>coord</host><port>$PORT</port></node></zookeeper>
+<zookeeper>$zk_nodes</zookeeper>
 <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
 <macros><shard>${n:3:1}</shard><replica>$n</replica></macros>
 <remote_servers><cluster>
@@ -71,7 +89,7 @@ X
 <shard><internal_replication>true</internal_replication><replica><host>ch-2-1</host><port>9000</port></replica><replica><host>ch-2-2</host><port>9000</port></replica></shard>
 </fusescope-custom></remote_servers></clickhouse>
 X
-    printf '  %s:\n    image: %s\n    hostname: %s\n    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}\n    ports: ["127.0.0.1:1900%d:9000"]\n    volumes: [./%s.xml:/etc/clickhouse-server/config.d/test.xml:ro]\n    depends_on: [coord]\n' "$n" "$CH" "$n" "$i" "$n"
+    printf '  %s:\n    image: %s\n    hostname: %s\n    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}\n    ports: ["127.0.0.1:1900%d:9000"]\n    volumes: [./%s.xml:/etc/clickhouse-server/config.d/test.xml:ro]\n    depends_on: [%s]\n' "$n" "$CH" "$n" "$i" "$n" "${MEMBERS// /, }"
   done
 } > compose.yaml
 docker compose up -d >compose.log 2>&1 || { cat compose.log >&2; exit 2; }
@@ -84,5 +102,7 @@ for n in $NODES; do
   [ -n "$ok" ] || { echo "$n did not reach its coordination service" >&2; exit 2; }
 done
 echo 127.0.0.1:19001,127.0.0.1:19002,127.0.0.1:19003,127.0.0.1:19004 > addrs
+echo "$MEMBERS" > members
+echo "$COORD" > coordination
 trap - EXIT
 echo "$DIR"

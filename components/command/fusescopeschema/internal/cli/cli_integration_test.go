@@ -7,10 +7,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -77,15 +80,23 @@ type result struct {
 // queries.
 func run(ctx context.Context, t *testing.T, addr string, hook func(uint32, int) error, args ...string) result {
 	t.Helper()
+	return runEnv(ctx, t, addr, func(e *Env) { e.AfterStatement = hook }, args...)
+}
+
+// runEnv is run with the environment adjusted by set.
+func runEnv(ctx context.Context, t *testing.T, addr string, set func(*Env), args ...string) result {
+	t.Helper()
 	var out, errOut bytes.Buffer
 	var mu sync.Mutex
 	var queries []string
 	full := append(append([]string{}, args...), "--endpoint", addr, "--tls-insecure")
-	code := Run(ctx, Env{
+	env := Env{
 		Args: full, Getenv: func(string) string { return "" }, Stdout: &out, Stderr: &errOut, Hostname: "test",
-		Trace:          func(q string) { mu.Lock(); queries = append(queries, q); mu.Unlock() },
-		AfterStatement: hook, CheckEvery: 200 * time.Millisecond,
-	})
+		Trace:      func(q string) { mu.Lock(); queries = append(queries, q); mu.Unlock() },
+		CheckEvery: 200 * time.Millisecond,
+	}
+	set(&env)
+	code := Run(ctx, env)
 	return result{code: code, stdout: out.String(), stderr: errOut.String(), queries: queries}
 }
 
@@ -365,8 +376,8 @@ func TestIntegrationAReplicaDownIsRetryable(t *testing.T) {
 	bg := context.Background()
 	requireCode(t, run(bg, t, addrs[0], nil, "migrate"), ExitOK, "migrate")
 	dc := func(args ...string) {
-		if out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("docker compose %v: %v\n%s", args, err, out)
+		if err := dockerCompose(compose, args...); err != nil {
+			t.Fatal(err)
 		}
 	}
 	dc("stop", "ch-2-2")
@@ -376,4 +387,280 @@ func TestIntegrationAReplicaDownIsRetryable(t *testing.T) {
 	}
 	dc("start", "ch-2-2")
 	requireCode(t, run(bg, t, addrs[0], nil, "check", "--wait", "2m"), ExitOK, "check --wait once ch-2-2 is back")
+}
+
+// composeOf is the harness's compose file and its coordination members.
+func composeOf(t *testing.T) (string, []string) {
+	t.Helper()
+	compose, members, _ := harnessOf(t)
+	return compose, members
+}
+
+// harnessOf is the harness's compose file, its coordination members, and
+// whether they run keeper or zookeeper.
+func harnessOf(t *testing.T) (string, []string, string) {
+	t.Helper()
+	compose := os.Getenv("FUSESCOPE_SCHEMA_TEST_COMPOSE")
+	if compose == "" {
+		if os.Getenv("FUSESCOPE_SCHEMA_TEST_REQUIRED") == "1" {
+			t.Fatal("FUSESCOPE_SCHEMA_TEST_COMPOSE is not set")
+		}
+		t.Skip("FUSESCOPE_SCHEMA_TEST_COMPOSE not set")
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(compose), "members"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, err := os.ReadFile(filepath.Join(filepath.Dir(compose), "coordination"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compose, strings.Fields(string(b)), strings.TrimSpace(string(kind))
+}
+
+// quorumProbe proves the surviving members still form one ensemble with a
+// quorum: a throwaway key written through the first is read through the
+// second, then removed, its absence read back through the first. Each step
+// is retried within one 30 s window, as a leader is elected and a member
+// catches up; the window also bounds every command and every wait.
+func quorumProbe(compose, kind string, survivors []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	key := fmt.Sprintf("/fusescope-schema-probe-%d", time.Now().UnixNano())
+	value := "probe-" + key[len("/fusescope-schema-probe-"):]
+	cli := func(member string, args ...string) (string, error) {
+		var full []string
+		if kind == "keeper" {
+			for i, a := range args[1:] {
+				args[i+1] = "'" + a + "'"
+			}
+			full = []string{"exec", "-T", member, "clickhouse-keeper-client", "-h", "localhost", "-p", "9181", "-q", strings.Join(args, " ")}
+		} else {
+			full = append([]string{"exec", "-T", member, "zkCli.sh", "-server", "localhost:2181"}, args...)
+		}
+		out, err := boundedCmd(ctx, "docker", append([]string{"compose", "-f", compose}, full...)...).CombinedOutput()
+		return string(out), err
+	}
+	step := func(what string, try func() error) error {
+		var last error
+		for {
+			if last = try(); last == nil {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("the surviving members %v, %s, within 30 s: %w", survivors, what, last)
+			case <-time.After(time.Second):
+			}
+		}
+	}
+	first, second := survivors[0], survivors[1]
+	if err := step("write a key through "+first, func() error {
+		out, err := cli(first, "create", key, value)
+		if err != nil || kind == "zookeeper" && !strings.Contains(out, "Created") {
+			return fmt.Errorf("create %s: %v %s", key, err, out)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := step("read it through "+second, func() error {
+		out, err := cli(second, "get", key)
+		if err != nil || !slices.Contains(strings.Fields(out), value) {
+			return fmt.Errorf("%s reads %q (%v), want %s", key, out, err, value)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	exists, remove := "stat", "delete"
+	if kind == "keeper" {
+		exists, remove = "exists", "rm"
+	}
+	return step("remove it and read its absence through "+first, func() error {
+		_, _ = cli(second, remove, key) // a retry after a removal that took finds nothing to remove
+		out, err := cli(first, exists, key)
+		absent := kind == "keeper" && err == nil && strings.TrimSpace(out) == "0" ||
+			kind == "zookeeper" && strings.Contains(out, "Node does not exist")
+		if !absent {
+			return fmt.Errorf("%s still reads as present: %q (%v)", key, out, err)
+		}
+		return nil
+	})
+}
+
+// boundedCmd runs under ctx; WaitDelay ends the wait even when a child of
+// docker still holds the output pipes.
+func boundedCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
+}
+
+func dockerCompose(compose string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	out, err := boundedCmd(ctx, "docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker compose %v: %w\n%s", args, err, out)
+	}
+	return nil
+}
+
+// The coordination service, one node or one member of an ensemble, stopped
+// during a migration and started again (§9). Safety holds whatever the
+// availability: 0 only with an ensemble, and then everything is done; 4
+// leaves 0001 started with no statement sent after the lease was lost, the
+// rerun refused and recovery only through §7. Never 1, 2 or a hang.
+func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
+	addrs := clusterAddrs(t)
+	compose, members, kind := harnessOf(t)
+	clean(t, addrs[0])
+	bg := context.Background()
+	// The member the migrator's server holds its session on: losing it fails
+	// that server's requests in flight, not only a quiet follower's.
+	rows, err := conn(t, addrs[0]).Rows(bg, "SELECT host FROM system.zookeeper_connection", 1)
+	if err != nil || len(rows) != 1 || !slices.Contains(members, rows[0][0]) {
+		t.Fatalf("system.zookeeper_connection: %v %v, members %v", rows, err, members)
+	}
+	victim, single := rows[0][0], len(members) == 1
+	t.Cleanup(func() { _ = dockerCompose(compose, "start", victim) })
+	var restarted sync.WaitGroup
+	var othersUp, quorum error
+	hook := func(_ uint32, i int) error {
+		if i != 20 {
+			return nil
+		}
+		if err := dockerCompose(compose, "stop", victim); err != nil {
+			return err
+		}
+		othersUp = othersRunning(compose, members, victim)
+		if !single {
+			// Before the victim returns: the two others alone keep a quorum
+			// and share one state, whatever the migrator then does.
+			quorum = quorumProbe(compose, kind, slices.DeleteFunc(slices.Clone(members), func(m string) bool { return m == victim }))
+		}
+		restarted.Add(1)
+		go func() {
+			defer restarted.Done()
+			time.Sleep(8 * time.Second)
+			if err := dockerCompose(compose, "start", victim); err != nil {
+				t.Error(err)
+			}
+		}()
+		return nil
+	}
+	short := coord.Config{LeaseFor: 20 * time.Second, RenewEvery: 2 * time.Second, LostAfter: 5 * time.Second, RereadFor: 5 * time.Second, ClockSkew: 5 * time.Second}
+	ctx, cancel := context.WithTimeout(bg, 5*time.Minute)
+	defer cancel()
+	r := runEnv(ctx, t, addrs[0], func(e *Env) { e.AfterStatement, e.Coord = hook, short }, "migrate")
+	restarted.Wait()
+	if ctx.Err() != nil {
+		t.Fatalf("migrate hung past 5 minutes: %s", r.stderr)
+	}
+	if othersUp != nil {
+		t.Fatal(othersUp)
+	}
+	if quorum != nil {
+		t.Fatal(quorum)
+	}
+	t.Logf("migrate with %s stopped (%d members): exit %d\n%s", victim, len(members), r.code, r.stderr)
+	if c := run(bg, t, addrs[1], nil, "check", "--wait", "3m"); c.code == ExitRetry {
+		t.Fatalf("check after the restart = 2: %s", c.stderr)
+	}
+	history := func() []string {
+		h, err := chstore.NewStore(conn(t, addrs[2]), "cluster").History(bg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, row := range h {
+			out = append(out, fmt.Sprintf("%+v", row))
+		}
+		return out
+	}
+	switch {
+	case r.code == ExitOK && !single:
+		if h := history(); len(h) != 1 || !strings.Contains(h[0], "Done:true") {
+			t.Fatalf("history after exit 0: %v, want 0001 done", h)
+		}
+		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after a migrate that rode out the loss")
+		if again := run(bg, t, addrs[3], nil, "migrate"); again.code != ExitOK || strings.Contains(again.stdout, "applied") {
+			t.Fatalf("a second migrate = %d: %s", again.code, again.stdout)
+		}
+	case r.code == ExitStarted:
+		requireNoStatementAfterTheLoss(t, r)
+		before := history()
+		if len(before) != 1 || !strings.Contains(before[0], "Done:false") {
+			t.Fatalf("history after exit 4: %v, want 0001 started", before)
+		}
+		requireCode(t, run(bg, t, addrs[1], nil, "migrate", "--lock-timeout", "2m"), ExitRefused, "the rerun after exit 4")
+		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitRefused, "check after exit 4")
+		if after := history(); strings.Join(after, "|") != strings.Join(before, "|") {
+			t.Fatalf("the history changed: %v, then %v", before, after)
+		}
+		// Recovery through §7 only: finish by hand, repair, migrate.
+		all, err := migrations.All()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := conn(t, addrs[0])
+		for _, stmt := range all[0].Statements {
+			if err := c.ExecDiscard(bg, migrations.Render(stmt, schema.DefaultDatabases, "cluster")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		requireCode(t, run(bg, t, addrs[2], nil, "repair", "--id", "1", "--mark", "done", "--lock-timeout", "2m"), ExitOK, "repair --mark done")
+		requireCode(t, run(bg, t, addrs[1], nil, "migrate"), ExitOK, "migrate after the repair")
+		requireCode(t, run(bg, t, addrs[1], nil, "check"), ExitOK, "check after the repair")
+	default:
+		t.Fatalf("migrate with the coordination lost (%d members) = %d, want 4, or 0 with an ensemble", len(members), r.code)
+	}
+}
+
+// othersRunning requires every member but the one stopped to be running.
+func othersRunning(compose string, members []string, stopped string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	out, err := boundedCmd(ctx, "docker", "compose", "-f", compose, "ps", "--status", "running", "--services").Output()
+	if err != nil {
+		return err
+	}
+	running := strings.Fields(string(out))
+	for _, m := range members {
+		if m == stopped && slices.Contains(running, m) {
+			return fmt.Errorf("%s is still running", m)
+		}
+		if m != stopped && !slices.Contains(running, m) {
+			return fmt.Errorf("%s stopped too, only %s should have", m, stopped)
+		}
+	}
+	return nil
+}
+
+var stmtErrRe = regexp.MustCompile(`0001 base: (before )?statement (\d+)`)
+
+// requireNoStatementAfterTheLoss: the run's error names the statement it
+// stopped at, and the run sent exactly the statements before it (the lease
+// lost before it), or up to it (it failed itself).
+func requireNoStatementAfterTheLoss(t *testing.T, r result) {
+	t.Helper()
+	m := stmtErrRe.FindStringSubmatch(r.stderr)
+	if m == nil {
+		t.Fatalf("the error names no statement: %s", r.stderr)
+	}
+	n, _ := strconv.Atoi(m[2])
+	want := n
+	if m[1] != "" {
+		want = n - 1
+	}
+	sent := 0
+	for _, q := range r.queries {
+		if strings.HasPrefix(q, "CREATE ") && strings.Contains(q, " ON CLUSTER ") && !strings.Contains(q, "fusescope_schema") {
+			sent++
+		}
+	}
+	if sent != want {
+		t.Fatalf("%d statements sent, the run stopped at statement %d (%q): want %d", sent, n, m[0], want)
+	}
 }
