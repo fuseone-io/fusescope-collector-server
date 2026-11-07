@@ -50,7 +50,9 @@ Images are published to `ghcr.io/fuseone-io/fusescope-collector` for linux/amd64
 and an SBOM: `:sha-<commit>` for every commit on `main` and `:main` for its head, `:X.Y.Z`, `:X.Y` and `:latest` for every
 `vX.Y.Z` tag, each only once `ci` has passed on that commit (`.github/workflows/release.yaml`).
 
-Each image is signed keyless with cosign by its multi-arch digest, the index and every platform's manifest:
+Each image is pushed by digest only, checked (both binaries in every platform's SBOM, provenance, and the amd64
+image run), then signed keyless with cosign by its multi-arch digest, the index and every platform's manifest. Only
+then do its tags point at that digest, so a failed check or signature moves no tag:
 
 ```sh
 cosign verify ghcr.io/fuseone-io/fusescope-collector:0.1.0 \
