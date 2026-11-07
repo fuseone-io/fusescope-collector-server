@@ -445,6 +445,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | Situation | Steps |
 |---|---|
 | Interrupted migration (§7.3) | `status` shows which post-conditions hold. Finish the remaining statements by hand, or undo the applied ones by hand, then run `repair` (§10.1) |
+| A chart upgrade replaced a Job still migrating | See §10.2 |
 | Unknown or changed history (§7.1, §7.2) | Run the newer binary that wrote it. Never edit history by hand |
 | Schema drift (§7.4, §7.5) | `status` lists the differences. Restore the expected objects, or drop the extra ones, by hand, then rerun |
 | Precheck failures (§7.6) | Add what is named, for example the `shard` and `replica` macros, and restart ClickHouse |
@@ -464,6 +465,39 @@ replicas, Keeper, and `keeper_map_path_prefix`.
   deleted.
 
 Either way, the result is verified by reading the history back before exit 0.
+
+### 10.2 A chart upgrade that replaced a running Job
+
+The chart names the migrator's Job by a hash of its spec and `telemetryStoreMigrator.runId`. An
+upgrade that changes neither leaves a running Job alone. An upgrade that changes either replaces
+the Job: Helm, or Argo CD, deletes the old one. If the old Job was still migrating, its pod gets
+`SIGTERM`, stops before its next statement, and exits 4 (§1).
+
+- **Symptom.** After such an upgrade, the new Job fails at once with exit 1, interrupted (§7.3).
+  The collectors' init container waits until `check --wait` passes, then fails the pod.
+- **Diagnosis.**
+  - `fusescope-schema status` shows the migration `started`, with its lease token. The lease is
+    free or expired, and the schema differs from that migration's post-conditions, listed.
+  - `fusescope-schema check` exits 1.
+- **Do not just run `migrate` again**, by hand or with another `runId`. It refuses the started
+  migration (§7.3), and it would not finish it in any case. Never edit the history by hand
+  (§10).
+- **Recovery,** by §10.1, from the state `status` shows:
+  - **The migration's statements ran in part.**
+    1. Finish the remaining statements by hand. Each is idempotent (§5).
+    2. Check that `status` shows no difference from its post-conditions.
+    3. Run `repair --id N --mark done`.
+  - **The migration is reversible** and you would rather undo it.
+    1. Undo the applied statements by hand, until every object it touches is exactly as its
+       preconditions.
+    2. Run `repair --id N --mark absent`.
+
+    `0001 base` is not reversible, so for it only `--mark done` applies.
+
+  Then set a new `runId`, so the chart runs a new Job, which finds the schema up to date.
+- **Prevention.** Change neither the Job's spec (its image, its connection, its resources and
+  scheduling) nor `runId` while a migration runs. `check` exiting 0, or the Job complete, says the
+  run is over.
 
 ## 11. Spike results (2026-11-06)
 
