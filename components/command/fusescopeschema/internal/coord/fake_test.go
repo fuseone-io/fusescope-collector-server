@@ -6,6 +6,8 @@ package coord
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -41,6 +43,11 @@ type fakeStore struct {
 	createSkips map[string]bool
 	// dropLeaseInsert loses the lease row's insert.
 	dropLeaseInsert bool
+	// readLeaseErr fails ReadLease.
+	readLeaseErr error
+	// rowsLag makes ReplicaRows show replica r's rows as stale for the next
+	// rowsLag[r] reads.
+	rowsLag map[string]int
 	// creates and inserts record the bootstrap's writes.
 	creates []string
 	inserts []string
@@ -52,6 +59,7 @@ type fakeLag struct {
 }
 
 type fakeMap struct {
+	history []string // migrations rows, as text
 	lease   *Lease
 	meta    map[string]string
 	tables  map[string]bool
@@ -62,7 +70,7 @@ func newFakeStore(replicas ...string) *fakeStore {
 	s := &fakeStore{
 		nowMs: 1_000_000, maps: map[string]*fakeMap{"/shared": {meta: map[string]string{}, tables: map[string]bool{}, started: map[uint64]bool{}}},
 		replicas: map[string]string{}, down: map[string]bool{}, lag: map[string]*fakeLag{},
-		absent: map[string]map[string]bool{}, differs: map[string]map[string]TableLayout{}, createSkips: map[string]bool{},
+		absent: map[string]map[string]bool{}, differs: map[string]map[string]TableLayout{}, createSkips: map[string]bool{}, rowsLag: map[string]int{},
 	}
 	for _, r := range replicas {
 		s.replicas[r] = "/shared"
@@ -111,6 +119,9 @@ func (v *fakeView) ReadLease(context.Context) (Lease, bool, error) {
 	defer v.s.mu.Unlock()
 	if err := v.check(); err != nil {
 		return Lease{}, false, err
+	}
+	if v.s.readLeaseErr != nil {
+		return Lease{}, false, v.s.readLeaseErr
 	}
 	if l := v.m().lease; l != nil {
 		return *l, true, nil
@@ -328,6 +339,43 @@ func (v *fakeView) ReplicaMeta(_ context.Context, name string) (map[string]strin
 		}
 		if val, ok := m.meta[name]; ok {
 			out[r] = val
+		}
+	}
+	return out, nil
+}
+
+func (v *fakeView) ReplicaRows(_ context.Context, table string) (map[string][]string, error) {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	if err := v.check(); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for r, path := range v.s.replicas {
+		if v.s.down[r] {
+			return nil, errors.New("replica " + r + " does not answer")
+		}
+		m := v.s.maps[path]
+		var rows []string
+		switch table {
+		case "meta":
+			for k, val := range m.meta {
+				rows = append(rows, k+"="+val)
+			}
+		case "lease":
+			if m.lease != nil {
+				rows = append(rows, fmt.Sprintf("migrate,%s,%d,%d", m.lease.Owner, m.lease.Token, m.lease.ExpiresMs))
+			}
+		case "migrations":
+			rows = append(rows, m.history...)
+		}
+		if n := v.s.rowsLag[r]; n > 0 && table == "lease" {
+			v.s.rowsLag[r]--
+			rows = []string{"migrate,,0,0"}
+		}
+		slices.Sort(rows)
+		if len(rows) > 0 {
+			out[r] = rows
 		}
 	}
 	return out, nil

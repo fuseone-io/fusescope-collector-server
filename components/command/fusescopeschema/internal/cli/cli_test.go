@@ -172,6 +172,20 @@ func TestWaitCheck(t *testing.T) {
 			}
 		})
 	}
+	t.Run("pending, then an attempt cut by the deadline: still pending", func(t *testing.T) {
+		calls := 0
+		got := waitCheck(context.Background(), 300*time.Millisecond, 10*time.Millisecond, func(ctx context.Context) int {
+			calls++
+			if calls == 1 {
+				return ExitPending
+			}
+			<-ctx.Done()
+			return ExitRetry
+		}, time.Now, sleepCtx)
+		if got != ExitPending {
+			t.Fatalf("waitCheck = %d, want 3, the last answer", got)
+		}
+	})
 	t.Run("an attempt that never answers ends at the deadline", func(t *testing.T) {
 		start := time.Now()
 		got := waitCheck(context.Background(), 200*time.Millisecond, time.Second, func(ctx context.Context) int {

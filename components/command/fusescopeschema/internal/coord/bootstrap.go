@@ -78,8 +78,13 @@ type LayoutStore interface {
 	// ReplicaMeta reads one meta row on every replica, absent where the row
 	// is; it fails unless every replica has the meta table.
 	ReplicaMeta(ctx context.Context, name string) (map[string]string, error)
-	// ReadLease is Store.ReadLease.
+	// ReadLease is Store.ReadLease. An error wrapping ErrUnknownLayout means
+	// the lease table's rows are not the protocol's; any other is a read
+	// failure.
 	ReadLease(ctx context.Context) (Lease, bool, error)
+	// ReplicaRows reads every row of one fusescope_schema table on every
+	// replica, each as text, sorted; a replica without rows may be absent.
+	ReplicaRows(ctx context.Context, table string) (map[string][]string, error)
 }
 
 // Bootstrap reads before it writes (§3.1): it refuses a layout it does not
@@ -240,8 +245,11 @@ func checkComplete(ctx context.Context, s LayoutStore) error {
 		return fmt.Errorf("%w: meta.cluster_id after the bootstrap: %v", ErrUnknownLayout, err)
 	}
 	l, ok, err := s.ReadLease(ctx)
+	if errors.Is(err, ErrUnknownLayout) {
+		return err
+	}
 	if err != nil {
-		return fmt.Errorf("%w: lease row: %v", ErrUnknownLayout, err)
+		return fmt.Errorf("%w: reading the lease row: %v", ErrUnavailable, err)
 	}
 	if !ok {
 		return fmt.Errorf("%w: the lease row is missing after the bootstrap", ErrUnknownLayout)

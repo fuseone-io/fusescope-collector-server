@@ -32,14 +32,22 @@ The chart's Job runs `migrate`, and the collector's init container runs `check -
 - `check`, `plan` and `status` run the read-only precheck, read, and write nothing, not even the
   bootstrap of `fusescope_schema`.
   - They first check `fusescope_schema` on every replica as the bootstrap would, without
-    writing. None of it is valid, and so is this layout only partly, which leaves `migrate`
-    pending. A table this binary does not know, a changed one, another coordination version or
-    another cluster identity is refused.
+    writing:
+    - a table this binary does not know, or a changed one, is refused;
+    - once `meta` is on every replica, another coordination version or another cluster
+      identity is refused, whatever else is missing;
+    - none of it, this layout only partly, or the `meta` or lease rows missing, leaves `migrate`
+      pending;
+    - complete, every replica must show the same `meta`, lease and `migrations` rows; rows that
+      still differ after the re-read window of §3.2 are a divergence.
   - Only then do they read the history and the lease, on the connected server.
   - Their codes:
   - `check`: 2 is a connection error. With `--wait` it polls through connection errors, since
-    ClickHouse may come up later, and exits 2 if the last attempt failed. Every attempt is bounded
-    by the wait's deadline, so a server that accepts and never replies cannot hold it longer.
+    ClickHouse may come up later. Every attempt is bounded by the wait's deadline, so a server
+    that accepts and never replies cannot hold it longer, and none starts after it. The exit code
+    is the last answer before the deadline: 3 if still pending, 2 if the last attempt failed. An
+    attempt the deadline cuts short gives no answer, so it ends 2 only if nothing answered before
+    it.
   - `plan`: 0, 1 when refused, 2 on a connection error.
   - `status`: 0 whenever it could read, printing a refusal as part of the report; 2 on a connection
     error.

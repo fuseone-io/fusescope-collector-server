@@ -399,11 +399,15 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 // waitCheck polls once until it answers up to date or refused, or wait
-// passes; then the last answer is the code. A signal ends the wait the same
-// way. Connection errors are polled through, as ClickHouse may come up later.
+// passes; then the code is the last answer given before the deadline. An
+// attempt the deadline cuts short answers nothing, unless it is the first:
+// a check that stayed pending ends 3, one that never got an answer ends 2. A
+// signal ends the wait the same way. Connection errors are polled through,
+// as ClickHouse may come up later.
 func waitCheck(ctx context.Context, wait, every time.Duration, once func(context.Context) int,
 	now func() time.Time, sleep func(context.Context, time.Duration) error) int {
 	deadline := now().Add(wait)
+	last := -1
 	for {
 		actx, cancel := ctx, func() {}
 		if wait > 0 {
@@ -412,16 +416,21 @@ func waitCheck(ctx context.Context, wait, every time.Duration, once func(context
 			actx, cancel = context.WithTimeout(ctx, deadline.Sub(now()))
 		}
 		code := once(actx)
+		cut := wait > 0 && actx.Err() != nil && ctx.Err() == nil
 		cancel()
+		if cut && last >= 0 {
+			return last
+		}
 		if code == ExitOK || code == ExitRefused || wait == 0 || ctx.Err() != nil {
 			return code
 		}
+		last = code
 		left := deadline.Sub(now())
 		if left <= 0 {
-			return code
+			return last
 		}
-		if err := sleep(ctx, min(every, left)); err != nil {
-			return code
+		if err := sleep(ctx, min(every, left)); err != nil || !now().Before(deadline) {
+			return last
 		}
 	}
 }
