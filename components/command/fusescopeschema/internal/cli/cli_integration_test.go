@@ -376,8 +376,8 @@ func TestIntegrationAReplicaDownIsRetryable(t *testing.T) {
 	bg := context.Background()
 	requireCode(t, run(bg, t, addrs[0], nil, "migrate"), ExitOK, "migrate")
 	dc := func(args ...string) {
-		if out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("docker compose %v: %v\n%s", args, err, out)
+		if err := dockerCompose(compose, args...); err != nil {
+			t.Fatal(err)
 		}
 	}
 	dc("stop", "ch-2-2")
@@ -422,8 +422,10 @@ func harnessOf(t *testing.T) (string, []string, string) {
 // quorum: a throwaway key written through the first is read through the
 // second, then removed, its absence read back through the first. Each step
 // is retried within one 30 s window, as a leader is elected and a member
-// catches up.
+// catches up; the window also bounds every command and every wait.
 func quorumProbe(compose, kind string, survivors []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	key := fmt.Sprintf("/fusescope-schema-probe-%d", time.Now().UnixNano())
 	value := "probe-" + key[len("/fusescope-schema-probe-"):]
 	cli := func(member string, args ...string) (string, error) {
@@ -436,20 +438,20 @@ func quorumProbe(compose, kind string, survivors []string) error {
 		} else {
 			full = append([]string{"exec", "-T", member, "zkCli.sh", "-server", "localhost:2181"}, args...)
 		}
-		out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, full...)...).CombinedOutput()
+		out, err := boundedCmd(ctx, "docker", append([]string{"compose", "-f", compose}, full...)...).CombinedOutput()
 		return string(out), err
 	}
-	deadline := time.Now().Add(30 * time.Second)
 	step := func(what string, try func() error) error {
 		var last error
 		for {
 			if last = try(); last == nil {
 				return nil
 			}
-			if !time.Now().Before(deadline) {
-				return fmt.Errorf("the surviving members %v, %s: %w", survivors, what, last)
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("the surviving members %v, %s, within 30 s: %w", survivors, what, last)
+			case <-time.After(time.Second):
 			}
-			time.Sleep(time.Second)
 		}
 	}
 	first, second := survivors[0], survivors[1]
@@ -487,8 +489,18 @@ func quorumProbe(compose, kind string, survivors []string) error {
 	})
 }
 
+// boundedCmd runs under ctx; WaitDelay ends the wait even when a child of
+// docker still holds the output pipes.
+func boundedCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
+}
+
 func dockerCompose(compose string, args ...string) error {
-	out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	out, err := boundedCmd(ctx, "docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker compose %v: %w\n%s", args, err, out)
 	}
@@ -608,7 +620,9 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 
 // othersRunning requires every member but the one stopped to be running.
 func othersRunning(compose string, members []string, stopped string) error {
-	out, err := exec.Command("docker", "compose", "-f", compose, "ps", "--status", "running", "--services").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	out, err := boundedCmd(ctx, "docker", "compose", "-f", compose, "ps", "--status", "running", "--services").Output()
 	if err != nil {
 		return err
 	}
