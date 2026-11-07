@@ -473,11 +473,10 @@ upgrade that changes neither leaves a running Job alone. An upgrade that changes
 the Job: Helm, or Argo CD, deletes the old one. If the old Job was still migrating, its pod gets
 `SIGTERM`, stops before its next statement, and exits 4 (§1).
 
-- **Symptom.** The new Job and the collectors' `check --wait` fail with exit 1 while the
-  interrupted row remains (§7.3), and the collectors' pods keep failing in their init container.
-  One window comes first. If the stopped run could not release its lease, the lease stays valid,
-  under the started row's token, until it expires. Until then `check` reports the migration in
-  progress (3) and the new Job waits for the lease.
+- **Symptom.** If the stopped run released its lease, or once an unreleased lease expires, the new
+  Job and the collectors' `check --wait` fail with exit 1 while the interrupted row remains (§7.3),
+  and the collectors' pods keep failing in their init container. Before then, `check` reports the
+  migration in progress (3) and the new Job waits for the lease.
 - **Diagnosis.** `fusescope-schema status` shows:
   - the `started` row;
   - the current lease state;
