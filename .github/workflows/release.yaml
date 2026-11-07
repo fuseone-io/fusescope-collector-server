@@ -1,7 +1,8 @@
 name: release
 
-# Publishes the container image to GHCR for linux/amd64 and linux/arm64, with
-# provenance and an SBOM, signed keyless with cosign by its multi-arch digest
+# Publishes the container image, the collector and fusescope-schema, to GHCR
+# for linux/amd64 and linux/arm64, with provenance and an SBOM, checked, then
+# signed keyless with cosign by its multi-arch digest
 # (the index and each platform's manifest), only for commits whose ci run
 # succeeded: each commit
 # on main as :sha-<commit>, then :main at main's head; each vX.Y.Z tag as
@@ -81,6 +82,26 @@ jobs:
             ${{ steps.meta.outputs.tags }} .
           digest=$(jq -er '."containerimage.digest"' build-metadata.json)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Check the published image before signing it
+        # Every platform's SBOM lists both binaries and has provenance; the
+        # amd64 image, run here, reports the release's version from both.
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "$REF" --format '{{ json .SBOM }}' > sbom.json
+          docker buildx imagetools inspect "$REF" --format '{{ json .Provenance }}' > provenance.json
+          for p in linux/amd64 linux/arm64; do
+            for bin in /fusescope-collector /fusescope-schema; do
+              jq -e --arg p "$p" --arg b "$bin" '.[$p].SPDX.packages | any((.sourceInfo // "") | endswith(": " + $b))' sbom.json >/dev/null \
+                || { echo "::error::the $p SBOM does not list $bin"; exit 1; }
+            done
+            jq -e --arg p "$p" '.[$p].SLSA | type == "object"' provenance.json >/dev/null \
+              || { echo "::error::the $p image has no provenance"; exit 1; }
+          done
+          docker pull -q --platform linux/amd64 "$REF"
+          docker tag "$REF" fusescope-collector:release-check
+          scripts/test-image.sh fusescope-collector:release-check "$VERSION" amd64
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign
         # By digest, never by tag; --recursive also signs each platform's manifest.

@@ -42,6 +42,10 @@ make forbid-fork  # fails if any module depends on the AGPL collector fork or Si
 docker build -t fusescope-collector .
 ```
 
+Each image holds two binaries from the same commit and version: `/fusescope-collector`, the entrypoint, and
+`/fusescope-schema`, the schema migrator ([ADR 0010](docs/adr/0010-fusescope-schema.md)), run with
+`--entrypoint /fusescope-schema`. `scripts/test-image.sh IMAGE VERSION ARCH` checks both on a built image.
+
 Images are published to `ghcr.io/fuseone-io/fusescope-collector` for linux/amd64 and linux/arm64, with provenance
 and an SBOM: `:sha-<commit>` for every commit on `main` and `:main` for its head, `:X.Y.Z`, `:X.Y` and `:latest` for every
 `vX.Y.Z` tag, each only once `ci` has passed on that commit (`.github/workflows/release.yaml`).

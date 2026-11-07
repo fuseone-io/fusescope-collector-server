@@ -32,12 +32,27 @@ jobs:
       - name: Check no module depends on the AGPL collector fork
         run: make forbid-fork
 
+  # Each platform on its own native runner: both binaries run, as the image's
+  # non-root user, and report the version the image was built with.
   image:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Build the container image
-        run: docker build -t fusescope-collector:ci .
+        run: |
+          version=0.1.0-ci+$(git rev-parse --short=12 HEAD)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          docker build --build-arg VERSION="$version" -t fusescope-collector:ci .
+      - name: Test both binaries in the image
+        run: scripts/test-image.sh fusescope-collector:ci "$VERSION" ${{ matrix.arch }}
 
   components:
     runs-on: ubuntu-latest
