@@ -361,7 +361,10 @@ Only one set is ever checked against the live rows, as for the structure: that o
 2. Before the next migration's `started` row is written, its set must admit the live rows. If it
    does not, that is a contradiction (§7.8), and nothing is written. When several migrations are
    pending, only the next one's set is checked against the live rows, since each later set starts
-   from the rows the one before it leaves. `check` and `plan` report the same refusal.
+   from the rows the one before it leaves. `check` and `plan` report the same refusal (exit 1).
+   `status` evaluates the same admission and prints it: the rows the next migration would insert,
+   or each key in its scope that is extra, on more than one shard or with a broken constraint. It
+   still exits 0 whenever it could read (§1).
 3. After its statements and before `done`, the migration's own set must hold. From then on it is
    the set of step 1. `repair --mark done` checks the same (§10.1).
 
@@ -522,6 +525,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | A base row deleted after `0002` is `done` | `check`, `status` and `migrate` refuse (§7.4), naming the row |
 | The response to `0002`'s insert lost (the connection cut after the statement is sent) | exit 4; `status` shows whether the data condition holds; `repair --mark done` succeeds when it holds and is refused when it does not; `--mark absent` refused (not reversible) |
 | A replica of the row's shard lagging behind the insert | the post-condition waits for it within the re-read window, then holds; a replica that never catches up is a divergence |
+| `status` with `0001` done and the next migration's set contradicted (an extra `__all__` row), or partly met (two of the five rows) | exit 0 in both; it names the contradictory row, or lists the three rows `0002` would insert; `check` exits 1 and 3 respectively |
 | A replica of a data condition's table unreachable, before `started` and after it | exit 2 before, exit 4 after; never a divergence (§7.4) |
 | The run's context cancelled during the re-reads of a lagging replica, before the 10 s pass | exit 2 before `started`, 4 after; never a divergence |
 | A later migration widening `0002`'s rows (a test-only `0003` adding a sixth base row) | before it, `0002`'s set must hold and `0003`'s must admit; after it, only `0003`'s set is checked, and the sixth row is not refused |
