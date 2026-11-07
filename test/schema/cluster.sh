@@ -6,7 +6,8 @@
 # service runs one node or a 3-node ensemble, its members named coord1..N.
 #   test/schema/cluster.sh up [keeper|zookeeper] [1|3]   prints the cluster's directory, whose
 #                                                        addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
-#                                                        and members file the coordination members
+#                                                        members file the coordination members, and
+#                                                        coordination file keeper or zookeeper
 #   test/schema/cluster.sh down DIR
 set -euo pipefail
 MARKER=.fusescope-schema-cluster
@@ -102,5 +103,6 @@ for n in $NODES; do
 done
 echo 127.0.0.1:19001,127.0.0.1:19002,127.0.0.1:19003,127.0.0.1:19004 > addrs
 echo "$MEMBERS" > members
+echo "$COORD" > coordination
 trap - EXIT
 echo "$DIR"

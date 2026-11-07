@@ -392,6 +392,14 @@ func TestIntegrationAReplicaDownIsRetryable(t *testing.T) {
 // composeOf is the harness's compose file and its coordination members.
 func composeOf(t *testing.T) (string, []string) {
 	t.Helper()
+	compose, members, _ := harnessOf(t)
+	return compose, members
+}
+
+// harnessOf is the harness's compose file, its coordination members, and
+// whether they run keeper or zookeeper.
+func harnessOf(t *testing.T) (string, []string, string) {
+	t.Helper()
 	compose := os.Getenv("FUSESCOPE_SCHEMA_TEST_COMPOSE")
 	if compose == "" {
 		if os.Getenv("FUSESCOPE_SCHEMA_TEST_REQUIRED") == "1" {
@@ -403,7 +411,57 @@ func composeOf(t *testing.T) (string, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return compose, strings.Fields(string(b))
+	kind, err := os.ReadFile(filepath.Join(filepath.Dir(compose), "coordination"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compose, strings.Fields(string(b)), strings.TrimSpace(string(kind))
+}
+
+// quorumProbe proves the surviving members still form one ensemble with a
+// quorum: a throwaway key written through the first is read through the
+// second, then removed. It retries for 30 s, as a new leader is elected.
+func quorumProbe(compose, kind string, survivors []string) error {
+	key := fmt.Sprintf("/fusescope-schema-probe-%d", time.Now().UnixNano())
+	value := "probe-" + key[len("/fusescope-schema-probe-"):]
+	cli := func(member string, args ...string) (string, error) {
+		var full []string
+		if kind == "keeper" {
+			full = []string{"exec", "-T", member, "clickhouse-keeper-client", "-h", "localhost", "-p", "9181", "-q", strings.Join(args, " ")}
+		} else {
+			full = append([]string{"exec", "-T", member, "zkCli.sh", "-server", "localhost:2181"}, args...)
+		}
+		out, err := exec.Command("docker", append([]string{"compose", "-f", compose}, full...)...).CombinedOutput()
+		return string(out), err
+	}
+	quote := func(s string) string {
+		if kind == "keeper" {
+			return "'" + s + "'"
+		}
+		return s
+	}
+	var last error
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
+		out, err := cli(survivors[0], "create", quote(key), quote(value))
+		if err != nil || kind == "zookeeper" && !strings.Contains(out, "Created") {
+			last = fmt.Errorf("create %s through %s: %v %s", key, survivors[0], err, out)
+			continue
+		}
+		out, err = cli(survivors[1], "get", quote(key))
+		if err != nil || !slices.Contains(strings.Fields(out), value) {
+			return fmt.Errorf("%s wrote %s, %s reads %q (%v): not one ensemble", survivors[0], key, survivors[1], out, err)
+		}
+		_, _ = cli(survivors[1], kindRemove(kind), quote(key))
+		return nil
+	}
+	return fmt.Errorf("the surviving members %v hold no quorum: %v", survivors, last)
+}
+
+func kindRemove(kind string) string {
+	if kind == "keeper" {
+		return "rm"
+	}
+	return "delete"
 }
 
 func dockerCompose(compose string, args ...string) error {
@@ -421,7 +479,7 @@ func dockerCompose(compose string, args ...string) error {
 // rerun refused and recovery only through §7. Never 1, 2 or a hang.
 func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	addrs := clusterAddrs(t)
-	compose, members := composeOf(t)
+	compose, members, kind := harnessOf(t)
 	clean(t, addrs[0])
 	bg := context.Background()
 	// The member the migrator's server holds its session on: losing it fails
@@ -433,7 +491,7 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	victim, single := rows[0][0], len(members) == 1
 	t.Cleanup(func() { _ = dockerCompose(compose, "start", victim) })
 	var restarted sync.WaitGroup
-	var othersUp error
+	var othersUp, quorum error
 	hook := func(_ uint32, i int) error {
 		if i != 20 {
 			return nil
@@ -442,6 +500,11 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 			return err
 		}
 		othersUp = othersRunning(compose, members, victim)
+		if !single {
+			// Before the victim returns: the two others alone keep a quorum
+			// and share one state, whatever the migrator then does.
+			quorum = quorumProbe(compose, kind, slices.DeleteFunc(slices.Clone(members), func(m string) bool { return m == victim }))
+		}
 		restarted.Add(1)
 		go func() {
 			defer restarted.Done()
@@ -462,6 +525,9 @@ func TestIntegrationCoordinationLostDuringMigrate(t *testing.T) {
 	}
 	if othersUp != nil {
 		t.Fatal(othersUp)
+	}
+	if quorum != nil {
+		t.Fatal(quorum)
 	}
 	t.Logf("migrate with %s stopped (%d members): exit %d\n%s", victim, len(members), r.code, r.stderr)
 	if c := run(bg, t, addrs[1], nil, "check", "--wait", "3m"); c.code == ExitRetry {
