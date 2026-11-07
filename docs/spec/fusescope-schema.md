@@ -103,8 +103,9 @@ A read-only precheck runs first, on every replica. It verifies:
 the read-only precheck. The bootstrap's first `CREATE TABLE … ENGINE = KeeperMap` reports its
 absence (`Code: 36, BAD_ARGUMENTS: KeeperMap is disabled because 'keeper_map_path_prefix' config is
 not defined`), before any telemetry write. That error is retryable (exit 2), not a refusal. The
-message names the setting, and nothing but `fusescope_schema`'s database has been created. The
-setting may be on its way: on an upgrade, the chart's ClickHouse restarts with it while the
+message names the setting, and nothing has been written to the telemetry databases; part of
+`fusescope_schema`'s layout may exist, on replicas that already have the setting during a rolling
+restart, and the next bootstrap completes it (§3.1). The setting may be on its way: on an upgrade, the chart's ClickHouse restarts with it while the
 migrator's Job already runs (observed on kind, 2026-11-07: the pod was replaced 30 to 75 s after the
 upgrade). A server that never gets it exhausts the Job's retries with the same message.
 
@@ -423,7 +424,7 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | TLS 1.3 with a password file; plaintext opt-in; `verify: false`; TLS below 1.3 | connects as configured; TLS below 1.3 refused |
 | Custom database names | migrated and compared under the custom names |
 | Precheck failures: no Keeper, no macros, replicas' clocks 60 s apart | each refused with what is missing |
-| No `keeper_map_path_prefix` | exit 2, naming the setting; nothing written to the telemetry databases |
+| No `keeper_map_path_prefix` | exit 2, naming the setting; nothing written to the telemetry databases; a later run completes `fusescope_schema` once the setting is in place |
 | Each concurrency and lease case above, with each coordination service: Keeper (one node and a 3-node ensemble) and the chart's ZooKeeper (`signoz/zookeeper:3.7.1`, one node as the chart deploys it by default, and a 3-node ensemble) | the same results with every service |
 | The coordination service stopped during a migration, then started again: a single node, or the member of a 3-node ensemble the migrator's server holds its session on | **Single node: exit 4.** No statement is sent after the lease is lost, `0001` stays `started` and the history unchanged, the rerun and `check` are refused, and only §7 (finish by hand, `repair`) recovers it. **Ensemble: exit 0 or 4.** With the member down, the two others stay up, and a key written through one is read through the other, so they hold a quorum and one state. Exit 0 means everything is done and `check` is 0. Exit 4 is as for a single node. **Either way, never 1, 2 or a hang.** Which of 0 and 4 an ensemble gives depends on how the client meets the interruption. The results are observed, not an availability guarantee: on 2026-11-07 both ensembles exited 0 in some runs and ZooKeeper's 4 in another, and single nodes always exited 4 |
 | A replica with another `keeper_map_path_prefix`, and a replica on another coordination ensemble | refused by §3.2 before the lease, naming the replica; nothing written to the telemetry databases |
@@ -446,7 +447,8 @@ replicas, Keeper, and `keeper_map_path_prefix`.
 | Interrupted migration (§7.3) | `status` shows which post-conditions hold. Finish the remaining statements by hand, or undo the applied ones by hand, then run `repair` (§10.1) |
 | Unknown or changed history (§7.1, §7.2) | Run the newer binary that wrote it. Never edit history by hand |
 | Schema drift (§7.4, §7.5) | `status` lists the differences. Restore the expected objects, or drop the extra ones, by hand, then rerun |
-| Precheck failures (§7.6) | Add what is named, for example `keeper_map_path_prefix` in the server configuration, and restart ClickHouse |
+| Precheck failures (§7.6) | Add what is named, for example the `shard` and `replica` macros, and restart ClickHouse |
+| No `keeper_map_path_prefix` (exit 2, §2.1) | Set it in the server configuration, the same on every replica, and restart ClickHouse; the next run retries. The chart's ClickHouse sets it, and its Job retries while the pods restart |
 | A bad migration | There is no automatic rollback. Restore from backup, or write a forward migration that corrects it |
 | Going back to the fork's migrator | Possible only while the history holds `0001` alone: the fork's own history and the [obs] schema are untouched. After any later migration it is not supported |
 
