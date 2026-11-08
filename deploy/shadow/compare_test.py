@@ -70,6 +70,32 @@ class MetricSeriesTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("DIFF  metric series: 0 only in fusescope, 1 only in fork"))
 
 
+class InternalServicesTest(unittest.TestCase):
+    def test_default_names_both_collectors(self):
+        # Observed in both ClickHouses of the demo (deploy/shadow/README.md): the
+        # earlier collector reports its own telemetry as /fusescope-otel-collector.
+        self.assertEqual(compare.INTERNAL_SERVICES, ("fusescope-collector", "/fusescope-otel-collector"))
+
+    def test_earlier_collector_series_ignored(self):
+        own = metric("otelcol_exporter_sent_spans", "/fusescope-otel-collector")
+        demo, shadow, ignored = compare.metric_series([USER], [USER, own])
+        self.assertEqual((demo, ignored["shadow"]), (shadow, 1))
+
+    def test_no_name_filter_in_sql(self):
+        # The SQL used to drop otelcol_*, exporter_*, scrape_*, promhttp_* and up by
+        # name, so user metrics of those names never reached the comparison.
+        sql = compare.CHECKS["metric series"]
+        for name in ("otelcol", "exporter", "scrape", "promhttp", "'up'", "NOT LIKE"):
+            self.assertNotIn(name, sql)
+
+    def test_user_metrics_with_collector_names_compared(self):
+        for name in ("otelcol_receiver_accepted_spans", "exporter_queue_size", "scrape_duration_seconds",
+                     "promhttp_metric_handler_requests_total", "up"):
+            theirs = metric(name, "billing")
+            failed, _ = compare.check("metric series", *compare.metric_series([USER, theirs], [USER]))
+            self.assertTrue(failed, f"{name} of a user's service is user data")
+
+
 class CheckTest(unittest.TestCase):
     def test_equal(self):
         self.assertEqual(compare.check("log attribute keys", {("k",)}, {("k",)}), (False, ["ok    log attribute keys (1 rows)"]))

@@ -31,13 +31,14 @@ DEMO_LABEL = os.environ.get("DEMO_LABEL", "demo")
 SHADOW_LABEL = os.environ.get("SHADOW_LABEL", "shadow")
 # The side whose duplicates fail the run: this collector's.
 OURS = os.environ.get("OURS", "shadow")
-# The service.name under which a collector reports its own telemetry. Its
-# series are counted and left out of the metric series check; series of any
-# other service, otelcol.* included (a user's own collector), are compared.
-INTERNAL_SERVICES = tuple(s for s in os.environ.get("INTERNAL_SERVICES", "fusescope-collector").split(",") if s)
-# The demo collector scrapes its own telemetry; the shadow collector does not.
-SELF_METRICS = "metric_name NOT LIKE 'otelcol\\_%' AND metric_name NOT LIKE 'exporter\\_%' " \
-    "AND metric_name NOT LIKE 'scrape\\_%' AND metric_name NOT LIKE 'promhttp\\_%' AND metric_name != 'up'"
+# The service.name under which each collector reports its own telemetry, as a
+# resource attribute and a label, observed in the demo's two ClickHouses:
+# fusescope-collector, and /fusescope-otel-collector for the earlier collector.
+# Their series are counted and left out of the metric series check. Series of
+# any other service are compared, whatever their name: otelcol_*, exporter_*,
+# scrape_*, promhttp_*, up and otelcol.* can be a user's own collector's.
+INTERNAL_SERVICES = tuple(
+    s for s in os.environ.get("INTERNAL_SERVICES", "fusescope-collector,/fusescope-otel-collector").split(",") if s)
 
 # Fixed once per run, so both databases and every check see the same minutes.
 _end = int(time.time()) // 60 * 60 - SETTLE_MINUTES * 60
@@ -94,11 +95,11 @@ CHECKS = {
     # series newer than the window may reach one database first.
     "metric series": f"""
         SELECT DISTINCT metric_name, labels, attrs, scope_attrs, resource_attrs FROM signoz_metrics.time_series_v4
-        WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000
+        WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000
           AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000
           AND fingerprint IN (
             SELECT fingerprint FROM signoz_metrics.samples_v4
-            WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000
+            WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000
               AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000)""",
 }
 
