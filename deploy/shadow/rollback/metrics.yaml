@@ -1,0 +1,18 @@
+# Metrics back to the earlier collector (CUTOVER.md): OTLP metrics, and the
+# span metrics while traces stay here, go to the legacy writer. The legacy
+# writer scrapes the host itself, so this collector's host metrics and its own
+# telemetry go to a debug exporter that stores nothing, instead of being
+# written twice. Needs legacy.yaml.
+exporters:
+  debug/discard:
+    verbosity: basic
+    sampling_initial: 1
+    sampling_thereafter: 1000
+service:
+  pipelines:
+    metrics:
+      exporters: [otlp/legacy]
+    metrics/host:
+      exporters: [debug/discard]
+    metrics/self:
+      exporters: [debug/discard]

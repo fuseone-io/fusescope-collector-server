@@ -29,6 +29,10 @@ Two attempts went wrong before this one, both on 2026-11-02:
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
 | `compare_ui.py` | the APM pages from both backends (below) |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
+| [`CUTOVER.md`](CUTOVER.md) | the runbook from the swap to 30 days without the earlier collector: monitoring, abort thresholds, rollback per signal |
+| `runs.py`, `runs_test.py` | monitoring of the hourly comparison from its log: failed runs, gaps, whether the latest is green; its unit test (`python3 -m unittest deploy/shadow/runs_test.py`) |
+| `health.sql`, `queues.sql` | this collector's own telemetry against the abort thresholds, read-only |
+| `compose.legacy.yaml`, `rollback/` | a rollback of one or more signals to the earlier collector, as a legacy writer of the demo's ClickHouse |
 
 ## Derived from the demo's data
 
@@ -166,11 +170,11 @@ Counts of spans and logs per service and minute, error spans and APM calls per s
 keys, and series per metric must be equal. Spans and logs are counted once each (a log by its timestamp, body,
 trace, span, attributes and resource, since each collector makes its own log IDs); items stored twice are reported
 apart, failing the run in the shadow and only noted in the demo. The demo stored 40 spans twice around midnight
-of 2026-11-04 while its APM counts matched the shadow's, so the copies came from its own write, not from a sender. Phase 6 asks for a week with every hourly run green, e.g. from cron:
+of 2026-11-04 while its APM counts matched the shadow's, so the copies came from its own write, not from a sender.
 
-```
-5 * * * * cd /opt/fusescope && docker compose -f compose.yaml -f shadow/compose.shadow.yaml run --rm shadow-compare >> /var/log/fusescope-shadow.log 2>&1
-```
+The comparison runs hourly from cron. Parity is accepted (#7, 2026-11-08), so it is a regression signal, not a
+window to wait out: the cron line with its run markers, and how its log is read, are in
+[CUTOVER.md](CUTOVER.md) §2 and §3.
 
 ## APM pages
 
@@ -200,7 +204,9 @@ Since FuseScope 0.159.0 the demo kit itself runs `fusescope-collector` as its co
 (`deploy/demo` in the fusescope repo), with no `otel-collector`: the swap is the demo's steady state, and
 `compose.swap.yaml` defines the ghost instead of moving the kit's collector. On the demo host, update with all
 three files, `docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml up -d`: the
-kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost.
+kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost. What follows the swap, up to 30 days without
+the earlier collector, and the rollback per signal, are in [`CUTOVER.md`](CUTOVER.md); the "Swap back" below predates
+the kit's own collector.
 
 ```
 hotrod, telemetrygen ──► fusescope-collector (otlp) ──► clickhouse                (demo)
@@ -273,11 +279,7 @@ done
 
 More rows than unique spans in the demo's ClickHouse mean the ghost still writes there: swap back at once.
 
-The hourly comparison takes the swap's override:
-
-```
-5 * * * * cd /opt/fusescope && docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml run --rm shadow-compare >> /var/log/fusescope-shadow.log 2>&1
-```
+The hourly comparison takes the swap's override: [CUTOVER.md](CUTOVER.md) §2 has the cron line, with its run markers.
 
 ### Swap back
 
