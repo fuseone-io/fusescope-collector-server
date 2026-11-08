@@ -191,20 +191,34 @@ writers stopped, then ClickHouse and ZooKeeper stopped together, and both volume
 the replicated tables' metadata lives in ZooKeeper, and `fusescope-schema`'s history in KeeperMap tables there too.
 Telemetry sent while the collector is stopped is lost once the senders stop retrying.
 
-Backup, from `/opt/fusescope`:
+Backup, from `/opt/fusescope`. The archives hold the demo's telemetry, so they are readable by root only. Everything
+the backup needs is pulled before any service stops, and a failure while archiving starts the stopped services again:
 
 ```sh
-set -e
+set -euo pipefail
 K="docker compose --profile generators -f compose.yaml"      # the kit
-BK=/var/backups/fusescope-demo/$(date -u +%Y%m%dT%H%MZ)-pre-schema; mkdir -p "$BK"
+A=alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+docker pull -q "$A"                                           # before anything stops
+umask 077
+BK=/var/backups/fusescope-demo/$(date -u +%Y%m%dT%H%MZ)-pre-schema
+install -d -m 0700 /var/backups/fusescope-demo "$BK"
+restart() { $K start zookeeper clickhouse fusescope-collector fusescope; }
+trap 'echo "backup failed: starting the stopped services again" >&2; restart' ERR
 $K stop fusescope-collector fusescope                         # the writers
 $K stop clickhouse zookeeper                                  # one state, stopped together
 for v in clickhouse-data zookeeper-data; do
-  docker run --rm -v fusescope-demo_$v:/v:ro -v "$BK":/b alpine:3.20 tar -C /v -czf /b/$v.tgz .
+  docker run --rm -v fusescope-demo_$v:/v:ro -v "$BK":/b "$A" \
+    sh -c "umask 077 && tar -C /v -czf /b/$v.tgz . && chmod 0600 /b/$v.tgz"
 done
-(cd "$BK" && sha256sum *.tgz > SHA256SUMS && tar -tzf clickhouse-data.tgz | wc -l > clickhouse-data.entries \
-  && tar -tzf zookeeper-data.tgz | wc -l > zookeeper-data.entries)
+(cd "$BK" && sha256sum ./*.tgz > SHA256SUMS \
+  && for v in clickhouse-data zookeeper-data; do tar -tzf $v.tgz | grep -vc '^\./$' > $v.entries; done)
+trap - ERR
+stat -c '%a %U %n' "$BK" "$BK"/*                              # 700 root, then 600 root for each file
 ```
+
+If the backup fails, the trap starts ZooKeeper, ClickHouse, the collector and the backend again, in that order, and
+nothing else has changed: `$K ps` shows them up. A successful backup leaves them stopped for the switch, which
+follows at once; if the switch has to wait, `restart` brings them back.
 
 Then the switch: the kit with fusescope#348, through its `update.sh`, which starts ClickHouse with
 `keeper_map_path_prefix` before the migrator (`ensure_keeper_map`).
@@ -214,7 +228,11 @@ If `fusescope-schema migrate` exits 1 or 4, or `check` does not end `up to date`
 irreversible, so `--mark absent` is refused. Otherwise, restore, into new, empty volumes, from the archives alone:
 
 ```sh
-set -e
+set -euo pipefail
+BK=${BK:?the backup directory, /var/backups/fusescope-demo/<time>-pre-schema}
+K="docker compose --profile generators -f compose.yaml"      # the kit
+A=alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+docker pull -q "$A"                                           # before anything stops
 (cd "$BK" && sha256sum -c SHA256SUMS)
 $K stop fusescope-collector fusescope
 $K rm -sf telemetrystore-migrator clickhouse zookeeper
@@ -223,8 +241,9 @@ for v in clickhouse-data zookeeper-data; do
   # Created empty and filled before any of the kit's containers mounts it: Docker copies
   # nothing from an image into a volume that is not empty.
   docker volume create --label com.docker.compose.project=fusescope-demo --label com.docker.compose.volume=$v fusescope-demo_$v
-  [ "$(docker run --rm -v fusescope-demo_$v:/v alpine:3.20 sh -c 'find /v -mindepth 1 | wc -l')" = 0 ]
-  docker run --rm -v fusescope-demo_$v:/v -v "$BK":/b:ro alpine:3.20 tar -C /v -xzf /b/$v.tgz
+  [ "$(docker run --rm -v fusescope-demo_$v:/v "$A" sh -c 'find /v -mindepth 1 | wc -l')" = 0 ]
+  docker run --rm -v fusescope-demo_$v:/v -v "$BK":/b:ro "$A" tar -C /v -xzf /b/$v.tgz
+  [ "$(docker run --rm -v fusescope-demo_$v:/v "$A" sh -c 'find /v -mindepth 1 | wc -l')" = "$(cat "$BK"/$v.entries)" ]
 done
 ```
 
