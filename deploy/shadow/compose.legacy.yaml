@@ -1,0 +1,60 @@
+# Override for the FuseScope demo, after the kit's compose.yaml alone, for a
+# rollback of one or more signals (CUTOVER.md, "Roll back a signal"). The
+# earlier collector runs as the legacy writer, on the demo's network, where
+# `clickhouse` is the demo's ClickHouse, with the kit's configuration for it,
+# which is not read (ADR 0002). fusescope-collector merges legacy.yaml and the
+# overlay of each signal set to roll back: ROLLBACK_TRACES=traces,
+# ROLLBACK_LOGS=logs, ROLLBACK_METRICS=metrics. An unset one merges legacy.yaml
+# again, which changes nothing. Set at least one: the legacy writer scrapes the
+# host itself whenever it runs. fusescope-collector sends no copy to a ghost
+# meanwhile.
+#   ROLLBACK_TRACES=traces docker compose -f compose.yaml -f shadow/compose.legacy.yaml ...
+# Paths are relative to the demo directory.
+
+x-legacy-logging: &legacy-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  fusescope-collector:
+    command:
+      - --config=fusescopeopamp:/etc/fusescope-collector/config.yaml
+      - --config=file:/etc/fusescope-collector/rollback/legacy.yaml
+      - --config=file:/etc/fusescope-collector/rollback/${ROLLBACK_TRACES:-legacy}.yaml
+      - --config=file:/etc/fusescope-collector/rollback/${ROLLBACK_LOGS:-legacy}.yaml
+      - --config=file:/etc/fusescope-collector/rollback/${ROLLBACK_METRICS:-legacy}.yaml
+    volumes:
+      - ./shadow/rollback:/etc/fusescope-collector/rollback:ro
+
+  # The earlier collector writing the demo's ClickHouse, as before the swap.
+  # `migrate sync check` refuses to start it on a schema fusescope-schema
+  # migrated: after the demo's migrator switch (CUTOVER.md, §8) there is no
+  # rollback.
+  otel-collector-legacy:
+    <<: *legacy-logging
+    image: ghcr.io/fuseone-io/fusescope-otel-collector:${COLLECTOR_VERSION:-0.145.0}
+    entrypoint: [/bin/sh]
+    command:
+      - -c
+      - |
+        /fusescope-otel-collector migrate sync check &&
+        /fusescope-otel-collector --config=/etc/otel-collector-config.yaml
+    uts: host
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel-collector-config.yaml:ro
+      - /:/hostfs:ro
+      - /proc:/hostfs/proc:ro
+      - /sys:/hostfs/sys:ro
+    environment:
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: tcp://clickhouse:9000
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER: cluster
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION: "true"
+      SIGNOZ_OTEL_COLLECTOR_TIMEOUT: 10m
+      LOW_CARDINAL_EXCEPTION_GROUPING: "false"
+    networks: [default]
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 0.5

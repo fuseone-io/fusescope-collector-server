@@ -1,0 +1,10 @@
+# Traces back to the earlier collector (CUTOVER.md): spans, RUM spans included,
+# go to the legacy writer, which also derives the APM metrics from them; this
+# collector stops writing spans and deriving span metrics, so the metrics
+# pipeline no longer reads the span metrics connector. Needs legacy.yaml.
+service:
+  pipelines:
+    traces:
+      exporters: [otlp/legacy]
+    metrics:
+      receivers: [otlp]

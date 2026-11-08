@@ -29,6 +29,10 @@ Two attempts went wrong before this one, both on 2026-11-02:
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
 | `compare_ui.py` | the APM pages from both backends (below) |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
+| [`CUTOVER.md`](CUTOVER.md) | the runbook from the swap to 30 days without the earlier collector: the formal window, abort thresholds, rollback per signal |
+| `window.py`, `window_test.py` | where the formal window stands, from the comparison's log; its unit test (`python3 -m unittest deploy/shadow/window_test.py`) |
+| `health.sql`, `queues.sql` | this collector's own telemetry against the abort thresholds, read-only |
+| `compose.legacy.yaml`, `rollback/` | a rollback of one or more signals to the earlier collector, as a legacy writer of the demo's ClickHouse |
 
 ## Derived from the demo's data
 
@@ -200,7 +204,9 @@ Since FuseScope 0.159.0 the demo kit itself runs `fusescope-collector` as its co
 (`deploy/demo` in the fusescope repo), with no `otel-collector`: the swap is the demo's steady state, and
 `compose.swap.yaml` defines the ghost instead of moving the kit's collector. On the demo host, update with all
 three files, `docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml up -d`: the
-kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost.
+kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost. What follows the swap, up to 30 days without
+the earlier collector, and the rollback per signal, are in [`CUTOVER.md`](CUTOVER.md); the "Swap back" below predates
+the kit's own collector.
 
 ```
 hotrod, telemetrygen ──► fusescope-collector (otlp) ──► clickhouse                (demo)

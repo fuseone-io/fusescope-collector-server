@@ -1,0 +1,7 @@
+# Logs back to the earlier collector (CUTOVER.md): log records, RUM logs
+# included, go to the legacy writer; this collector stops writing them.
+# Needs legacy.yaml.
+service:
+  pipelines:
+    logs:
+      exporters: [otlp/legacy]
