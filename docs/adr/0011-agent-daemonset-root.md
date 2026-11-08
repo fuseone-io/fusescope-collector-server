@@ -22,7 +22,8 @@ The Kubernetes agent DaemonSet may run as **uid 0, only to read pod logs and hos
 
 - **Off by default.** The agent is installed only when enabled.
 - **Uid 0 only for what needs it:** with pod logs or host metrics enabled. With kubelet stats alone it runs as a
-  non-root user (65532).
+  non-root user (65532), and uid 0 or `runAsNonRoot: false` there is refused. A non-root agent gets an `fsGroup`,
+  so it can read its mounted credentials.
 - **A values override runs it non-root** (`runAsUser`, `runAsGroup`, `runAsNonRoot: true`) where the nodes let a
   non-root user read those files.
 - **The container stays locked down:**
@@ -32,7 +33,9 @@ The Kubernetes agent DaemonSet may run as **uid 0, only to read pod logs and hos
   - every capability dropped;
   - seccomp `RuntimeDefault`.
 
-  The chart refuses to render any other container security context.
+  The chart refuses to render any other container security context, a seccomp profile other than `RuntimeDefault`
+  on the pod or the container, and a user set on the container: the user is the pod's only, so a container setting
+  cannot undo the rules above.
 - **No host namespace:** `hostNetwork`, `hostPID` and `hostIPC` are false.
 - **Host paths read-only**, except the directory that holds its log read offsets (checkpoints).
 - **Minimal RBAC:** read pods, namespaces, nodes and replica sets for the `k8s_attributes` processor, and `get`
