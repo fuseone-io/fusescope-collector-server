@@ -48,7 +48,12 @@ demo's `compose.yaml` and from what the demo's ClickHouse holds (read-only queri
 - **APM metrics** (`signoz_calls_total`, `signoz_latency`, `signoz_external_call_latency_*`) come from spans: the
   `fusescope_spanmetrics` connector.
 - **Not reproduced:** the demo collector scrapes its own telemetry (`otelcol_*`, `exporter_*`, `scrape_*`, `up`);
-  `compare.py` leaves those out, and ignores the scope version, which is each collector's build version. The demo collector runs without OpAMP (its command line is `--config` only), so the
+  `compare.py` leaves those out, and ignores the scope version, which is each collector's build version.
+  `fusescope-collector` also reports its own telemetry under `service.name` `fusescope-collector`
+  (`otelcol.resourcedetection.*`, for example), which the fork does not. The metric series check leaves out the
+  series of the services in `INTERNAL_SERVICES` (default `fusescope-collector`) and prints how many it left out on
+  each side. Series of any other service, `otelcol.*` from a user's own collector included, are still compared.
+  The collection is unchanged: those series stay in ClickHouse for monitoring. The demo collector runs without OpAMP (its command line is `--config` only), so the
   shadow does not connect to the backend either.
 
 ## Install
