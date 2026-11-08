@@ -6,7 +6,7 @@ Every command here is run by the operator on the demo host, in `/opt/fusescope`,
 [README](README.md), "Install". The generic guide for installs before chart 0.161.0 is #9's, not this one.
 
 The sections follow one structure, to reuse for another environment: its [facts](#1-facts), the [preconditions](#2-preconditions),
-the [formal window](#3-the-formal-window) and its [abort thresholds](#4-abort-thresholds), [acceptance per signal](#5-acceptance-per-signal),
+[monitoring the comparison](#3-monitoring-the-comparison) and the [abort thresholds](#4-abort-thresholds), [acceptance per signal](#5-acceptance-per-signal),
 [rollback per signal](#6-roll-back-a-signal), [removing the earlier collector](#7-remove-the-ghost), the
 [point of no return](#8-point-of-no-return-the-schema-migrator) and the [exit](#9-exit-30-days).
 
@@ -22,8 +22,10 @@ the [formal window](#3-the-formal-window) and its [abort thresholds](#4-abort-th
 | Rollback | per signal, to the earlier collector as a legacy writer of the demo's ClickHouse (`compose.legacy.yaml`), until the point of no return |
 | Point of no return | the demo's schema migrator moves to `fusescope-schema` ([§8](#8-point-of-no-return-the-schema-migrator)) |
 
-The swap happened on 2026-11-05 at 03:00 UTC. Since then this collector has served every signal of the demo. What is
-left is to prove it over the formal window, take the earlier collector off the path, and run 30 days without it.
+The swap happened on 2026-11-05 at 03:00 UTC. Since then this collector has served every signal of the demo. Parity
+is accepted (#7, 2026-11-08): the 91 hourly runs from the swap to 2026-11-08 16:05 UTC were `ok` on every check of
+user data, and their one difference, this collector's own telemetry, is what #80 leaves out and counts. What is left
+is to rehearse the rollback, take the earlier collector off the path, and run 30 days without it.
 
 Shorthand used below:
 
@@ -38,50 +40,43 @@ Q="docker exec -i fusescope-demo-clickhouse-1 clickhouse-client --readonly 1"
 
 1. **The internal series filter is deployed** (#80): the metric series check leaves out `fusescope-collector`'s own
    telemetry and prints how many series it left out. Copy the reviewed `compare.py` to `/opt/fusescope/shadow/`.
-2. **The cron marks each run** with its start time and exit code, so the window can be read back. Replace the line
-   with this one (`%` is escaped for cron):
+2. **The cron marks each run** with its start time and exit code, for the monitoring of §3. Replace the line with
+   this one (`%` is escaped for cron):
 
    ```
    5 * * * * cd /opt/fusescope && { echo "=== run $(date -u +\%FT\%TZ)"; docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml run --rm shadow-compare; echo "=== exit $?"; } >> /var/log/fusescope-shadow.log 2>&1
    ```
 
-3. **The first run with both** shows `=== run`, a `metric series (… ignored N internal series of fusescope-collector …)`
-   line and `=== exit 0`. That run opens the formal window.
-4. **Nothing else changes during the window**: the collector's image and configuration, the ghost, the senders. Any of
-   these restarts the window at the next run.
+3. **The first run with both** shows `=== run`, a `metric series (… ignored N internal series of …)` line and
+   `=== exit 0`.
+4. **The rollback is rehearsed** ([§6](#6-roll-back-a-signal)) on each signal, rolled back and undone, and noted on #7.
+5. **Just before §7**: `runs.py` exits 0 (the latest run is green and recent), and every failure or gap it lists, and
+   every `DIFF` in user data since the first marked run, has an explanation noted on #7. None of this starts a new
+   waiting period.
 
-## 3. The formal window
+## 3. Monitoring the comparison
 
-**168 hourly comparisons in a row exit 0**, from the first run with the filter: seven days. The window restarts at
-the next run after:
-
-- a run that exits non-zero, for any reason (a difference, an error, a ClickHouse unreachable);
-- a run without the filter's line;
-- a gap of more than 90 minutes since the run before (a missed hour).
-
-`window.py` reads the log and says where the window stands, with each restart and why; it exits 0 once complete:
+The hourly comparison keeps running until §7, as a regression signal, not a window to wait out: no number of green
+runs is required, and nothing restarts a count. `runs.py` reads the log and lists every run that exited non-zero and
+every gap of more than 90 minutes between runs (a missed hour). It exits 0 when the latest finished run exited 0 and
+is at most 90 minutes old:
 
 ```sh
-docker run --rm -v /var/log/fusescope-shadow.log:/log:ro -v "$PWD/shadow/window.py:/window.py:ro" \
-  python:3.12-alpine python3 -I /window.py /log
+docker run --rm -v /var/log/fusescope-shadow.log:/log:ro -v "$PWD/shadow/runs.py:/runs.py:ro" \
+  python:3.12-alpine python3 -I /runs.py /log
 ```
 
-**Prior evidence, not counted.** The 91 hourly runs from the swap (2026-11-05 03:00 UTC) to 2026-11-08 16:05 UTC each
-failed only on `metric series: 20 only in fusescope, 0 only in fork`: `otelcol.resourcedetection.*`, this collector's
-own telemetry. Spans per service and minute, error spans, span resource keys, logs per service and minute, log
-attribute keys, APM calls and duplicates were `ok` in every one. They support the window but do not count toward it.
-
-During the window, once a day:
+Once a day until §7:
 
 ```sh
-docker run --rm -v /var/log/fusescope-shadow.log:/log:ro -v "$PWD/shadow/window.py:/window.py:ro" python:3.12-alpine python3 -I /window.py /log
+docker run --rm -v /var/log/fusescope-shadow.log:/log:ro -v "$PWD/shadow/runs.py:/runs.py:ro" python:3.12-alpine python3 -I /runs.py /log
 $Q < shadow/health.sql
 $Q < shadow/queues.sql
 grep -c '^DIFF' /var/log/fusescope-shadow.log
 ```
 
 A `DIFF` in user data, as opposed to an error, is investigated before anything else: a new case for `compare.py` or a
-fix to this collector, then the window starts over.
+fix to this collector, noted on #7.
 
 ## 4. Abort thresholds
 
@@ -102,11 +97,11 @@ counter, queues at most 1.2% used, and about 160 MiB resident.
 
 The `otlp/ghost` queues do not count: a full ghost queue drops copies and never fails the demo. Aborting means rolling
 back the affected signal ([§6](#6-roll-back-a-signal)), or every signal when the cause is not signal-specific (memory,
-no telemetry), and restarting the window once fixed.
+no telemetry), until the cause is fixed.
 
 ## 5. Acceptance per signal
 
-The window covers every signal at once. Before §7, each is also checked by hand, once, and noted on #7:
+The comparison covers every signal at once. Before §7, each is also checked by hand, once, and noted on #7:
 
 | Signal | Check |
 |---|---|
@@ -157,7 +152,7 @@ Known costs:
 - **Any rollback writes the host metrics twice** unless metrics are rolled back too: the legacy writer scrapes the
   host whenever it runs. Roll back metrics with traces or logs where that matters.
 - This collector sends the ghost no copy while rolled back (`compose.legacy.yaml` leaves `ghost-copy.yaml` out and the
-  shadow network), so the hourly comparisons fail and the formal window restarts at the undo.
+  shadow network), so the hourly comparisons fail until the undo: expected, and noted on #7 with the rollback.
 - `fusescope_meter` usage is not counted for a rolled-back signal.
 
 **Undo the rollback**, once the cause is fixed. This collector goes first, so nothing is sent to a stopped writer.
@@ -173,11 +168,12 @@ After §7, the kit alone: `$B up -d --no-deps --force-recreate fusescope-collect
 
 ## 7. Remove the ghost
 
-When the window is complete (`window.py` exits 0), §5 is noted on #7, and the removal is approved there:
+When the preconditions of §2 hold (the rollback rehearsed, `runs.py` exiting 0, every finding explained), §5 is noted
+on #7, and the removal is approved there:
 
 ```sh
 set -e
-cp -p /var/log/fusescope-shadow.log /var/log/fusescope-shadow.log.window   # the evidence, kept
+cp -p /var/log/fusescope-shadow.log /var/log/fusescope-shadow.log.cutover  # the evidence, kept
 crontab -l | grep -v 'shadow-compare' | crontab -                           # the hourly comparison stops
 $C rm -sf otel-collector                                                    # the ghost stops
 $B up -d --no-deps --force-recreate fusescope-collector                     # the kit's collector, without the ghost copy
@@ -197,8 +193,8 @@ fusescope repo). After it:
 - the earlier collector refuses the schema (`migrate sync check` fails), so §6 no longer works;
 - going back means restoring a ClickHouse backup taken before the switch.
 
-So it goes last: after §7, once the 30 days below show no reason to roll back, or earlier only by an explicit decision
-on #7. Take a backup of the demo's ClickHouse just before it.
+So it goes last: after §7 and after the 30 days of §9 without a rollback. Take a backup of the demo's ClickHouse
+just before it.
 
 ## 9. Exit: 30 days
 

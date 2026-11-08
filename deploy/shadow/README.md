@@ -29,8 +29,8 @@ Two attempts went wrong before this one, both on 2026-11-02:
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
 | `compare_ui.py` | the APM pages from both backends (below) |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
-| [`CUTOVER.md`](CUTOVER.md) | the runbook from the swap to 30 days without the earlier collector: the formal window, abort thresholds, rollback per signal |
-| `window.py`, `window_test.py` | where the formal window stands, from the comparison's log; its unit test (`python3 -m unittest deploy/shadow/window_test.py`) |
+| [`CUTOVER.md`](CUTOVER.md) | the runbook from the swap to 30 days without the earlier collector: monitoring, abort thresholds, rollback per signal |
+| `runs.py`, `runs_test.py` | monitoring of the hourly comparison from its log: failed runs, gaps, whether the latest is green; its unit test (`python3 -m unittest deploy/shadow/runs_test.py`) |
 | `health.sql`, `queues.sql` | this collector's own telemetry against the abort thresholds, read-only |
 | `compose.legacy.yaml`, `rollback/` | a rollback of one or more signals to the earlier collector, as a legacy writer of the demo's ClickHouse |
 
