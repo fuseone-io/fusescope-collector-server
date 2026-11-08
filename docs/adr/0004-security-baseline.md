@@ -4,7 +4,8 @@
   ingest policy over OpAMP, security gates),
   [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in),
   [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport) and
-  [ADR 0009](0009-rum-tls-compatibility.md) (TLS 1.2 opt-in on RUM ingress)
+  [ADR 0009](0009-rum-tls-compatibility.md) (TLS 1.2 opt-in on RUM ingress) and
+  [ADR 0011](0011-agent-daemonset-root.md) (the Kubernetes agent DaemonSet as root)
 - Date: 2026-10-31
 
 ## Decision
@@ -27,7 +28,8 @@
   credentials.
 - Debug and introspection endpoints (`pprof`, `zpages`, the health config view) are off or
   bound to `localhost` by default.
-- Distroless, non-root, read-only root filesystem images.
+- Distroless, non-root, read-only root filesystem images. The Kubernetes agent DaemonSet may run as uid 0 to read
+  pod logs and host metrics, under the conditions of [ADR 0011](0011-agent-daemonset-root.md).
 - CI blocks on unpinned modules, licenses outside the allow-list and known vulnerabilities.
   A vulnerability with a fix is fixed by bumping the module (`replaces` in
   `builder-config.yaml`); one without a fix may be accepted only in `.govulncheck-allow`

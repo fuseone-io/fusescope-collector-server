@@ -14,10 +14,11 @@ in `docs/adr/` are binding until superseded.
   MPL-2.0 only unmodified. Ask before adding any dependency.
 - **Upstream as a library** (ADR 0001): never vendor or patch upstream code; bump all module
   versions together (`docs/upgrading.md`).
-- **Security baseline** (ADR 0004, amended by ADR 0006, 0007, 0008 and 0009): TLS 1.3 (the RUM
+- **Security baseline** (ADR 0004, amended by ADR 0006, 0007, 0008, 0009 and 0011): TLS 1.3 (the RUM
   listener may opt in to TLS 1.2 with ECDHE AEAD suites only), plaintext only
   to ClickHouse or OpAMP by explicit `tls.insecure`; outbound credentials only from files; over OpAMP only allow-listed processors and the ingest policy (the remote authority for ingest authentication and identity, ADR 0006), never a
-  change of receivers/exporters/extensions/endpoints; debug endpoints off or on `localhost`.
+  change of receivers/exporters/extensions/endpoints; debug endpoints off or on `localhost`; non-root, except the
+  Kubernetes agent DaemonSet under ADR 0011.
 
 ## Go
 
