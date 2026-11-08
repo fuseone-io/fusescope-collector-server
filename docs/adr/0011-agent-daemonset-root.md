@@ -1,6 +1,6 @@
 # 0011 · The Kubernetes agent DaemonSet may run as root
 
-- Status: proposed
+- Status: accepted (2026-11-08)
 - Amends: [ADR 0004](0004-security-baseline.md), "Distroless, non-root, read-only root filesystem images", for the
   Kubernetes agent DaemonSet only.
 - Chart: [fusescope-charts#40](https://github.com/fuseone-io/fusescope-charts/pull/40) (`fusescopeAgent`).

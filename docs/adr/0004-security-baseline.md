@@ -5,7 +5,7 @@
   [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in),
   [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport) and
   [ADR 0009](0009-rum-tls-compatibility.md) (TLS 1.2 opt-in on RUM ingress) and
-  [ADR 0011](0011-agent-daemonset-root.md) (the Kubernetes agent DaemonSet as root, proposed)
+  [ADR 0011](0011-agent-daemonset-root.md) (the Kubernetes agent DaemonSet as root)
 - Date: 2026-10-31
 
 ## Decision
