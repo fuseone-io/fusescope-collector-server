@@ -175,15 +175,96 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 
 The demo's `telemetrystore-migrator` still runs the earlier collector's image. Moving it to `fusescope-schema`, which
 adopts the existing schema and then applies `0002`, is a separate reviewed change to the demo kit (`deploy/demo` in
-the fusescope repo). It is irreversible: once `0002` has run, the earlier collector's migrator refuses the schema.
-It waits for all of these:
+the fusescope repo, fuseone-io/fusescope#348, with the `keeper_map_path_prefix` it needs). It is irreversible: once
+`0002` has run, the earlier collector's migrator refuses the schema. It waits for all of these:
 
 1. the 24-hour measurement of §6, noted on #7;
 2. the demo collector's version settled: `fusescope-collector` 0.2.0 checked on a throwaway copy of the schema
-   migrated by `fusescope-schema` 0.4.1, or the demo collector moved to the version that will stay before §7, while the ghost
-   still runs, with parity and performance repeated on it;
-3. a backup and restore procedure for the demo's ClickHouse, rehearsed, written here, and a backup taken with it just
-   before the switch. It is for a failed or interrupted migration, not for going back to the earlier collector.
+   migrated by `fusescope-schema` 0.4.1 (done on 2026-11-08, below), or the demo collector moved to the version that
+   will stay before §7, while the ghost still runs, with parity and performance repeated on it;
+3. a backup taken with the procedure below just before the switch.
+
+### Backup and restore
+
+For a failed or interrupted migration only: never to go back to the earlier collector. The backup is cold: the
+writers stopped, then ClickHouse and ZooKeeper stopped together, and both volumes archived. They are one state:
+the replicated tables' metadata lives in ZooKeeper, and `fusescope-schema`'s history in KeeperMap tables there too.
+Telemetry sent while the collector is stopped is lost once the senders stop retrying.
+
+Backup, from `/opt/fusescope`:
+
+```sh
+set -e
+K="docker compose --profile generators -f compose.yaml"      # the kit
+BK=/var/backups/fusescope-demo/$(date -u +%Y%m%dT%H%MZ)-pre-schema; mkdir -p "$BK"
+$K stop fusescope-collector fusescope                         # the writers
+$K stop clickhouse zookeeper                                  # one state, stopped together
+for v in clickhouse-data zookeeper-data; do
+  docker run --rm -v fusescope-demo_$v:/v:ro -v "$BK":/b alpine:3.20 tar -C /v -czf /b/$v.tgz .
+done
+(cd "$BK" && sha256sum *.tgz > SHA256SUMS && tar -tzf clickhouse-data.tgz | wc -l > clickhouse-data.entries \
+  && tar -tzf zookeeper-data.tgz | wc -l > zookeeper-data.entries)
+```
+
+Then the switch: the kit with fusescope#348, through its `update.sh`, which starts ClickHouse with
+`keeper_map_path_prefix` before the migrator (`ensure_keeper_map`).
+
+If `fusescope-schema migrate` exits 1 or 4, or `check` does not end `up to date`, read `status` first. A migration
+`started` whose post-conditions hold can be finished with `repair --mark done` (collector-server spec §10.1); `0002` is
+irreversible, so `--mark absent` is refused. Otherwise, restore, into new, empty volumes, from the archives alone:
+
+```sh
+set -e
+(cd "$BK" && sha256sum -c SHA256SUMS)
+$K stop fusescope-collector fusescope
+$K rm -sf telemetrystore-migrator clickhouse zookeeper
+docker volume rm fusescope-demo_clickhouse-data fusescope-demo_zookeeper-data
+for v in clickhouse-data zookeeper-data; do
+  # Created empty and filled before any of the kit's containers mounts it: Docker copies
+  # nothing from an image into a volume that is not empty.
+  docker volume create --label com.docker.compose.project=fusescope-demo --label com.docker.compose.volume=$v fusescope-demo_$v
+  [ "$(docker run --rm -v fusescope-demo_$v:/v alpine:3.20 sh -c 'find /v -mindepth 1 | wc -l')" = 0 ]
+  docker run --rm -v fusescope-demo_$v:/v -v "$BK":/b:ro alpine:3.20 tar -C /v -xzf /b/$v.tgz
+done
+```
+
+The schema is then as before the switch, with no `fusescope_schema` database. Fix the cause, and run the switch
+again: forward, with `fusescope-schema`. Nothing restarts the earlier collector.
+
+**Rehearsed on 2026-11-08**, on a throwaway copy of the demo's storage, with the demo's images:
+the kit's ClickHouse configuration plus `keeper_map_path_prefix`, and:
+
+- ClickHouse `clickhouse/clickhouse-server:25.12.5@sha256:cacf32d6884291dc2ff5e0156a97f46fc53ff7c929a7906d114e268a929dfd3a`
+- ZooKeeper `signoz/zookeeper:3.7.1@sha256:fcc4a3288154ccaa3bdb5ae6dc10180c084d29a8a6a26b62ac8e30a8940dc2e6`
+- the earlier migrator `ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0@sha256:e03a01636cea5abd9eceec0d4d81769d7c5e9813487886afa415ada2f0adfc4a`
+- `fusescope-schema` from `ghcr.io/fuseone-io/fusescope-collector:0.4.1@sha256:9951f2479ac6e5150b116cd856569aaae6ed921e9b951f0fd9c93160e7311077`
+- the collector `ghcr.io/fuseone-io/fusescope-collector:0.2.0@sha256:b9f8b298703d65452a9314ce9007473a6164adfc3fa56e65d97cf136f90322f3`
+
+Results:
+
+
+- The earlier migrator created the schema and collector 0.2.0 wrote to it. `check` reported
+  `pending: record 0001 base as adopted, 0002 column_evolution_baseline`.
+- **Backup:** 14 s with the restart, on 5.6 MB of data. The demo holds about 1.4 GB in ClickHouse and 350 MB in
+  ZooKeeper, so time it there.
+- **Interruption:** the migrator was killed (exit 137) once `0002 column_evolution_baseline` was `started`, read back
+  from `fusescope_schema.migrations`.
+  - `check` then reported `in progress` while the lease held.
+  - Once the lease had expired, `migrate` refused: `a migration was interrupted: its lease expired while it was started`.
+- **Restore into new volumes:** both had 0 entries before the extract, and exactly the archive's after it.
+- **The restored state was identical to the state before the backup**, compared on:
+  - the databases and every table definition;
+  - the six earlier migrators' histories;
+  - `fusescope_schema` absent;
+  - count and hash of `signoz_index_v3`, `logs_v2`, `samples_v4` and `time_series_v4`;
+  - the ZooKeeper nodes.
+
+  `time_series_v4` is a `ReplacingMergeTree`, compared `FINAL`. Its raw row count changes when parts merge: 136
+  rows before the backup's restart, 45 after, the same 45 `FINAL` before and after.
+- **Then `migrate`:** `starting point: fork 0.145.0`, `applied 0002 column_evolution_baseline`, `up to date`, and
+  `check` exited 0, with `0001` adopted.
+- **Collector 0.2.0 wrote again:** +902 spans, +901 logs, +1,209 samples, each signal found by its service name, with
+  no error line.
 
 ## 9. Exit: 30 days
 
