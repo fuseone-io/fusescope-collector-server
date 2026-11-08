@@ -2,8 +2,9 @@
 
 How the FuseScope demo finishes moving from the earlier collector (`fusescope-otel-collector`, AGPL) to this one
 ([#7](https://github.com/fuseone-io/fusescope-collector-server/issues/7)), and removes it completely. **There is no
-rollback**: the earlier collector is not an option to go back to, and a problem found after the swap is fixed forward
-in this collector. Every command here is run by the operator on the demo host, in `/opt/fusescope`, from this
+rollback** ([decision on #7, 2026-11-08](https://github.com/fuseone-io/fusescope-collector-server/issues/7#issuecomment-6726848745)): the earlier collector is not an option to go back to at any step, and
+a problem is fixed in this collector or its configuration. Backup, `repair` and restore exist only for a failed
+schema migration (§8). Every command here is run by the operator on the demo host, in `/opt/fusescope`, from this
 directory copied there as in [README](README.md), "Install". The generic guide for installs before chart 0.161.0 is
 #9's, not this one.
 
@@ -22,7 +23,7 @@ The sections follow one structure, to reuse for another environment: its [facts]
 | Earlier collector | the ghost: `otel-collector`, `fusescope-otel-collector` 0.145.0, on the shadow network only, fed a copy, writing `clickhouse-shadow` ([README](README.md), "Swap") |
 | Schema migrator | `telemetrystore-migrator`, the earlier collector's image (`COLLECTOR_VERSION`), on the demo's ClickHouse |
 | Comparison | `compare.py`, hourly from cron, into `/var/log/fusescope-shadow.log` |
-| Rollback | none, by decision (#7, 2026-11-08): problems are fixed forward |
+| Rollback | none, [by decision](https://github.com/fuseone-io/fusescope-collector-server/issues/7#issuecomment-6726848745) (#7, 2026-11-08): problems are fixed forward |
 
 The swap happened on 2026-11-05 at 03:00 UTC. Since then this collector has served every signal of the demo. Parity
 is accepted (#7, 2026-11-08): the 91 hourly runs from the swap to 2026-11-08 16:05 UTC were `ok` on every check of
