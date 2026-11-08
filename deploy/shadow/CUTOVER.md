@@ -121,27 +121,29 @@ so `perf.sql` reads them side by side over the same window: CPU, resident memory
 received per hour. Read-only:
 
 ```sh
-W="2026-11-06 00:00:00"   # a window both collectors cover in full
-$Q  --param_svc=fusescope-collector       --param_since="$W" < shadow/perf.sql
-$QS --param_svc=/fusescope-otel-collector --param_since="$W" < shadow/perf.sql
+F="2026-11-06 00:00:00"; U="2026-11-08 20:00:00"   # whole hours [F, U) both collectors cover in full
+$Q  --param_svc=fusescope-collector       --param_since="$F" --param_until="$U" < shadow/perf.sql
+$QS --param_svc=/fusescope-otel-collector --param_since="$F" --param_until="$U" < shadow/perf.sql
 ```
 
-The first comparison, 2026-11-06 00:00 to 2026-11-08 20:00 UTC (69 hours, about 13,200 spans and 2,800 logs per
-hour on each):
+`perf.sql` sums counters sample to sample across hour boundaries and divides by the whole hours of the window;
+`hours_with_samples` below `hours` means a gap in the collector's own telemetry. The first comparison,
+[2026-11-06 00:00, 2026-11-08 20:00) UTC, 68 hours, all with samples on both sides, about 13,570 spans and 2,880
+logs per hour on each:
 
 | | this collector | the earlier collector |
 |---|---|---|
-| CPU, average (p95 hour) | 0.87% (0.96%) | 0.52% (0.57%) |
+| CPU, average (p95 hour) | 0.90% (0.98%) | 0.53% (0.58%) |
 | Resident memory, average (max) | 158 MiB (167) | 240 MiB (243) |
 | Heap, average | 34 MiB | 51 MiB |
-| Allocation | 424 MiB/h | 1,027 MiB/h |
+| Allocation | 436 MiB/h | 1,058 MiB/h |
 
 The CPU is not like for like while the ghost runs: this collector also exports every item a second time, to the ghost
 over OTLP/gRPC, receives RUM and derives the meter. So the comparison closes after §7: this collector alone, on the
 same synthetic traffic, over 24 hours, against the earlier collector's figures above:
 
 ```sh
-$Q --param_svc=fusescope-collector --param_since="<the first full hour after §7>" < shadow/perf.sql
+$Q --param_svc=fusescope-collector --param_since="<first whole hour after §7>" --param_until="<24 hours later>" < shadow/perf.sql
 ```
 
 Both results are noted on #7. A regression, here or later, is fixed forward (§4).
@@ -172,11 +174,15 @@ docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's da
 
 The demo's `telemetrystore-migrator` still runs the earlier collector's image. Moving it to `fusescope-schema`, which
 adopts the existing schema and then applies `0002`, is a separate reviewed change to the demo kit (`deploy/demo` in
-the fusescope repo). It comes right after §7: with no rollback to keep, nothing waits for it.
+the fusescope repo). It is irreversible: once `0002` has run, the earlier collector's migrator refuses the schema.
+It waits for all of these:
 
-- It is irreversible: once `0002` has run, the earlier collector's migrator refuses the schema.
-- Take a backup of the demo's ClickHouse just before it, for a failed migration, not for going back to the earlier
-  collector.
+1. the 24-hour measurement of §6, noted on #7;
+2. the demo collector's version settled: `fusescope-collector` 0.2.0 checked on a throwaway copy of the schema
+   migrated by `fusescope-schema` 0.4.1, or the demo collector moved to the version that will stay before §7, while the ghost
+   still runs, with parity and performance repeated on it;
+3. a backup and restore procedure for the demo's ClickHouse, rehearsed, written here, and a backup taken with it just
+   before the switch. It is for a failed or interrupted migration, not for going back to the earlier collector.
 
 ## 9. Exit: 30 days
 
