@@ -1,4 +1,4 @@
--- fusescope-collector's own telemetry over the last 10 minutes (CUTOVER.md, "Abort thresholds"):
+-- fusescope-collector's own telemetry over the last 10 minutes (CUTOVER.md §4, "Health thresholds"):
 -- the increase of each refusal, failure and insert error counter, and the latest queue size and
 -- capacity (all exporters together; queues.sql per exporter) and memory. Read-only:
 --   docker exec -i fusescope-demo-clickhouse-1 clickhouse-client --readonly 1 < shadow/health.sql

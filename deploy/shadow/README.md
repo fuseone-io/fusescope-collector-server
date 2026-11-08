@@ -29,10 +29,10 @@ Two attempts went wrong before this one, both on 2026-11-02:
 | `clickhouse/limits.xml`, `users-limits.xml` | memory, caches, system logs and per-query limits bounded as the demo's own ClickHouse |
 | `compare_ui.py` | the APM pages from both backends (below) |
 | `compare.py`, `compare_test.py` | the comparison, exits 1 on a difference; its unit test (`python3 -m unittest deploy/shadow/compare_test.py`) |
-| [`CUTOVER.md`](CUTOVER.md) | the runbook from the swap to 30 days without the earlier collector: monitoring, abort thresholds, rollback per signal |
+| [`CUTOVER.md`](CUTOVER.md) | the runbook from the swap to removing the earlier collector completely, with no rollback: monitoring, health thresholds, performance comparison, the schema migrator |
 | `runs.py`, `runs_test.py` | monitoring of the hourly comparison from its log: failed runs, gaps, whether the latest is green; its unit test (`python3 -m unittest deploy/shadow/runs_test.py`) |
-| `health.sql`, `queues.sql` | this collector's own telemetry against the abort thresholds, read-only |
-| `compose.legacy.yaml`, `rollback/` | a rollback of one or more signals to the earlier collector, as a legacy writer of the demo's ClickHouse |
+| `health.sql`, `queues.sql` | this collector's own telemetry against the health thresholds (`CUTOVER.md` §4), read-only |
+| `perf.sql` | one collector's CPU, memory, allocation and throughput from its own telemetry, for the performance comparison (`CUTOVER.md` §6) |
 
 ## Derived from the demo's data
 
@@ -135,8 +135,8 @@ go-ahead (an exception to ADR 0002 for this deployment file, which is merged wit
 ```sh
 set -e
 cd /opt/fusescope/otel-collector
-# The first run keeps the configuration as it was before the shadow, for the
-# rollback's memory limiter values. Every run starts from the current file.
+# The first run keeps the configuration as it was before the shadow, with its
+# memory limiter values. Every run starts from the current file.
 [ -e config.yaml.bak-pre-shadow ] || cp -p config.yaml config.yaml.bak-pre-shadow
 yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -v /opt/fusescope/shadow:/s:ro \
   mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025 "$@"; }
@@ -210,9 +210,8 @@ Since FuseScope 0.159.0 the demo kit itself runs `fusescope-collector` as its co
 (`deploy/demo` in the fusescope repo), with no `otel-collector`: the swap is the demo's steady state, and
 `compose.swap.yaml` defines the ghost instead of moving the kit's collector. On the demo host, update with all
 three files, `docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml up -d`: the
-kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost. What follows the swap, up to 30 days without
-the earlier collector, and the rollback per signal, are in [`CUTOVER.md`](CUTOVER.md); the "Swap back" below predates
-the kit's own collector.
+kit's `update.sh` alone runs `--remove-orphans`, which stops the ghost. What follows the swap, up to removing the earlier
+collector completely, is in [`CUTOVER.md`](CUTOVER.md). There is no swap back: problems are fixed forward.
 
 ```
 hotrod, telemetrygen ──► fusescope-collector (otlp) ──► clickhouse                (demo)
@@ -283,30 +282,11 @@ for c in fusescope-demo-clickhouse-1 fusescope-demo-clickhouse-shadow-1; do
 done
 ```
 
-More rows than unique spans in the demo's ClickHouse mean the ghost still writes there: swap back at once.
+More rows than unique spans in the demo's ClickHouse mean the ghost still writes there: stop the ghost at once
+(`docker compose -f compose.yaml -f shadow/compose.shadow.yaml -f shadow/compose.swap.yaml rm -sf otel-collector`),
+then fix its network before starting it again.
 
 The hourly comparison takes the swap's override: [CUTOVER.md](CUTOVER.md) §2 has the cron line, with its run markers.
-
-### Swap back
-
-This collector goes first: while it runs it sends the ghost copies, which the existing collector would write into
-the demo's ClickHouse once restored, as duplicates. The shadow collector starts before the existing collector, so its
-copy has a destination from its first request: after the first attempt's swap back, the existing collector, started
-first, stored the same spans hundreds of times until it ran out of memory. The senders retry for the seconds in between.
-
-```sh
-set -e
-S="docker compose -f compose.yaml -f shadow/compose.shadow.yaml"
-docker rm -f fusescope-demo-fusescope-collector-1
-cp -p otel-collector/config.yaml.bak-pre-swap otel-collector/config.yaml
-$S up -d --no-deps --force-recreate --wait clickhouse-shadow   # without the alias
-$S up -d --no-deps fusescope-collector-shadow
-$S up -d --no-deps --force-recreate otel-collector             # the demo's collector again, on the demo's network
-$S --profile generators up -d --no-deps hotrod logs-checkout logs-payment-error traces-payment-errors
-$S up -d --no-deps fusescope
-```
-
-Then the cron line without `compose.swap.yaml`.
 
 ## Upgrading from the tee version
 
@@ -316,26 +296,6 @@ on the demo collector and remove the tee, or the shadow gets every item twice:
 ```sh
 docker compose -f compose.yaml --profile generators up -d --no-deps hotrod logs-checkout logs-payment-error traces-payment-errors fusescope
 docker rm -f fusescope-demo-otel-tee-1
-```
-
-## Rollback
-
-Remove the shadow's keys from the current demo collector configuration, put its memory limiter back to the values
-it had before the shadow, recreate it with the demo's compose alone (384 MiB), then stop the shadow:
-
-```sh
-set -e
-cd /opt/fusescope/otel-collector
-yq() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w \
-  mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025 "$@"; }
-strip='del(.exporters."otlp/shadow") | del(.processors."batch/shadow") | del(.service.pipelines."traces/shadow") | del(.service.pipelines."logs/shadow") | del(.service.pipelines."metrics/shadow")'
-lim=$(yq '[.processors[] | select(has("limit_mib")) | .limit_mib][0]' /w/config.yaml.bak-pre-shadow)
-spike=$(yq '[.processors[] | select(has("limit_mib")) | .spike_limit_mib][0]' /w/config.yaml.bak-pre-shadow)
-yq "$strip | (.processors[] | select(has(\"limit_mib\"))) |= (.limit_mib = $lim | .spike_limit_mib = $spike)" /w/config.yaml > restored.yaml
-mv restored.yaml config.yaml
-cd .. && docker compose -f compose.yaml up -d --no-deps --force-recreate otel-collector
-docker compose -f compose.yaml -f shadow/compose.shadow.yaml rm -sf fusescope-collector-shadow migrator-shadow clickhouse-shadow
-docker volume rm fusescope-demo_clickhouse-shadow-data   # drops the shadow's data
 ```
 
 ## Risks
