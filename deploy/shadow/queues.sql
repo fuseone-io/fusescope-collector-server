@@ -1,6 +1,6 @@
 -- fusescope-collector's exporter queues over the last 10 minutes, per exporter and signal: the
 -- largest size, the capacity (batches for fusescope_clickhouse, bytes for otlp/*) and the share
--- used (CUTOVER.md, "Abort thresholds"). Read-only:
+-- used (CUTOVER.md §4, "Health thresholds"). Read-only:
 --   docker exec -i fusescope-demo-clickhouse-1 clickhouse-client --readonly 1 < shadow/queues.sql
 SELECT JSONExtractString(ts.labels, 'exporter') AS exporter, JSONExtractString(ts.labels, 'data_type') AS signal,
        maxIf(s.value, s.metric_name = 'otelcol_exporter_queue_size') AS size,
