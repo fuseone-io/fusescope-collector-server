@@ -31,9 +31,14 @@ DEMO_LABEL = os.environ.get("DEMO_LABEL", "demo")
 SHADOW_LABEL = os.environ.get("SHADOW_LABEL", "shadow")
 # The side whose duplicates fail the run: this collector's.
 OURS = os.environ.get("OURS", "shadow")
-# The demo collector scrapes its own telemetry; the shadow collector does not.
-SELF_METRICS = "metric_name NOT LIKE 'otelcol\\_%' AND metric_name NOT LIKE 'exporter\\_%' " \
-    "AND metric_name NOT LIKE 'scrape\\_%' AND metric_name NOT LIKE 'promhttp\\_%' AND metric_name != 'up'"
+# The service.name under which each collector reports its own telemetry, as a
+# resource attribute and a label, observed in the demo's two ClickHouses:
+# fusescope-collector, and /fusescope-otel-collector for the earlier collector.
+# Their series are counted and left out of the metric series check. Series of
+# any other service are compared, whatever their name: otelcol_*, exporter_*,
+# scrape_*, promhttp_*, up and otelcol.* can be a user's own collector's.
+INTERNAL_SERVICES = tuple(
+    s for s in os.environ.get("INTERNAL_SERVICES", "fusescope-collector,/fusescope-otel-collector").split(",") if s)
 
 # Fixed once per run, so both databases and every check see the same minutes.
 _end = int(time.time()) // 60 * 60 - SETTLE_MINUTES * 60
@@ -90,11 +95,11 @@ CHECKS = {
     # series newer than the window may reach one database first.
     "metric series": f"""
         SELECT DISTINCT metric_name, labels, attrs, scope_attrs, resource_attrs FROM signoz_metrics.time_series_v4
-        WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000
+        WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000 - 3600000
           AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000
           AND fingerprint IN (
             SELECT fingerprint FROM signoz_metrics.samples_v4
-            WHERE {SELF_METRICS} AND unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000
+            WHERE unix_milli >= toUnixTimestamp({WINDOW[0]}) * 1000
               AND unix_milli < toUnixTimestamp({WINDOW[1]}) * 1000)""",
 }
 
@@ -135,6 +140,40 @@ def anonymize(row):
     return (name, json.dumps([labels] + maps, sort_keys=True))
 
 
+def internal(row, services=INTERNAL_SERVICES):
+    """Whether a series row is a collector's own telemetry: its service.name, as a resource attribute or a label."""
+    _, labels, _, _, resource_attrs = row
+    service = resource_attrs.get("service.name") or json.loads(labels, strict=False).get("service.name")
+    return service in services
+
+
+def metric_series(demo, shadow, services=INTERNAL_SERVICES):
+    """Series sets to compare, without the collectors' own telemetry, and how many series each side left out."""
+    kept, ignored = {}, {"services": services}
+    for side, rows in (("demo", demo), ("shadow", shadow)):
+        rows = list(rows)
+        own = [row for row in rows if internal(row, services)]
+        ignored[side] = len(own)
+        kept[side] = {anonymize(row) for row in rows if not internal(row, services)}
+    return kept["demo"], kept["shadow"], ignored
+
+
+def check(name, demo, shadow, ignored=None, labels=None):
+    """Compares two sets of rows. Returns (failed, lines)."""
+    labels = labels or {"demo": DEMO_LABEL, "shadow": SHADOW_LABEL}
+    demo, shadow = set(demo), set(shadow)
+    note = ""
+    if ignored is not None:
+        note = (f"ignored {ignored['demo'] + ignored['shadow']} internal series of {', '.join(ignored['services'])}: "
+                f"{ignored['demo']} in {labels['demo']}, {ignored['shadow']} in {labels['shadow']}")
+    if demo == shadow:
+        return False, [f"ok    {name} ({len(demo)} rows{'; ' + note if note else ''})"]
+    lines = [f"DIFF  {name}: {len(demo - shadow)} only in {labels['demo']}, {len(shadow - demo)} only in {labels['shadow']}"
+             + (f"; {note}" if note else "")]
+    lines += [f"        {labels['demo']:<6} {row}" for row in sorted(demo - shadow, key=str)[:10]]
+    lines += [f"        {labels['shadow']:<6} {row}" for row in sorted(shadow - demo, key=str)[:10]]
+    return True, lines
+
 
 def query(base, sql):
     params = urllib.parse.urlencode({"readonly": "1"})
@@ -170,17 +209,11 @@ def main():
     for name, sql in CHECKS.items():
         demo, shadow = query(DEMO, sql), query(SHADOW, sql)
         if name == "metric series":
-            demo, shadow = map(anonymize, demo), map(anonymize, shadow)
-        demo, shadow = set(demo), set(shadow)
-        if demo == shadow:
-            print(f"ok    {name} ({len(demo)} rows)")
-            continue
-        failed += 1
-        print(f"DIFF  {name}: {len(demo - shadow)} only in {DEMO_LABEL}, {len(shadow - demo)} only in {SHADOW_LABEL}")
-        for row in sorted(demo - shadow, key=str)[:10]:
-            print(f"        {DEMO_LABEL:<6} {row}")
-        for row in sorted(shadow - demo, key=str)[:10]:
-            print(f"        {SHADOW_LABEL:<6} {row}")
+            bad, lines = check(name, *metric_series(demo, shadow))
+        else:
+            bad, lines = check(name, demo, shadow)
+        failed += bad
+        print("\n".join(lines))
     return 1 if failed else 0
 
 
