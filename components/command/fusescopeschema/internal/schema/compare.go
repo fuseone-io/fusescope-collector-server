@@ -169,7 +169,7 @@ func compareObject(replica, name string, want, got Object) []pending {
 	diff("primary key", want.PrimaryKey, got.PrimaryKey)
 	diff("partition key", want.PartitionKey, got.PartitionKey)
 	diff("sampling key", want.SamplingKey, got.SamplingKey)
-	diff("settings", list(want.Settings), list(got.Settings))
+	diff("settings", list(want.Settings), list(withoutColdStorage(name, want.Settings, got.Settings)))
 	diff("target", want.Target, got.Target)
 	diff("refresh", want.Refresh, got.Refresh)
 	diff("query", want.Query, got.Query)

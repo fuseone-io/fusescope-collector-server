@@ -53,7 +53,7 @@ func base() Snapshot {
 		{Name: "_retention_days", Type: "UInt16", DefaultKind: "DEFAULT", DefaultExpression: "15"},
 		{Name: "_retention_days_cold", Type: "UInt16", DefaultKind: "DEFAULT", DefaultExpression: "0"},
 	}
-	logs := Object{Kind: KindTable, Engine: "ReplicatedMergeTree", TTL: "toDateTime(timestamp / 1000000000) + toIntervalDay(_retention_days)", Columns: append([]Column{
+	logs := Object{Kind: KindTable, Engine: "ReplicatedMergeTree", TTL: "toDateTime(timestamp / 1000000000) + toIntervalDay(_retention_days)", Settings: logsSettings, Columns: append([]Column{
 		{Name: "attributes_string", Type: "Map(LowCardinality(String), String)", Codec: "CODEC(ZSTD(1))"},
 		{Name: "body_v2", Type: "JSON(max_dynamic_paths=0, message String)", Codec: "CODEC(ZSTD(1))"},
 	}, retention...)}
@@ -65,12 +65,31 @@ func base() Snapshot {
 		"logs.logs_v2":                   logs,
 		"logs.distributed_logs_v2":       {Kind: KindDistributed, Engine: "Distributed", Columns: logs.Columns},
 		"logs.logs_v2_resource":          {Kind: KindTable, Engine: "ReplicatedReplacingMergeTree", TTL: "(toDateTime(seen_at_ts_bucket_start) + toIntervalSecond(1800)) + toIntervalDay(_retention_days)", Columns: retention},
-		"logs.tag_attributes_v2":         {Kind: KindTable, Engine: "ReplicatedReplacingMergeTree", TTL: "toDateTime(unix_milli / 1000) + toIntervalSecond(172800)", Columns: retention},
+		"logs.tag_attributes_v2":         {Kind: KindTable, Engine: "ReplicatedReplacingMergeTree", TTL: "toDateTime(unix_milli / 1000) + toIntervalSecond(172800)", Settings: logsSettings, Columns: retention},
 		"traces.signoz_index_v3":         spans,
 		"traces.trace_summary":           {Kind: KindTable, Engine: "ReplicatedAggregatingMergeTree", TTL: "toDateTime(end) + toIntervalSecond(1296000)"},
 		"traces.span_attributes_keys":    {Kind: KindTable, Engine: "ReplicatedReplacingMergeTree", TTL: "toDateTime(timestamp) + toIntervalSecond(1296000)"},
 		"metrics.samples_v4":             {Kind: KindTable, Engine: "ReplicatedMergeTree", TTL: "toDateTime(toUInt32(unix_milli / 1000), 'UTC') + toIntervalSecond(2592000)"},
 		"metrics.distributed_samples_v4": {Kind: KindDistributed, Engine: "Distributed"},
+	}
+}
+
+var logsSettings = []string{"index_granularity = 8192", "ttl_only_drop_parts = 1"}
+
+// tiered is the setting the backend's cold storage writes (reader.go about line 1929), as the
+// server shows it in engine_full: appended after the table's own settings (observed on
+// ClickHouse 25.12.5, 2026-11-09).
+const tiered = "storage_policy = 'tiered'"
+
+// withSettings replaces the tables' settings with their expected ones followed by extra.
+func withSettings(extra []string, tables ...string) func(Snapshot) Snapshot {
+	return func(s Snapshot) Snapshot {
+		for _, table := range tables {
+			o := s[table]
+			o.Settings = append(slices.Clone(o.Settings), extra...)
+			s[table] = o
+		}
+		return s
 	}
 }
 
@@ -337,6 +356,33 @@ func TestAllowList(t *testing.T) {
 			s["metrics.samples_v4"] = o
 			return s
 		}, false},
+		{"cold storage's policy on the logs tables", withSettings([]string{tiered}, "logs.logs_v2", "logs.logs_v2_resource"), true},
+		{"cold storage's policy on the traces tables", withSettings([]string{tiered}, "traces.signoz_index_v3", "traces.trace_summary", "traces.span_attributes_keys"), true},
+		{"cold storage's policy on the metrics tables", withSettings([]string{tiered}, "metrics.samples_v4"), true},
+		{"another storage policy", withSettings([]string{"storage_policy = 'cold'"}, "logs.logs_v2"), false},
+		{"the policy on a table no retention path reaches", withSettings([]string{tiered}, "logs.tag_attributes_v2"), false},
+		{"the policy on a distributed table", withSettings([]string{tiered}, "logs.distributed_logs_v2"), false},
+		{"the policy and another setting", withSettings([]string{tiered, "merge_with_ttl_timeout = 3600"}, "logs.logs_v2"), false},
+		{"another setting after the policy", withSettings([]string{"merge_with_ttl_timeout = 3600", tiered}, "logs.logs_v2"), false},
+		{"the policy twice", withSettings([]string{tiered, tiered}, "logs.logs_v2"), false},
+		{"the policy before the table's own settings", func(s Snapshot) Snapshot {
+			o := s["logs.logs_v2"]
+			o.Settings = append([]string{tiered}, logsSettings...)
+			s["logs.logs_v2"] = o
+			return s
+		}, false},
+		{"the policy with one of the table's settings changed", func(s Snapshot) Snapshot {
+			o := s["logs.logs_v2"]
+			o.Settings = []string{"index_granularity = 1024", "ttl_only_drop_parts = 1", tiered}
+			s["logs.logs_v2"] = o
+			return s
+		}, false},
+		{"one of the table's settings dropped for the policy", func(s Snapshot) Snapshot {
+			o := s["logs.logs_v2"]
+			o.Settings = []string{"index_granularity = 8192", tiered}
+			s["logs.logs_v2"] = o
+			return s
+		}, false},
 		{"a TTL changed on a table the retention settings do not target", func(s Snapshot) Snapshot {
 			o := s["logs.tag_attributes_v2"]
 			o.TTL = "toDateTime(unix_milli / 1000) + toIntervalSecond(86400)"
@@ -361,5 +407,21 @@ func TestAllowList(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The tables the four retention paths call setColdStorage on: setTTLLogs and SetTTLV2 (the four
+// logs tables), setTTLTraces (seven) and setTTLMetrics (eight), in reader.go about lines 942,
+// 1059, 1273 and 1734.
+func TestColdStorageTables(t *testing.T) {
+	want := []string{
+		"logs.logs_attribute_keys", "logs.logs_resource_keys", "logs.logs_v2", "logs.logs_v2_resource",
+		"metrics.exp_hist", "metrics.samples_v4", "metrics.samples_v4_agg_30m", "metrics.samples_v4_agg_5m",
+		"metrics.time_series_v4", "metrics.time_series_v4_1day", "metrics.time_series_v4_1week", "metrics.time_series_v4_6hrs",
+		"traces.dependency_graph_minutes_v2", "traces.signoz_error_index_v2", "traces.signoz_index_v3", "traces.span_attributes_keys",
+		"traces.trace_summary", "traces.traces_v3_resource", "traces.usage_explorer",
+	}
+	if got := slices.Sorted(slices.Values(coldStorageTables)); !slices.Equal(got, want) {
+		t.Fatalf("coldStorageTables = %q\nwant %q", got, want)
 	}
 }

@@ -2,7 +2,9 @@
 # A 2x2 ClickHouse cluster with Keeper or ZooKeeper for fusescope-schema's
 # integration tests (docs/spec/fusescope-schema.md §9). The four servers'
 # native ports are 127.0.0.1:19001..19004. The same servers also form the
-# cluster fusescope-custom, for a custom cluster name. The coordination
+# cluster fusescope-custom, for a custom cluster name. Each server has the
+# storage policies tiered, the name the backend's cold storage sets, and
+# other, both over the default disk and a local cold one. The coordination
 # service runs one node or a 3-node ensemble, its members named coord1..N.
 #   test/schema/cluster.sh up [keeper|zookeeper] [1|3]   prints the cluster's directory, whose
 #                                                        addrs file holds FUSESCOPE_SCHEMA_TEST_ADDRS
@@ -84,6 +86,10 @@ X
 <clickhouse><logger><level>warning</level><console>1</console></logger><listen_host>0.0.0.0</listen_host>
 <zookeeper>$zk_nodes</zookeeper>
 <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
+<storage_configuration><disks><cold><path>/var/lib/clickhouse/cold/</path></cold></disks><policies>
+<tiered><volumes><default><disk>default</disk></default><cold><disk>cold</disk></cold></volumes><move_factor>0</move_factor></tiered>
+<other><volumes><default><disk>default</disk></default><cold><disk>cold</disk></cold></volumes></other>
+</policies></storage_configuration>
 <macros><shard>${n:3:1}</shard><replica>$n</replica></macros>
 <remote_servers><cluster>
 <shard><internal_replication>true</internal_replication><replica><host>ch-1-1</host><port>9000</port></replica><replica><host>ch-1-2</host><port>9000</port></replica></shard>

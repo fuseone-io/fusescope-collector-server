@@ -4,6 +4,7 @@
 package schema
 
 import (
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -22,7 +23,8 @@ import (
 //     pkg/telemetryschema/tracestelemetryschema/storage.go
 //     (AttributeJSONValueExpr);
 //   - retention: reader.go (the custom logs retention) and
-//     ttl_statements.go, pkg/types/retentiontypes/ttlclause.go.
+//     ttl_statements.go, pkg/types/retentiontypes/ttlclause.go;
+//   - cold storage's policy: reader.go (setColdStorage, about line 1929).
 
 // promotedTables hold promoted columns; the local ones also their indexes.
 var (
@@ -426,4 +428,23 @@ func ttlPattern(canonical string) *regexp.Regexp {
 	}
 	p = strings.ReplaceAll(p, regexp.QuoteMeta(sentinelVolume), `'(?:[^'\\]|\\.)+'`)
 	return regexp.MustCompile("^" + p + "$")
+}
+
+// coldStoragePolicy is the setting setColdStorage writes, its policy name fixed by the backend,
+// as the server lists it in engine_full.
+const coldStoragePolicy = "storage_policy = 'tiered'"
+
+// coldStorageTables are the tables the retention paths call setColdStorage on: those whose TTL
+// they write.
+var coldStorageTables = slices.Collect(maps.Keys(ttlShapes))
+
+// withoutColdStorage returns got without the cold storage policy when got is want's settings
+// with the policy appended, as the server lists a setting the table did not have, on a table
+// the retention paths reach. Any other settings are returned unchanged, to be compared.
+func withoutColdStorage(table string, want, got []string) []string {
+	n := len(want)
+	if len(got) == n+1 && got[n] == coldStoragePolicy && slices.Equal(got[:n], want) && slices.Contains(coldStorageTables, table) {
+		return got[:n]
+	}
+	return got
 }
