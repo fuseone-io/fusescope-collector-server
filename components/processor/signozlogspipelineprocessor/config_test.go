@@ -67,9 +67,10 @@ func TestConfigValidate(t *testing.T) {
 		{name: "grok", operators: []map[string]any{{"type": "grok_parser", "parse_from": "body", "parse_to": "attributes", "pattern": "%{WORD:w} %{NUMBER:n:int}"}}},
 		{name: "grok inline group", operators: []map[string]any{{"type": "grok_parser", "pattern": "(?<verb>[A-Z]+) %{GREEDYDATA:rest}"}}},
 		{name: "grok without pattern", operators: []map[string]any{{"type": "grok_parser", "parse_from": "body"}}, wantErr: "missing required field 'pattern'"},
-		{name: "grok unknown pattern name", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{NOSUCHPATTERN:x}"}}, wantErr: "no pattern found for %{NOSUCHPATTERN}"},
-		{name: "grok invalid regex", operators: []map[string]any{{"type": "grok_parser", "pattern": "(?<x>[a-"}}, wantErr: "pattern"},
-		{name: "grok invalid type", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w:bool}"}}, wantErr: "invalid pattern"},
+		// A pattern that does not compile is accepted and fails each record (spec §3.2).
+		{name: "grok unknown pattern name", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{NOSUCHPATTERN:x}"}}},
+		{name: "grok invalid regex", operators: []map[string]any{{"type": "grok_parser", "pattern": "(?<x>[a-"}}},
+		{name: "grok invalid type", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w:bool}"}}},
 		{name: "grok unknown field", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w}", "regex": "x"}}, wantErr: "regex"},
 		{name: "grok bad parse_from", operators: []map[string]any{{"type": "grok_parser", "pattern": "%{WORD:w}", "parse_from": "nowhere.a"}}, wantErr: "unrecognized prefix"},
 		{name: "unknown operator field", operators: []map[string]any{add(map[string]any{"foo": "bar"})}, wantErr: "foo"},

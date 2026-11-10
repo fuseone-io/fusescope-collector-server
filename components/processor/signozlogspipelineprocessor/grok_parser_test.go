@@ -104,6 +104,54 @@ func TestGrokParser(t *testing.T) {
 			attrs:   map[string]any{"n": 5},
 			dropped: true,
 		},
+		// A pattern that does not compile is accepted; it fails each record
+		// and on_error decides the record's fate (spec §3.2).
+		{
+			name:  "an unknown pattern name is an error, sent on",
+			op:    grok("%{NOSUCHPATTERN:x}", nil),
+			body:  "GET /a 200",
+			attrs: map[string]any{"keep": "1"},
+			want:  map[string]any{"keep": "1"},
+		},
+		{
+			name:  "an unknown pattern name is an error, sent on quietly",
+			op:    grok("%{WORD:w} %{NOSUCHPATTERN:x}", map[string]any{"on_error": "send_quiet"}),
+			body:  "GET /a 200",
+			attrs: map[string]any{"keep": "1"},
+			want:  map[string]any{"keep": "1"},
+		},
+		{
+			name:    "an unknown pattern name is an error, dropped",
+			op:      grok("%{NOSUCHPATTERN:x}", map[string]any{"on_error": "drop"}),
+			body:    "GET /a 200",
+			dropped: true,
+		},
+		{
+			name:    "an unknown pattern name is an error, dropped quietly",
+			op:      grok("%{NOSUCHPATTERN:x}", map[string]any{"on_error": "drop_quiet"}),
+			body:    "GET /a 200",
+			dropped: true,
+		},
+		{
+			name:  "an invalid regex is an error, sent on",
+			op:    grok("(?<x>[a-", nil),
+			body:  "abc",
+			attrs: map[string]any{"keep": "1"},
+			want:  map[string]any{"keep": "1"},
+		},
+		{
+			name:    "an invalid regex is an error, dropped",
+			op:      grok("(?<x>[a-", map[string]any{"on_error": "drop"}),
+			body:    "abc",
+			dropped: true,
+		},
+		{
+			name:  "an invalid conversion type is an error, sent on",
+			op:    grok("%{WORD:w:bool}", nil),
+			body:  "abc",
+			attrs: map[string]any{"keep": "1"},
+			want:  map[string]any{"keep": "1"},
+		},
 		{
 			name:    "a missing field is an error, dropped",
 			op:      grok("%{WORD:w}", map[string]any{"parse_from": "attributes.absent", "on_error": "drop_quiet"}),
@@ -152,6 +200,26 @@ func TestGrokConcurrent(t *testing.T) {
 	}
 }
 
+// A pattern that fails to compile is compiled once, when the operator is
+// built: every record gets the same error, and the library is not called again.
+func TestGrokCompileErrorKept(t *testing.T) {
+	for _, pattern := range []string{"%{NOSUCHPATTERN:x}", "(?<x>[a-"} {
+		t.Run(pattern, func(t *testing.T) {
+			p := newTestProcessor(t, map[string]any{"id": "g", "type": "grok_parser", "parse_from": "body", "parse_to": "attributes", "pattern": pattern})
+			op := findGrok(t, p)
+			require.Error(t, op.compileErr)
+			op.grok = nil // any further use of the library would panic
+			for range 3 {
+				out, err := p.processLogs(context.Background(), oneRecord("GET /a 200", map[string]any{}))
+				require.NoError(t, err)
+				assert.Equal(t, 1, out.LogRecordCount())
+			}
+			_, err := op.parse("GET /a 200")
+			assert.ErrorIs(t, err, op.compileErr)
+		})
+	}
+}
+
 // env is not in the expression environment, so no alias reaches it (spec §4.1).
 func TestEnvIsNotInTheEnvironment(t *testing.T) {
 	t.Setenv("FUSESCOPE_TEST_ENV", "leaked")
@@ -159,4 +227,17 @@ func TestEnvIsNotInTheEnvironment(t *testing.T) {
 	out, err := p.processLogs(context.Background(), oneRecord("x", map[string]any{}))
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"a": []any{"nil", "nil"}}, firstRecord(out).Attributes().AsRaw())
+}
+
+func findGrok(t *testing.T, p *logsProcessor) *grokOperator {
+	t.Helper()
+	for _, n := range p.pipeline.nodes {
+		if s, ok := n.(*stanzaNode); ok {
+			if op, ok := s.op.(*grokOperator); ok {
+				return op
+			}
+		}
+	}
+	t.Fatal("no grok_parser operator")
+	return nil
 }

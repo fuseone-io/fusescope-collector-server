@@ -69,11 +69,6 @@ This processor is **stricter** than the reference in these cases, which the refe
 - `add` without `value` ([O] `R_AddNoValue`);
 - `add` without `field` (not observed): the write would fail on every record, so `on_error: drop`
   would discard every matching log while the push is reported `APPLIED`;
-- a grok pattern naming an unknown pattern, or one that is not a valid regular expression
-  ([O] `R_GrokBadPattern`, `Grok_InvalidPattern_ConfigError`): the reference starts and fails
-  the operator on every record, so `on_error` decides each record's fate while the push is
-  reported `APPLIED` ([B] `pipelinesim/operators.go:119-125`, which compiles the pattern per
-  record);
 - a grok pattern longer than 4096 bytes or with more than 64 `%{...}` references (§3.2; the
   observed and backend-generated patterns are far below both);
 - an expression naming `env` (§4.1, a deliberate deviation for security; [O] `X_Expr_Helpers`
@@ -147,9 +142,18 @@ import's few changes, `NOTICE` credits it), and uses it the same way:
   the library ignores the conversion error;
 - a dotted semantic name (`%{WORD:http.method}`) keeps its dots ([O] `Grok_DottedFieldNames`).
 
-The pattern is compiled when the operator is built, so an unknown pattern name or an invalid
-regular expression is refused (§1.2). Before that it is bounded to 4096 bytes and 64 `%{...}`
-references: each reference expands to its definition (up to kilobytes), and the library rescans
+A pattern that does not compile (an unknown pattern name, an invalid regular expression or
+conversion type) is accepted, as by the reference: it starts, and the operator fails on every
+record, so `on_error` decides each record's fate (§6) ([O] `R_GrokBadPattern`,
+`Grok_InvalidPattern_ConfigError`: with `send`, every record goes on unchanged; [B]
+`pipelinesim/operators.go:119-125`, which fails each record the same way). Refusing it would
+make the push `FAILED` as a whole (ADR 0008 point 2), holding back every other pipeline in it,
+while the backend's preview shows the logs passing. The pattern is compiled once, when the
+operator is built; a compilation error is kept, logged as a warning, and returned for each
+record without compiling again.
+
+An empty pattern is refused (§1.2). A pattern is bounded to 4096 bytes and 64 `%{...}`
+references before it is compiled: each reference expands to its definition (up to kilobytes), and the library rescans
 the growing string for each one, so an unbounded pushed pattern (500,000 `%{IPV6}` fit in a push)
 could take hundreds of megabytes and quadratic time during validation. Go's `regexp` (RE2) matches in time linear in the input
 without backtracking, so no pattern can take exponential time; it has no match timeout, and none
