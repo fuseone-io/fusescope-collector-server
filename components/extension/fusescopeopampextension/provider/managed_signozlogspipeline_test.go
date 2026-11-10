@@ -17,8 +17,10 @@ import (
 )
 
 // The build's preflight runs the real signozlogspipeline: a grok pipeline as
-// the backend pushes it passes, and env() fails in every expression position
-// with the operator named and the expression not echoed (opamp.md §6).
+// the backend pushes it passes, a grok pattern that does not compile passes
+// too (it fails each record, signozlogspipeline spec §3.2), and env() fails
+// in every expression position with the operator named and the expression
+// not echoed (opamp.md §6).
 func TestManagedSignozLogsPipeline(t *testing.T) {
 	if _, ok := buildManaged[component.MustNewType("signozlogspipeline")]; !ok {
 		t.Fatal("signozlogspipeline is not a managed processor")
@@ -38,7 +40,8 @@ func TestManagedSignozLogsPipeline(t *testing.T) {
 		wantErr string
 	}{
 		{"grok", pipeline(`body != nil`, grok), ""},
-		{"grok unknown pattern", pipeline(`body != nil`, `{id: op1, type: grok_parser, parse_from: body, pattern: '%{NOSUCHPATTERN:x}', output: noop}`), `"op1"`},
+		{"grok unknown pattern", pipeline(`body != nil`, `{id: op1, type: grok_parser, parse_from: body, pattern: '%{NOSUCHPATTERN:x}', output: noop}`), ""},
+		{"grok invalid regex", pipeline(`body != nil`, `{id: op1, type: grok_parser, parse_from: body, pattern: '(?<x>[a-', on_error: drop, output: noop}`), ""},
 		{"env in if", pipeline(`body != nil`, `{id: op1, type: add, field: attributes.a, value: x, if: 'env("SECRET_NAME") != nil', output: noop}`), `"op1"`},
 		{"env in a route", pipeline(`env("SECRET_NAME") == "x"`, grok), `"router_signoz"`},
 		{"env in a value", pipeline(`body != nil`, `{id: op1, type: add, field: attributes.a, value: 'EXPR(env("SECRET_NAME"))', output: noop}`), `"op1"`},
