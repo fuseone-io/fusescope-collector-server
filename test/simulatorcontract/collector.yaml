@@ -9,10 +9,9 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 extensions:
+  # Legacy mode, as fusescope's fixture configures it: 200 on /, as health_check answered.
   healthcheckv2:
-    use_v2: true
-    http:
-      endpoint: 0.0.0.0:13133
+    endpoint: 0.0.0.0:13133
 processors:
   resource/contract:
     attributes:
