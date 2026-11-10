@@ -46,7 +46,7 @@ OTLP to it (FuseScope ADR 0009, phase 1).
 Receivers `otlp`, `otelarrow`, `file_log`, `host_metrics`, `prometheus`, `kubelet_stats`,
 `k8s_cluster`; processors `memory_limiter`, `batch`, `k8s_attributes`, `resource_detection`,
 `resource`, `attributes`, `filter`, `transform`, `tail_sampling`; exporters `otlp_grpc`,
-`otlp_http`, `otelarrow`, `debug`; connector `span_metrics`; extensions `healthcheckv2`,
+`otlp_http`, `otelarrow`, `debug`, `file` (for fusescope's `simulatorcontract` suite); connector `span_metrics`; extensions `healthcheckv2`,
 `bearertokenauth`, `oidc`, `file_storage`, `pprof`, `zpages`, `memory_limiter`; config providers
 `env`, `file`, `yaml`. The `http(s)` config providers are left out on purpose: remote
 configuration goes through OpAMP with an allow-list (§5), never an arbitrary URL.
