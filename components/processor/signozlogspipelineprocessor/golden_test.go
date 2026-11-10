@@ -61,12 +61,10 @@ var unsupported = map[string]string{
 // stricter are configurations the reference starts with and this processor
 // refuses, with the reason (spec §1.2).
 var stricter = map[string]string{
-	"R_UnknownOperatorField":          "a field the operator does not have",
-	"R_UnknownTraceField":             "a field the operator does not have",
-	"R_AddNoValue":                    "add without value",
-	"R_GrokBadPattern":                "a grok pattern naming an unknown pattern",
-	"Grok_InvalidPattern_ConfigError": "a grok pattern naming an unknown pattern",
-	"X_Expr_Helpers":                  "env() is refused (spec §4.1)",
+	"R_UnknownOperatorField": "a field the operator does not have",
+	"R_UnknownTraceField":    "a field the operator does not have",
+	"R_AddNoValue":           "add without value",
+	"X_Expr_Helpers":         "env() is refused (spec §4.1)",
 }
 
 // withoutEnv rewrites the cases using env() so their outputs are still

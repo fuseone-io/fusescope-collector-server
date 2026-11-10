@@ -73,6 +73,8 @@ func BenchmarkGrok(b *testing.B) {
 		{"simple", "%{WORD:method} %{URIPATH:path} %{NUMBER:status:int} %{NUMBER:bytes:int} %{NUMBER:duration:float}", "GET /api/orders 200 1532 0.042"},
 		{"combined apache log", "%{COMBINEDAPACHELOG}", `10.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326 "http://www.example.com/start.html" "Mozilla/4.08"`},
 		{"no match", "^%{IP:client} %{WORD:verb}$", "GET /api/orders 200 1532 0.042"},
+		// Every record fails the operator with the error kept at build.
+		{"pattern does not compile", "%{NOSUCHPATTERN:x}", "GET /api/orders 200 1532 0.042"},
 	} {
 		b.Run(tt.name, func(b *testing.B) {
 			operators := []map[string]any{

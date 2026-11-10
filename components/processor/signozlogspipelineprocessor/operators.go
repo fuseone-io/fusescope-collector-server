@@ -25,6 +25,7 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/transformer/noop"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/transformer/remove"
 	"go.opentelemetry.io/collector/component"
+	"go.uber.org/zap"
 
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor/internal/grok"
 )
@@ -149,19 +150,27 @@ func (c *grokConfig) Build(set component.TelemetrySettings) (operator.Operator, 
 	if err != nil {
 		return nil, err
 	}
-	// Compiling here refuses an unknown pattern name or an invalid regex at
-	// configuration time (spec §1.2). The operator's parser compiles nothing
-	// afterwards, so concurrent calls only read it.
+	// The pattern is compiled once, here. A pattern that does not compile
+	// (an unknown name, an invalid regex) is accepted, as the reference
+	// accepts it: its error is kept and returned for every record, so
+	// on_error decides each record's fate (spec §3.2). The library caches
+	// only successful compilations, and compiling writes its alias map, so
+	// the parser never calls it for a pattern that failed; for one that
+	// compiled, concurrent calls only read the cache.
+	op := &grokOperator{ParserOperator: p, grok: g, pattern: c.Pattern}
 	if _, err := g.Match(c.Pattern, ""); err != nil {
-		return nil, fmt.Errorf("grok_parser: pattern: %w", err)
+		op.compileErr = fmt.Errorf("grok_parser: pattern: %w", err)
+		set.Logger.Warn("grok_parser pattern does not compile; every record fails the operator",
+			zap.String("operator_id", c.OperatorID), zap.Error(err))
 	}
-	return &grokOperator{ParserOperator: p, grok: g, pattern: c.Pattern}, nil
+	return op, nil
 }
 
 type grokOperator struct {
 	helper.ParserOperator
-	grok    *grok.Grok
-	pattern string
+	grok       *grok.Grok
+	pattern    string
+	compileErr error
 }
 
 func (o *grokOperator) Process(ctx context.Context, e *entry.Entry) error {
@@ -178,6 +187,9 @@ func (o *grokOperator) parse(value any) (any, error) {
 	text, ok := value.(string)
 	if !ok {
 		return nil, fmt.Errorf("%w: type %T cannot be parsed with grok", errUnparsable, value)
+	}
+	if o.compileErr != nil {
+		return nil, o.compileErr
 	}
 	return o.grok.ParseTyped(o.pattern, text)
 }
