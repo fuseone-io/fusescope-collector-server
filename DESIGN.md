@@ -46,10 +46,19 @@ OTLP to it (FuseScope ADR 0009, phase 1).
 Receivers `otlp`, `otelarrow`, `file_log`, `host_metrics`, `prometheus`, `kubelet_stats`,
 `k8s_cluster`; processors `memory_limiter`, `batch`, `k8s_attributes`, `resource_detection`,
 `resource`, `attributes`, `filter`, `transform`, `tail_sampling`; exporters `otlp_grpc`,
-`otlp_http`, `otelarrow`, `debug`; connector `span_metrics`; extensions `healthcheckv2`,
-`bearertokenauth`, `oidc`, `file_storage`, `pprof`, `zpages`, `memory_limiter`; config providers
-`env`, `file`, `yaml`. The `http(s)` config providers are left out on purpose: remote
-configuration goes through OpAMP with an allow-list (§5), never an arbitrary URL.
+`otlp_http`, `otelarrow`, `debug`, `file`; connector `span_metrics`; extensions
+`healthcheckv2`, `bearertokenauth`, `oidc`, `file_storage`, `pprof`, `zpages`,
+`memory_limiter`; config providers `env`, `file`, `yaml`. The `http(s)` config providers are
+left out on purpose: remote configuration goes through OpAMP with an allow-list (§5), never an
+arbitrary URL.
+
+The `file` exporter is there for a test: fusescope's `simulatorcontract` suite reads each
+case's output from it (`test/simulatorcontract/collector.yaml`). It ships in every image
+anyway, because that suite has to test the binary that runs in production. Only a local
+configuration can enable it: exporters are local configuration only (ADR 0004), and a push
+that changes one is rejected (ADR 0008, point 2). Where it writes is bounded by the runtime.
+The chart runs the collector with `readOnlyRootFilesystem: true`, so only a mounted volume is
+writable.
 
 ### 3.2 FuseScope (planned, in `components/`)
 

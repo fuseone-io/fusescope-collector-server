@@ -1,0 +1,65 @@
+# The shape of the collector config that fusescope's simulatorcontract integration suite runs
+# (fusescope tests/fixtures/simulatorcontract.py): per case, a filter keeps that case's data, a
+# resource processor drops the case marker, the case's processors run, and a file exporter
+# writes the output that is compared with the golden. `make validate` checks this distribution
+# accepts it.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+extensions:
+  # Legacy mode, as fusescope's fixture configures it: 200 on /, as health_check answered.
+  healthcheckv2:
+    endpoint: 0.0.0.0:13133
+processors:
+  resource/contract:
+    attributes:
+      - key: fusescope.contract.case
+        action: delete
+  filter/c0:
+    error_mode: ignore
+    logs:
+      log_record:
+        - resource.attributes["fusescope.contract.case"] != "c0"
+  filter/c1:
+    error_mode: ignore
+    traces:
+      span:
+        - resource.attributes["fusescope.contract.case"] != "c1"
+  # The first case of each golden (fusescope tests/integration/testdata/simulatorcontract).
+  signozlogspipeline/c0_pipeline_p1:
+    operators:
+      - {id: router_signoz, type: router, default: noop, routes: [{expr: body != nil, output: op1}]}
+      - id: op1
+        type: grok_parser
+        if: body != nil
+        on_error: send
+        parse_from: body
+        parse_to: attributes
+        pattern: "%{WORD:method} %{URIPATH:path} %{NUMBER:status} %{NUMBER:bytes} %{NUMBER:duration}"
+      - {id: noop, type: noop}
+  signozspanmapper/c1:
+    groups:
+      - id: g
+        exists_any: {attributes: [src]}
+        attributes:
+          - {target: target, context: attribute, sources: [{key: src.a}]}
+exporters:
+  file/c0:
+    path: /contract/c0.json
+    flush_interval: 100ms
+  file/c1:
+    path: /contract/c1.json
+    flush_interval: 100ms
+service:
+  extensions: [healthcheckv2]
+  pipelines:
+    logs/c0:
+      receivers: [otlp]
+      processors: [filter/c0, resource/contract, signozlogspipeline/c0_pipeline_p1]
+      exporters: [file/c0]
+    traces/c1:
+      receivers: [otlp]
+      processors: [filter/c1, resource/contract, signozspanmapper/c1]
+      exporters: [file/c1]
