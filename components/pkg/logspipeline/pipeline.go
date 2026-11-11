@@ -71,11 +71,11 @@ type spec struct {
 
 func newPipeline(operators []map[string]any, set component.TelemetrySettings) (*pipeline, error) {
 	if len(operators) == 0 {
-		return nil, errors.New("no operators were configured for signozlogspipeline processor")
+		return nil, configError(StageOperators, "", "", errors.New("no operators were configured for signozlogspipeline processor"))
 	}
 	specs, err := parseSpecs(operators)
 	if err != nil {
-		return nil, err
+		return nil, configError(StageOperators, "", "", err)
 	}
 	ids := make(map[string]int, len(specs))
 	for i, s := range specs {
@@ -87,14 +87,14 @@ func newPipeline(operators []map[string]any, set component.TelemetrySettings) (*
 		}
 		i, ok := ids[id]
 		if !ok {
-			return 0, fmt.Errorf("operator %q: output %q is not an operator of this processor", from, id)
+			return 0, staged(StageGraph, fmt.Errorf("operator %q: output %q is not an operator of this processor", from, id))
 		}
 		return i, nil
 	}
 
 	out, err := helper.NewOutputConfig(sinkID, "sink").Build(set)
 	if err != nil {
-		return nil, err
+		return nil, configError(StageBuild, "", "", err)
 	}
 	output := &sink{OutputOperator: out}
 
@@ -104,17 +104,17 @@ func newPipeline(operators []map[string]any, set component.TelemetrySettings) (*
 		switch {
 		case s.output != "":
 			if next, err = resolve(s.id, s.output); err != nil {
-				return nil, err
+				return nil, configError(StageGraph, s.id, s.typ, err)
 			}
 		case i+1 < len(specs):
 			next = i + 1
 		}
 		if p.nodes[i], err = buildNode(s, next, resolve, output, set); err != nil {
-			return nil, fmt.Errorf("operator %q (%s): %w", s.id, s.typ, err)
+			return nil, configError(stageOf(err, StageBuild), s.id, s.typ, fmt.Errorf("operator %q (%s): %w", s.id, s.typ, err))
 		}
 	}
 	if err := checkCycles(p.nodes); err != nil {
-		return nil, err
+		return nil, configError(StageGraph, "", "", err)
 	}
 	return p, nil
 }
@@ -167,16 +167,16 @@ func buildNode(s spec, next int, resolve func(from, id string) (int, error), out
 	}
 	reads, err := redirectBodyReads(s)
 	if err != nil {
-		return nil, err
+		return nil, staged(StageDecode, err)
 	}
 	builder := builders[s.typ]()
 	if err := confmap.NewFromStringMap(s.config).Unmarshal(builder); err != nil {
-		return nil, err
+		return nil, staged(StageDecode, err)
 	}
 	var when *program
 	if s.cond != "" {
 		if when, err = compileBool(s.cond); err != nil {
-			return nil, fmt.Errorf("compile if: %w", err)
+			return nil, staged(StageCompile, fmt.Errorf("compile if: %w", err))
 		}
 	}
 	if s.typ == noopType {
@@ -184,7 +184,7 @@ func buildNode(s spec, next int, resolve func(from, id string) (int, error), out
 	}
 	op, err := builder.Build(set)
 	if err != nil {
-		return nil, err
+		return nil, staged(StageBuild, err)
 	}
 	onError := helper.SendOnError
 	if v, ok := s.config["on_error"].(string); ok && v != "" {
@@ -193,7 +193,7 @@ func buildNode(s spec, next int, resolve func(from, id string) (int, error), out
 	n := &stanzaNode{id: s.id, op: op, when: when, onError: onError, next: next, reads: reads, logger: set.Logger}
 	op.SetOutputIDs([]string{sinkID})
 	if err := op.SetOutputs([]operator.Operator{output}); err != nil {
-		return nil, err
+		return nil, staged(StageBuild, err)
 	}
 	return n, nil
 }
@@ -288,7 +288,7 @@ type routeConfig struct {
 func buildRouter(s spec, resolve func(from, id string) (int, error)) (node, error) {
 	var cfg routerConfig
 	if err := confmap.NewFromStringMap(s.config).Unmarshal(&cfg); err != nil {
-		return nil, err
+		return nil, staged(StageDecode, err)
 	}
 	n := &routerNode{defaultNext: exit}
 	if cfg.Default != "" {
@@ -301,7 +301,7 @@ func buildRouter(s spec, resolve func(from, id string) (int, error)) (node, erro
 	for i, r := range cfg.Routes {
 		when, err := compileBool(r.Expr)
 		if err != nil {
-			return nil, fmt.Errorf("compile route %d: %w", i, err)
+			return nil, staged(StageCompile, fmt.Errorf("compile route %d: %w", i, err))
 		}
 		next, err := resolve(s.id, r.Output)
 		if err != nil {

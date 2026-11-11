@@ -10,7 +10,7 @@ ADR 0012, once the module is tagged.
 |---|---|---|
 | `components/pkg/ingestpolicy` | imported, `v0.1.0` | the policy types, `Parse` and `Validate`, so it never publishes a snapshot the collector rejects; the capability and message type names; `ParseReportAck`'s counterpart format |
 | `components/pkg/ingestreport` | imported, `v0.1.0` | the report page types, `Merge` and `Assembler` with the backend's bounds, behind its own `AgentStore` |
-| `components/pkg/logspipeline` | not tagged; planned for the backend in ADR 0012 step 2 | will use `New`, `Validate` and `Pipeline.Process`: the log pipelines of `docs/spec/signozlogspipeline.md`, which the `signozlogspipeline` processor runs |
+| `components/pkg/logspipeline` | not tagged; planned for the backend in ADR 0012 step 2 | will use `New`, `Validate` and `Pipeline.Process`, and `ConfigError`'s `Stage` to classify a refused configuration: the log pipelines of `docs/spec/signozlogspipeline.md`, which the `signozlogspipeline` processor runs |
 
 All are Apache-2.0 with a `LICENSE` in the module directory, since a module downloaded from
 the Go proxy holds only its own directory. `ingestpolicy` also carries `LICENSE-MIT` for the
