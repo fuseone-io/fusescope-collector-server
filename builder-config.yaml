@@ -85,3 +85,5 @@ replaces:
   # backend (ADR 0006); relative to output_path.
   - github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy => ../components/pkg/ingestpolicy
   - github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestreport => ../components/pkg/ingestreport
+  # The log pipelines library, shared with the backend's preview (ADR 0012).
+  - github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline => ../components/pkg/logspipeline

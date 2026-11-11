@@ -36,6 +36,7 @@ require (
 require (
 	github.com/elastic/lunes v0.2.2 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
+	github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline v0.0.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/leodido/go-syslog/v4 v4.6.0 // indirect
@@ -186,3 +187,5 @@ replace github.com/fuseone-io/fusescope-collector-server/components/processor/si
 replace github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor => ../../processor/signozlogspipelineprocessor
 
 replace github.com/fuseone-io/fusescope-collector-server/components/pkg/ingestpolicy => ../../pkg/ingestpolicy
+
+replace github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline => ../../pkg/logspipeline

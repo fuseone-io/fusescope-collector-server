@@ -3,8 +3,6 @@ module github.com/fuseone-io/fusescope-collector-server/components/processor/sig
 go 1.26.0
 
 require (
-	github.com/expr-lang/expr v1.17.8
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza v0.164.1
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.70.0
 	go.opentelemetry.io/collector/component/componenttest v0.164.0
@@ -16,13 +14,19 @@ require (
 	go.opentelemetry.io/collector/processor/processorhelper v0.164.0
 	go.opentelemetry.io/collector/processor/processortest v0.164.0
 	go.uber.org/goleak v1.3.0
-	go.uber.org/zap v1.28.0
+)
+
+require (
+	github.com/expr-lang/expr v1.17.8 // indirect
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza v0.164.1 // indirect
+	go.uber.org/zap v1.28.0 // indirect
 )
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/elastic/lunes v0.2.2 // indirect
+	github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline v0.0.0
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
@@ -76,3 +80,5 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline => ../../pkg/logspipeline

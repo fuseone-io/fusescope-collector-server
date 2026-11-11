@@ -1,7 +1,7 @@
 // Copyright FuseOne
 // SPDX-License-Identifier: Apache-2.0
 
-package signozlogspipelineprocessor // import "github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor"
+package logspipeline // import "github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline"
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.uber.org/zap"
 
-	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor/internal/grok"
+	"github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline/internal/grok"
 )
 
 const (

@@ -4,8 +4,7 @@
 package signozlogspipelineprocessor // import "github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor"
 
 import (
-	"go.opentelemetry.io/collector/component"
-	"go.uber.org/zap"
+	"github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline"
 )
 
 // Config is one log pipeline as the FuseScope backend pushes it: stanza
@@ -18,6 +17,5 @@ type Config struct {
 // Validate builds the operators, so a configuration the processor cannot
 // run is refused before the collector starts it.
 func (cfg *Config) Validate() error {
-	_, err := newPipeline(cfg.Operators, component.TelemetrySettings{Logger: zap.NewNop()})
-	return err
+	return logspipeline.Validate(cfg.Operators)
 }

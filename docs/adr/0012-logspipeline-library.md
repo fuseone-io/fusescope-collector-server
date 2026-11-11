@@ -53,8 +53,8 @@ module. The processor keeps the collector glue: the factory, `metadata.yaml`, te
 Where the module lives:
 
 - **A1. A module in this repository**, for example
-  `github.com/fuseone-io/fusescope-collector-server/pkg/logspipeline`, Apache-2.0, tagged
-  `pkg/logspipeline/vX.Y.Z` with every collector release.
+  `github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline`, Apache-2.0,
+  tagged `components/pkg/logspipeline/vX.Y.Z` with every collector release.
 - **A2. A new repository** (`fuseone-io/fusescope-logspipeline`), Apache-2.0, with its own
   releases.
 - **A3. A module in the backend repository**, MIT. The collector would then depend on the
@@ -147,7 +147,7 @@ Each step is a separate pull request. None of them changes a golden.
 
 ## Versioning and rollback
 
-- The module is tagged `pkg/logspipeline/vX.Y.Z` with the collector release `vX.Y.Z` that ships
+- The module is tagged `components/pkg/logspipeline/vX.Y.Z` with the collector release `vX.Y.Z` that ships
   it. The backend pins the tag of the collector version its chart installs, so a preview on
   version N matches the collector on version N.
 - dependabot keeps holding the collector's modules in the backend (fusescope#361). A library bump
@@ -165,7 +165,10 @@ Each step is a separate pull request. None of them changes a golden.
 Accepted on 2026-11-11.
 
 1. **One library (A).**
-2. **A1:** the module `pkg/logspipeline` in this repository.
+2. **A1:** the module `components/pkg/logspipeline` in this repository. It sits beside
+   `ingestpolicy` and `ingestreport`, the other modules the backend imports
+   (`docs/shared-modules.md`), where the Makefile, `forbid-fork` and `builder-config.yaml` already
+   cover modules. Amended on 2026-11-11 from `pkg/logspipeline`, before anything was released.
 3. **Licence:** Apache-2.0, like this repository. The MIT backend already ships Apache-2.0
    modules.
 4. **Versions and expr.**

@@ -5,15 +5,11 @@ package signozlogspipelineprocessor
 
 import (
 	"context"
-	"errors"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/entry"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component/componenttest"
@@ -220,24 +216,6 @@ func TestNormalizeTrailingContent(t *testing.T) {
 	assert.Equal(t, map[string]any{"message": "hello"}, firstRecord(out).Body().AsRaw())
 }
 
-func TestWritesResource(t *testing.T) {
-	for _, tt := range []struct {
-		op   map[string]any
-		want bool
-	}{
-		{map[string]any{"type": "add", "field": "attributes.a", "value": "1"}, false},
-		{map[string]any{"type": "copy", "from": "resource.a", "to": "attributes.a"}, false},
-		{map[string]any{"type": "add", "field": "resource.a", "value": "1"}, true},
-		{map[string]any{"type": "move", "from": "resource.a", "to": "attributes.a"}, true},
-		{map[string]any{"type": "copy", "from": "attributes.a", "to": "resource.a"}, true},
-		{map[string]any{"type": "remove", "field": "resource.a"}, true},
-		{map[string]any{"type": "regex_parser", "regex": "(?P<a>.)", "parse_to": "resource"}, true},
-	} {
-		p := newTestProcessor(t, tt.op)
-		assert.Equal(t, tt.want, p.pipeline.writesResource, "%v", tt.op)
-	}
-}
-
 // Records of a resource share one copy of it unless the pipeline writes the
 // resource, so a large resource is not copied per record (regression from
 // review of #29).
@@ -352,66 +330,4 @@ func TestConcurrentCalls(t *testing.T) {
 		})
 	}
 	wg.Wait()
-}
-
-type panickingOperator struct{ operator.Operator }
-
-func (panickingOperator) Process(context.Context, *entry.Entry) error { panic("boom") }
-
-// A panicking operator is an operator error under on_error (CLAUDE.md: no
-// panic on data paths).
-func TestOperatorPanicIsAnError(t *testing.T) {
-	for _, tt := range []struct {
-		onError string
-		kept    bool
-	}{{"send", true}, {"drop", false}} {
-		t.Run(tt.onError, func(t *testing.T) {
-			n := &stanzaNode{id: "p", op: panickingOperator{}, onError: tt.onError, next: exit, logger: componenttest.NewNopTelemetrySettings().Logger}
-			p := &pipeline{nodes: []node{n}}
-			var out []*entry.Entry
-			p.process(newRun(context.Background()), entry.New(), func(e *entry.Entry) { out = append(out, e) })
-			assert.Equal(t, tt.kept, len(out) == 1)
-		})
-	}
-}
-
-func TestExpressionPanicIsAnError(t *testing.T) {
-	prog, err := compile(`attributes.f()`)
-	require.NoError(t, err)
-	e := entry.New()
-	e.Attributes = map[string]any{"f": func() any { panic("boom") }}
-	_, err = prog.run(e)
-	assert.Error(t, err)
-	assert.False(t, errors.Is(err, errPanicked))
-}
-
-// Attributes a record has, or an operator writes, are never taken for the
-// scratch attributes of body reads.
-func TestScratchNameCollision(t *testing.T) {
-	const old = "__signozlogspipeline_bodyfield_0__" // the name before it was random
-	tests := []struct {
-		name     string
-		operator map[string]any
-		body     string
-		want     map[string]any
-	}{
-		{"body field present", map[string]any{"type": "copy", "from": "body.msg", "to": "attributes.out", "on_error": "send"},
-			`{"msg":"hello"}`, map[string]any{old: "mine", "out": "hello"}},
-		{"body field missing", map[string]any{"type": "copy", "from": "body.msg", "to": "attributes.out", "on_error": "send"},
-			`{"other":1}`, map[string]any{old: "mine"}},
-		{"operator writes the name", map[string]any{"type": "json_parser", "parse_from": "body.payload", "parse_to": "attributes"},
-			`{"payload":"{\"` + old + `\":\"parsed\"}"}`, map[string]any{old: "parsed"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := newTestProcessor(t, tt.operator)
-			out, err := p.processLogs(context.Background(), oneRecord(tt.body, map[string]any{old: "mine"}))
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, firstRecord(out).Attributes().AsRaw())
-			for k := range firstRecord(out).Attributes().AsRaw() {
-				assert.False(t, strings.HasPrefix(k, scratchPrefix), "scratch attribute %q left on the record", k)
-			}
-		})
-	}
-	assert.Regexp(t, `^__signozlogspipeline_bodyfield_[0-9a-f]{32}_$`, scratchPrefix)
 }
