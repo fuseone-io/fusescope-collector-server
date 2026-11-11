@@ -1,6 +1,6 @@
 # 0012 · One log pipelines library for the processor and the backend's preview
 
-- Status: proposed
+- Status: accepted (2026-11-11), with the seven decisions under "Decisions"
 - Date: 2026-11-11
 - Issue: [#54](https://github.com/fuseone-io/fusescope-collector-server/issues/54)
 - Related: FuseScope ADR 0001 (backend preview without the AGPL collector), ADR 0002 (clean-room),
@@ -70,20 +70,27 @@ neither side may change it alone.
 
 | | A1 | A2 | A3 | B |
 |---|---|---|---|---|
-| Drift between preview and production | none by construction; only the glue differs | none | none | caught only for what the corpus covers |
+| Drift between preview and production | one source; only the glue and the selected versions differ, and CI checks the versions | the same | the same | caught only for what the corpus covers |
 | Cost of a behaviour change | one change, one release | one change, plus a release of the library | one change, plus a backend release before the collector | two changes, plus a corpus change |
 | Licence, ADR 0005 | Apache-2.0 here; the MIT backend may depend on it (stanza and pdata are already Apache-2.0 there) | the same | the collector takes an MIT dependency; allowed, but the backend module's whole requirement graph comes with it | unchanged |
 | Clean-room, ADR 0002 | unchanged: both sources are FuseScope's own | unchanged | unchanged | unchanged |
 | New dependency to approve | the backend depends on this repository's module | both depend on the new repository | the collector depends on the backend | none |
-| Dependency versions | one set of stanza, pdata and expr versions, which the backend must follow | the same, plus a third release train | the collector follows the backend's versions | each side moves alone, and the corpus catches the breaks |
+| Dependency versions | one set the library requires; each binary still selects its own (MVS, below), so CI checks the backend's | the same, plus a third release train | the same, reversed | each side moves alone, and the corpus catches the breaks |
 
 ### Points that hold for every A variant
 
-- **expr.** A `replace` applies only in the main module. In the backend binary, the library would
-  run on `SigNoz/expr` v1.17.7-beta, which the backend uses for its query builder. In the
-  collector it would run on `expr-lang/expr` v1.17.8. One library therefore does not by itself
-  mean one expression engine. The backend's `TestSimulatorCorpus` already runs under the fork and
-  stays the check. Closing this gap is a separate choice (decision 4 below).
+- **The consumer selects the versions.** Under Go's minimal version selection, the main module
+  decides the versions in its build. The library's `go.mod` sets only minimums, which the backend
+  can raise, and a `replace` applies only in the main module. One library therefore does not
+  guarantee one version of stanza, pdata or expr, and it does not stop the backend from bumping
+  them. What it guarantees is one source. The versions are a check: the backend's CI compares
+  the versions its build selects for stanza, pdata and expr with the library's, and fails on a
+  drift that was not approved (decision 4).
+- **expr.** In the backend binary, the library runs on `SigNoz/expr` v1.17.7-beta, through the
+  backend's `replace`. The backend uses that fork for its query builder. In the collector, the
+  library runs on `expr-lang/expr` v1.17.8. One library therefore does not by itself mean one
+  expression engine. The compatibility check runs the library in the backend's effective module
+  graph (decision 4), not with only expr swapped.
 - **Validation and error messages.** One `Validate` decides what both sides accept. A pipeline
   saved in the UI cannot then be refused by the collector at push time, which is the failure #87
   fixed by hand. The library returns typed errors, with the operator, the field and the reason.
@@ -110,7 +117,8 @@ a corpus update, and the corpus has to grow with every such change.
 - It keeps one release train: the library is tagged with every collector release.
 - It needs no new repository.
 
-The corpus stays as the safety net for the expr gap and for the glue on each side.
+The canonical corpus, run in both module graphs, stays the safety net for the version and expr
+gaps and for the glue on each side.
 
 ## Migration
 
@@ -120,15 +128,22 @@ Each step is a separate pull request. None of them changes a golden.
    The processor uses it, and `golden_test.go`, the benchmarks and the managed-pipeline preflight
    tests pass unchanged. Release the collector and tag the module.
 2. **The preview on the library.** The backend imports the tagged module behind the preview's
-   current API, and `pipelinesim` stays in the tree, unused. `TestSimulatorCorpus` must keep the
-   168 log pipeline observations (164 outputs and 4 refusals) and the 3 preview-only log cases,
-   and the 44 span mapper observations stay untouched. A preview-only case that changes is a
-   decision for the reviewer, never an edit to a golden.
+   current API, and `pipelinesim` stays in the tree, unused. Criteria:
+   - The backend runs the corpus with its own `go.mod`, in its effective module graph, including
+     `replace github.com/expr-lang/expr => github.com/SigNoz/expr`.
+   - `TestSimulatorCorpus` keeps the 168 log pipeline observations (164 outputs and 4 refusals)
+     and the 3 preview-only log cases. The 44 span mapper observations stay untouched.
+   - The version check (decision 4) is in the backend's CI and passes.
+   - A preview-only case that changes is a decision for the reviewer, never an edit to a golden.
 3. **Remove `pipelinesim`** after one backend release on the library. Also remove the backend's
    separate `pkg/grok` if nothing else uses it.
-4. **One corpus.** Merge `simulatorcontract`'s log cases into the library's observed corpus (or
-   the reverse; decision 5 below). Keep the end-to-end replay through the image in the backend's
-   integration suite.
+4. **One corpus.** The observed corpus in this repository becomes the only log pipelines corpus
+   (decision 5). `simulatorcontract`'s log cases that it lacks are added to it, and the module
+   publishes it. From then on, `simulatorcontract`'s log pipeline goldens are no longer an
+   independent copy: the backend consumes the published corpus or generates its goldens from
+   it, at the pinned tag. The replay through the `fusescope-collector` image stays as the
+   end-to-end check. The span mapper cases stay in `simulatorcontract` as they are, outside this
+   unification.
 
 ## Versioning and rollback
 
@@ -137,35 +152,39 @@ Each step is a separate pull request. None of them changes a golden.
   version N matches the collector on version N.
 - dependabot keeps holding the collector's modules in the backend (fusescope#361). A library bump
   in the backend goes with the chart's collector bump.
+- A bump of stanza, pdata or expr in the backend that leaves the library's versions fails the
+  version check until it is approved and recorded. The usual path is a library release first.
 - **Rollback of step 2:** revert the backend's import. `pipelinesim` is still in the tree until
   step 3. **Rollback of step 1:** revert the extraction. The processor's code is unchanged in
   substance, and the goldens show that.
 - Breaking changes are safe while there are no users, but the library still follows semver within
   its tags, so that the backend's pin tells which behaviour it has.
 
-## Decisions that need a choice
+## Decisions
 
-1. One library (A) or two implementations with one corpus (B). Proposal: A.
-2. Where the library lives: A1, A2 or A3. Proposal: A1.
-3. Licence of the library: Apache-2.0, as in this repository, or MIT. Proposal: Apache-2.0. The
-   MIT backend already ships Apache-2.0 modules.
-4. The expr gap. Options:
-   - keep it, with `TestSimulatorCorpus` as the guard;
-   - add a CI job here that runs the library's tests under `SigNoz/expr`;
-   - drop the backend's `replace`, which is a separate decision for the backend's query builder.
+Accepted on 2026-11-11.
 
-   Proposal: the CI job, until the backend decides on the `replace`.
-5. Which corpus becomes the single one: the observed corpus here or `simulatorcontract`.
-   Proposal: the observed corpus here, which is broader, with `simulatorcontract` kept as the
-   end-to-end replay through the image.
-6. Where today's two behaviours differ, the collector's spec wins, because the collector's
-   behaviour is what users get in production. Any preview-only case that changes in step 2 is
-   reviewed one by one.
-7. Dependency approval (CLAUDE.md): the backend takes a dependency on this repository's module.
+1. **One library (A).**
+2. **A1:** the module `pkg/logspipeline` in this repository.
+3. **Licence:** Apache-2.0, like this repository. The MIT backend already ships Apache-2.0
+   modules.
+4. **Versions and expr.**
+   - The backend keeps its `replace` with `SigNoz/expr` for now.
+   - A compatibility CI job tests the library in the backend's effective module graph: its
+     `go.mod`, its selected versions and its `replace`. Swapping only expr is not enough.
+   - The same job compares the versions the backend's build selects for stanza, pdata and expr
+     with the library's, and fails on a drift that was not approved.
+5. **The canonical corpus is the observed corpus in this repository.** After step 4,
+   `simulatorcontract`'s log pipeline goldens consume it, or are generated from it, as the module
+   publishes it. The span mapper cases stay out of this.
+6. **Where the two behaviours differ, the collector's spec wins.** Each preview-only case is
+   decided on its own.
+7. **The backend's dependency on this repository's module is approved.**
 
 ## Consequences
 
 - One behaviour change, and one review, reaches production and the preview together.
-- The backend follows the collector's stanza, pdata and expr versions for log pipelines, and can
-  no longer bump them alone.
+- The backend can still select other versions of stanza, pdata and expr (MVS), but its CI
+  fails on a drift from the library's that was not approved, so a bump goes through the library
+  first.
 - The library becomes a public API with semver, between two repositories of the same team.
