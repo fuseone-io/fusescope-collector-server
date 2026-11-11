@@ -1,7 +1,7 @@
 // Copyright FuseOne
 // SPDX-License-Identifier: Apache-2.0
 
-package signozlogspipelineprocessor // import "github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor"
+package logspipeline // import "github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline"
 
 import (
 	"encoding/json"

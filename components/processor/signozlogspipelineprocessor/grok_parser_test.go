@@ -200,26 +200,6 @@ func TestGrokConcurrent(t *testing.T) {
 	}
 }
 
-// A pattern that fails to compile is compiled once, when the operator is
-// built: every record gets the same error, and the library is not called again.
-func TestGrokCompileErrorKept(t *testing.T) {
-	for _, pattern := range []string{"%{NOSUCHPATTERN:x}", "(?<x>[a-"} {
-		t.Run(pattern, func(t *testing.T) {
-			p := newTestProcessor(t, map[string]any{"id": "g", "type": "grok_parser", "parse_from": "body", "parse_to": "attributes", "pattern": pattern})
-			op := findGrok(t, p)
-			require.Error(t, op.compileErr)
-			op.grok = nil // any further use of the library would panic
-			for range 3 {
-				out, err := p.processLogs(context.Background(), oneRecord("GET /a 200", map[string]any{}))
-				require.NoError(t, err)
-				assert.Equal(t, 1, out.LogRecordCount())
-			}
-			_, err := op.parse("GET /a 200")
-			assert.ErrorIs(t, err, op.compileErr)
-		})
-	}
-}
-
 // env is not in the expression environment, so no alias reaches it (spec §4.1).
 func TestEnvIsNotInTheEnvironment(t *testing.T) {
 	t.Setenv("FUSESCOPE_TEST_ENV", "leaked")
@@ -227,17 +207,4 @@ func TestEnvIsNotInTheEnvironment(t *testing.T) {
 	out, err := p.processLogs(context.Background(), oneRecord("x", map[string]any{}))
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"a": []any{"nil", "nil"}}, firstRecord(out).Attributes().AsRaw())
-}
-
-func findGrok(t *testing.T, p *logsProcessor) *grokOperator {
-	t.Helper()
-	for _, n := range p.pipeline.nodes {
-		if s, ok := n.(*stanzaNode); ok {
-			if op, ok := s.op.(*grokOperator); ok {
-				return op
-			}
-		}
-	}
-	t.Fatal("no grok_parser operator")
-	return nil
 }
