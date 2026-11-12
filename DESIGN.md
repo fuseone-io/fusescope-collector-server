@@ -124,6 +124,9 @@ The engine's ingest decisions (engine `DESIGN.md` §10.3) apply end to end. The 
   between agents and gateways and from gateways to engine ingesters. The one exception is the
   ClickHouse exporter: `tls.insecure: true` allows plaintext, with a warning, for clusters
   whose ClickHouse has no TLS ([ADR 0007](docs/adr/0007-clickhouse-plaintext-for-migration.md)).
+  During a SigNoz migration, the chart can also serve a plaintext, keyless OTLP receiver,
+  `otlp/insecure`. It is off by default, inside the cluster only, and measured by its own
+  receiver metrics ([ADR 0013](docs/adr/0013-otlp-plaintext-for-migration.md)).
 - **Ingest authentication:** `ingestauth` validates the ingestion key every client presents, for
   all signals, against SHA-256 verifiers in the ingest policy. Keys are managed in the backend;
   the policy arrives over OpAMP and is cached on disk ([ADR 0006](docs/adr/0006-single-ingress.md)).
