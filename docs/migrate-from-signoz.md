@@ -27,7 +27,8 @@ the ones you need.
   - The observed schema keeps raw samples, series and their 5- and 30-minute aggregates for 30 days
     (`TTL … + toIntervalSecond(2592000)`), so a window must be under 30 days.
   - If a job of your inventory runs less often than that, a monthly job for example, raise the
-    metrics retention first, or confirm that job by the inventory alone.
+    metrics retention first. Or **run that job** during the window and verify its telemetry at its
+    new destination. Reading its configuration does not replace a window longer than its period.
 - **Schema.** `fusescope-schema` adopts an existing database only when its schema equals the
   observed one (FuseScope fork 0.145.0). It refuses any other schema and lists each object that is
   missing, extra or different ([spec §4](spec/fusescope-schema.md)). Run `fusescope-schema plan`
@@ -140,8 +141,12 @@ For each client:
   the ClickHouse parameter `window_seconds`.
 
 **A window holds only if the collector's self-metrics cover it without a break.**
-- **What breaks it.** A collector pod that restarts, is replaced or scales starts new series whose
-  first value is not counted. A gap in the self-metrics hides what was received meanwhile.
+- **What breaks it.** A collector pod that restarts, is replaced or scales loses what it counted
+  before. A gap in the self-metrics hides what was received meanwhile.
+- **Absence proves nothing.** The receiver's own series may not exist at all, for example after a
+  restart with no traffic.
+- **How coverage is checked.** It is read from `otelcol_process_uptime`, which every collector pod
+  reports for its whole life.
 - **The rule.** Any restart, rescale or gap **restarts the window**. The check below finds them.
 
 **No increase, on every counter.** The receiver's counters are cumulative. "Zero during the
@@ -199,36 +204,50 @@ ORDER BY metric_name
 A counter with no row has not been reported in the window. A counter that has never been
 incremented may never be exported, so a missing row also reads as 0.
 
-**Check that the window holds.** This query lists every series of those counters that started
-after the window opened, which means a new, restarted or rescaled pod. It also lists every series
-with a gap longer than three scrape intervals. `scrape_seconds` is
-`fusescopeCollector.selfMetrics.scrapeInterval`, 60 by default. **Any row restarts the window.**
+**Check that the window holds.** `window.sql` reads the collector's `otelcol_process_uptime` and
+returns one row per collector pod series in the window. `scrape_seconds` is
+`fusescopeCollector.selfMetrics.scrapeInterval`, 60 by default. Each row says whether the series:
+- `started_late`: began after the window opened, which means a new, restarted or rescaled pod;
+- `ended_early`: stopped before now, a pod gone or a gap at the end;
+- `has_gap`: has a gap longer than three scrape intervals;
+- `uptime_reset`: has an uptime that went down, a restart inside the same series.
+
+**The window holds only if the query returns at least one row and every row reads `ok = 1`. No row
+at all is a failure, not a success:** it means no self-metrics for the window.
 
 ```sql
--- window.sql: --param_window_seconds=604800 --param_scrape_seconds=60. It must return no row.
-SELECT fingerprint, metric_name,
+-- window.sql: --param_window_seconds=604800 --param_scrape_seconds=60.
+-- One row per collector pod series. The window holds only if there is at least one row and every
+-- row reads ok = 1. No row is a failure.
+SELECT fingerprint,
+       fromUnixTimestamp64Milli(min(unix_milli)) AS first_seen,
+       fromUnixTimestamp64Milli(max(unix_milli)) AS last_seen,
        min(unix_milli) > (toUnixTimestamp(now()) - {window_seconds:UInt32} + 3 * {scrape_seconds:UInt32}) * 1000 AS started_late,
-       max(gap) > 3 * {scrape_seconds:UInt32} * 1000 AS has_gap
+       max(unix_milli) < (toUnixTimestamp(now()) - 3 * {scrape_seconds:UInt32}) * 1000 AS ended_early,
+       max(gap) > 3 * {scrape_seconds:UInt32} * 1000 AS has_gap,
+       max(went_down) AS uptime_reset,
+       NOT (started_late OR ended_early OR has_gap OR uptime_reset) AS ok
 FROM (
-  SELECT fingerprint, metric_name, unix_milli,
-         unix_milli - lagInFrame(unix_milli, 1, unix_milli) OVER (PARTITION BY metric_name, fingerprint ORDER BY unix_milli
-                                                                 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS gap
+  SELECT fingerprint, unix_milli,
+         unix_milli - lagInFrame(unix_milli, 1, unix_milli) OVER w AS gap,
+         value < lagInFrame(value, 1, value) OVER w AS went_down
   FROM signoz_metrics.distributed_samples_v4
   WHERE unix_milli >= (toUnixTimestamp(now()) - {window_seconds:UInt32}) * 1000
-    AND metric_name LIKE 'otelcol\_receiver\_%'
+    AND metric_name = 'otelcol_process_uptime'
     AND fingerprint GLOBAL IN (
       SELECT fingerprint FROM signoz_metrics.distributed_time_series_v4
-      WHERE JSONExtractString(labels, 'receiver') = 'otlp/insecure'
+      WHERE metric_name = 'otelcol_process_uptime'
+        AND JSONExtractString(labels, 'service.name') = 'fusescope-collector'
         -- series rows are floored to the hour: one hour of margin
         AND unix_milli >= (toUnixTimestamp(now()) - {window_seconds:UInt32} - 3600) * 1000)
+  WINDOW w AS (PARTITION BY fingerprint ORDER BY unix_milli ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
 )
-GROUP BY fingerprint, metric_name
-HAVING started_late OR has_gap
+GROUP BY fingerprint
 ORDER BY fingerprint
 ```
 
 **The exit holds when all of these are true:**
-1. `window.sql` returns no row for the whole window;
+1. `window.sql` returns at least one row, and every row reads `ok = 1`;
 2. every counter shows no increase through it;
 3. every row of the inventory reads "Moved on" and "Verified".
 
