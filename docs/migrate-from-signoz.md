@@ -16,10 +16,18 @@ the ones you need.
 
 ## 1. Before you start
 
-- **Chart.** `fusescope` **0.168.0 or later**, which has `fusescopeCollector.otlp.insecure` and its
-  refusals. Earlier charts served plaintext OTLP by default, with nothing to measure or bound it.
+- **Chart.** `fusescope` **0.168.1 or later**.
+  - 0.168.0 added `fusescopeCollector.otlp.insecure` and its refusals.
+  - 0.168.1 added `otlp.networkPolicy.ingressFrom`, which restricts the plaintext ports even next to
+    the agents' listener (§3).
+  - Earlier charts served plaintext OTLP by default, with nothing to measure or bound it.
 - **Collector self-metrics.** `fusescopeCollector.selfMetrics.enabled: true`, the default. The chart
   refuses `otlp.insecure` without it, because the exit in §5 is read from those metrics.
+- **Metrics retention.** The exit in §5 reads the collector's metrics over the whole window.
+  - The observed schema keeps raw samples, series and their 5- and 30-minute aggregates for 30 days
+    (`TTL … + toIntervalSecond(2592000)`), so a window must be under 30 days.
+  - If a job of your inventory runs less often than that, a monthly job for example, raise the
+    metrics retention first, or confirm that job by the inventory alone.
 - **Schema.** `fusescope-schema` adopts an existing database only when its schema equals the
   observed one (FuseScope fork 0.145.0). It refuses any other schema and lists each object that is
   missing, extra or different ([spec §4](spec/fusescope-schema.md)). Run `fusescope-schema plan`
@@ -80,41 +88,34 @@ It also refuses `otlp.enabled: true` without `insecure`. **The chart creates no 
 the plaintext receiver.** Routes created outside the chart are yours to avoid.
 
 **Network.** While the receiver is on, any workload that reaches 4317 and 4318 can send, inject or
-forge telemetry and spend the collector's and ClickHouse's resources. Limit who reaches those
-ports with a NetworkPolicy, for example to the namespaces in your inventory:
+forge telemetry and spend the collector's and ClickHouse's resources. Admit only the namespaces
+or pods of your inventory:
 
 ```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: fusescope-collector-otlp-insecure
-  namespace: platform
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/component: fusescope-collector
-  policyTypes: [Ingress]
-  ingress:
-    - from:
+fusescopeCollector:
+  otlp:
+    insecure: true
+    networkPolicy:
+      ingressFrom:
         - namespaceSelector:
             matchLabels:
               fusescope.io/otlp-plaintext: "allowed"
-      ports:
-        - {port: 4317, protocol: TCP}
-        - {port: 4318, protocol: TCP}
-    # A policy that selects the pods isolates them: list every other port they serve, such as
-    # health (13133), RUM (4319) and the agents' listener (4322), with its own sources.
 ```
 
-> **Limitation.** NetworkPolicies add up.
->
-> - `fusescopeCollector.agentListener.networkPolicy.enabled` is on by default with the agents'
->   listener. The chart's own policy then allows 4317 and 4318 from any source, and a policy of
->   yours cannot narrow that.
-> - Until the chart can restrict those ports itself, choose one of these while plaintext is on:
->   - run the agents' listener with `agentListener.networkPolicy.enabled: false` and write the
->     policy for all ports yourself;
->   - accept that the OTLP ports are open to the whole cluster.
+The collector's NetworkPolicy then admits these peers **alone** on 4317 and 4318, and no other rule
+of it names those ports.
+- **With the agents.** If the agents' listener has its policy (`agentListener.networkPolicy.enabled`,
+  the default), this list is required, and the chart refuses `otlp.insecure` without it.
+- **Without the agents.** The list renders a policy for those ports alone. Left empty, they accept
+  any source in the cluster.
+
+It needs a CNI that enforces NetworkPolicy.
+
+> **On chart 0.168.0.** There, with the agents' listener policy on, the chart's policy admits any
+> source on 4317 and 4318. NetworkPolicies add up, so a policy of yours cannot narrow that. Upgrade
+> to 0.168.1. If you cannot, set `fusescopeCollector.agentListener.networkPolicy.enabled: false`
+> and apply a complete policy of your own for the collector pods: 4317/4318 from your peers, 4322
+> from the agent pods, and 13133 (health) and 4319 (RUM) from their sources.
 
 ## 4. Move each client to a path with TLS and a key
 
@@ -132,51 +133,65 @@ For each client:
 
 ## 5. Measure the exit
 
-The receiver's counters are cumulative. "Zero during the window" means **no increase in the
-window**, not a raw value of zero. Count every signal, and the refused and failed counters too,
-because a client that keeps retrying shows there. The window lasts at least 7 days, and longer than
-the longest period of any job in the inventory.
+**Choose the window.**
+- It lasts at least 7 days, and longer than the longest period of any job in the inventory.
+- It must fit in the metrics retention (§1).
+- Below, `7d` and `604800` stand for it. **Replace both with your window**, in PromQL (`[7d]`) and as
+  the ClickHouse parameter `window_seconds`.
 
-In FuseScope (PromQL), every expression must give 0 over the window:
+**A window holds only if the collector's self-metrics cover it without a break.**
+- **What breaks it.** A collector pod that restarts, is replaced or scales starts new series whose
+  first value is not counted. A gap in the self-metrics hides what was received meanwhile.
+- **The rule.** Any restart, rescale or gap **restarts the window**. The check below finds them.
+
+**No increase, on every counter.** The receiver's counters are cumulative. "Zero during the
+window" means **no increase in the window**, not a raw value of zero.
+- Count spans, log records and metric points.
+- Count the `refused` and `failed` counters too, where a client that keeps retrying shows up.
+
+In FuseScope (PromQL), every expression must give 0. Each one has `or vector(0)`, because a counter
+with no series in the window returns no data rather than 0:
 
 ```promql
-sum(increase(otelcol_receiver_accepted_spans{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_accepted_log_records{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_accepted_metric_points{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_refused_spans{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_refused_log_records{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_refused_metric_points{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_failed_spans{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_failed_log_records{receiver="otlp/insecure"}[7d]))
-sum(increase(otelcol_receiver_failed_metric_points{receiver="otlp/insecure"}[7d]))
+sum(increase(otelcol_receiver_accepted_spans{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_accepted_log_records{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_accepted_metric_points{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_refused_spans{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_refused_log_records{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_refused_metric_points{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_failed_spans{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_failed_log_records{receiver="otlp/insecure"}[7d])) or vector(0)
+sum(increase(otelcol_receiver_failed_metric_points{receiver="otlp/insecure"}[7d])) or vector(0)
 ```
 
-Or directly in ClickHouse, read-only. The same rule applies: a counter that restarts counts its new
-value, as PromQL's `increase` does.
+**Or directly in ClickHouse, read-only.**
+- **Use the `distributed_*` tables with `GLOBAL IN`.** On a ClickHouse with several shards, the local
+  tables hold only one shard's rows and give a false zero.
+- **Pass the window as a parameter**, for example
+  `clickhouse-client --readonly 1 --param_window_seconds=604800 --queries-file increase.sql`.
+- **Restarts inside one series** count their new value, as PromQL's `increase` does.
 
 ```sql
--- Increase of each otlp/insecure receiver counter in the last 7 days. Every row must read 0.
-WITH series AS (
-  SELECT DISTINCT fingerprint
-  FROM signoz_metrics.time_series_v4
-  WHERE JSONExtractString(labels, 'receiver') = 'otlp/insecure'
-    AND unix_milli >= (toUnixTimestamp(now()) - 7 * 86400) * 1000
-),
-points AS (
+-- increase.sql: the increase of each otlp/insecure receiver counter in the window. Every row must
+-- read 0.
+SELECT metric_name, sum(if(value >= previous, value - previous, value)) AS increase
+FROM (
   SELECT metric_name, fingerprint, value,
          lagInFrame(value, 1, value) OVER (PARTITION BY metric_name, fingerprint ORDER BY unix_milli
                                            ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous
-  FROM signoz_metrics.samples_v4
-  WHERE unix_milli >= (toUnixTimestamp(now()) - 7 * 86400) * 1000
-    AND fingerprint IN (SELECT fingerprint FROM series)
+  FROM signoz_metrics.distributed_samples_v4
+  WHERE unix_milli >= (toUnixTimestamp(now()) - {window_seconds:UInt32}) * 1000
     AND metric_name IN ('otelcol_receiver_accepted_spans', 'otelcol_receiver_accepted_log_records',
                         'otelcol_receiver_accepted_metric_points', 'otelcol_receiver_refused_spans',
                         'otelcol_receiver_refused_log_records', 'otelcol_receiver_refused_metric_points',
                         'otelcol_receiver_failed_spans', 'otelcol_receiver_failed_log_records',
                         'otelcol_receiver_failed_metric_points')
+    AND fingerprint GLOBAL IN (
+      SELECT fingerprint FROM signoz_metrics.distributed_time_series_v4
+      WHERE JSONExtractString(labels, 'receiver') = 'otlp/insecure'
+        -- series rows are floored to the hour: one hour of margin
+        AND unix_milli >= (toUnixTimestamp(now()) - {window_seconds:UInt32} - 3600) * 1000)
 )
-SELECT metric_name, sum(if(value >= previous, value - previous, value)) AS increase
-FROM points
 GROUP BY metric_name
 ORDER BY metric_name
 ```
@@ -184,9 +199,38 @@ ORDER BY metric_name
 A counter with no row has not been reported in the window. A counter that has never been
 incremented may never be exported, so a missing row also reads as 0.
 
-**The exit holds when both of these are true:**
-1. every counter shows no increase through the window;
-2. every row of the inventory reads "Moved on" and "Verified".
+**Check that the window holds.** This query lists every series of those counters that started
+after the window opened, which means a new, restarted or rescaled pod. It also lists every series
+with a gap longer than three scrape intervals. `scrape_seconds` is
+`fusescopeCollector.selfMetrics.scrapeInterval`, 60 by default. **Any row restarts the window.**
+
+```sql
+-- window.sql: --param_window_seconds=604800 --param_scrape_seconds=60. It must return no row.
+SELECT fingerprint, metric_name,
+       min(unix_milli) > (toUnixTimestamp(now()) - {window_seconds:UInt32} + 3 * {scrape_seconds:UInt32}) * 1000 AS started_late,
+       max(gap) > 3 * {scrape_seconds:UInt32} * 1000 AS has_gap
+FROM (
+  SELECT fingerprint, metric_name, unix_milli,
+         unix_milli - lagInFrame(unix_milli, 1, unix_milli) OVER (PARTITION BY metric_name, fingerprint ORDER BY unix_milli
+                                                                 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS gap
+  FROM signoz_metrics.distributed_samples_v4
+  WHERE unix_milli >= (toUnixTimestamp(now()) - {window_seconds:UInt32}) * 1000
+    AND metric_name LIKE 'otelcol\_receiver\_%'
+    AND fingerprint GLOBAL IN (
+      SELECT fingerprint FROM signoz_metrics.distributed_time_series_v4
+      WHERE JSONExtractString(labels, 'receiver') = 'otlp/insecure'
+        -- series rows are floored to the hour: one hour of margin
+        AND unix_milli >= (toUnixTimestamp(now()) - {window_seconds:UInt32} - 3600) * 1000)
+)
+GROUP BY fingerprint, metric_name
+HAVING started_late OR has_gap
+ORDER BY fingerprint
+```
+
+**The exit holds when all of these are true:**
+1. `window.sql` returns no row for the whole window;
+2. every counter shows no increase through it;
+3. every row of the inventory reads "Moved on" and "Verified".
 
 ## 6. Turn the plaintext receiver off
 
@@ -207,6 +251,6 @@ Then remove the NetworkPolicy of §3, or narrow it to the ports that remain.
 
 | Stage | To go back |
 |---|---|
-| After §3 (switch) | Point the clients back to the SigNoz collector, or roll the release back. Rolling back the FuseScope chart below 0.168.0 brings back plaintext OTLP by default. A schema `fusescope-schema` already migrated cannot go back to the fork's migrator ([ADR 0010](adr/0010-fusescope-schema.md)). |
+| After §3 (switch) | Point the clients back to the SigNoz collector, or roll the release back. A schema `fusescope-schema` already migrated cannot go back to the fork's migrator ([ADR 0010](adr/0010-fusescope-schema.md)). **Rolling the FuseScope chart back below 0.168.0** brings back plaintext OTLP by default, and **removes the exposure protections**. It again allows a `NodePort` or `LoadBalancer` on `fusescopeCollector.service` and `otelCollector.service`, and the OTLP Ingress `otelCollector.ingress`. Before such a rollback, audit those values so plaintext is not exposed outside the cluster. Below 0.168.1, the plaintext ports also lose `otlp.networkPolicy.ingressFrom`. |
 | A client after §4 | Point it back to the compatibility Service. It is plaintext again and counts in §5 again, and its inventory row is open again. |
 | After §6 (off) | Set `otlp.insecure: true` again. The receiver, its ports and the compatibility Service come back, and the clients that still need them resume. Restart the window of §5. |
