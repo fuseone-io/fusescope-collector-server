@@ -205,7 +205,7 @@ ClickHouse, never to production tables, and the parity suite compares both table
 | 5 · Managed processing | `fusescope_opamp`; log pipelines, span mapper, LLM pricing, tail sampling | pipelines and mappings configured in the UI apply identically in parity |
 | 6 · Shadow and cutover | shadow deployment on production traffic, then the new collector takes it signal by signal; old one retired | parity green over a week of shadow traffic; 30 days in production without the old collector |
 | 7 · Engine | gateway → engine with mTLS and tokens, dual-write, load benchmark | engine dual-write runs on this collector |
-| 8 · New installations | `fusescope-schema`, migration guide, Helm chart | a fresh installation and a SigNoz migration both run without the AGPL collector |
+| 8 · New installations | `fusescope-schema`, [migration guide](docs/migrate-from-signoz.md), Helm chart | a fresh installation and a SigNoz migration both run without the AGPL collector |
 
 `fusescope-schema` waits until phase 8: existing clusters already have the schema, which the
 exporter writes into as it is.
