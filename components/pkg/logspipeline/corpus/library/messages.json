@@ -1,0 +1,987 @@
+{
+ "cases": {
+  "Add_BracketField": [],
+  "Add_DollarValues": [],
+  "Add_ExprBodyField": [],
+  "Add_ExprBool": [],
+  "Add_ExprConcat": [],
+  "Add_ExprFloat": [],
+  "Add_ExprMap": [],
+  "Add_ExprMissingField_Skipped": [],
+  "Add_ExprNumber": [],
+  "Add_ExprTimestampAndSeverity": [],
+  "Add_ExprWholeBody": [],
+  "Add_LiteralAttribute": [],
+  "Add_LiteralBody": [],
+  "Add_LiteralResource": [],
+  "Add_NestedAttribute": [],
+  "Add_OverwriteExisting": [],
+  "Add_ToResourceThenFilterSeesIt": [],
+  "Add_UserIfCondition": [],
+  "Copy_AttributeToAttribute": [],
+  "Copy_AttributeToResource": [],
+  "Copy_BodyToAttribute": [],
+  "Copy_FloatAttribute": [],
+  "Copy_MapAttribute": [],
+  "Copy_Missing": [],
+  "Copy_ResourceToAttribute": [],
+  "Filter_AttributeEquals": [],
+  "Filter_AttributeExists": [],
+  "Filter_AttributeNotEquals": [],
+  "Filter_AttributeNotExists": [],
+  "Filter_BodyContains": [],
+  "Filter_BodyJSONFieldExists": [],
+  "Filter_BodyJSONFieldNotExists": [],
+  "Filter_ContainsCaseInsensitive": [],
+  "Filter_NotContains": [],
+  "Filter_NotRegex": [],
+  "Filter_NumericGreaterThan": [],
+  "Filter_NumericLessOrEqual": [],
+  "Filter_OrOperator": [],
+  "Filter_Regex": [],
+  "Filter_ResourceIn": [],
+  "Filter_ResourceNotIn": [],
+  "Filter_SeverityText": [],
+  "Grok_CombinedApacheLog": [],
+  "Grok_CommonApacheLog": [],
+  "Grok_DottedFieldNames": [],
+  "Grok_EmptyMatchField": [],
+  "Grok_GreedyWholeBody": [],
+  "Grok_InlineRegexCapture": [],
+  "Grok_InvalidPattern_ConfigError": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "grok_parser: pattern: no pattern found for %{NOSUCHPATTERN}"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "grok_parser: pattern: no pattern found for %{NOSUCHPATTERN}"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "grok_parser: pattern: no pattern found for %{NOSUCHPATTERN}"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "grok_parser: pattern: no pattern found for %{NOSUCHPATTERN}"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "grok_parser: pattern: no pattern found for %{NOSUCHPATTERN}"
+   }
+  ],
+  "Grok_JSONBody": [],
+  "Grok_NoMatch_OnErrorDrop": [],
+  "Grok_NoMatch_OnErrorDropQuiet": [],
+  "Grok_NoMatch_OnErrorSend": [],
+  "Grok_NoMatch_OnErrorSendQuiet": [],
+  "Grok_NoOnError": [],
+  "Grok_OverwritesExistingAttribute": [],
+  "Grok_ParseFromAttribute": [],
+  "Grok_ParseFromMissingAttribute": [],
+  "Grok_ParseToBody": [],
+  "Grok_ParseToNestedAttribute": [],
+  "Grok_ParseToResource": [],
+  "Grok_TimestampLevelMessage": [],
+  "Grok_TypeConversions": [],
+  "Grok_UnnamedPatterns": [],
+  "Grok_WordsAndNumbers_ToAttributes": [],
+  "JSON_ExplicitOnErrorIgnored": [],
+  "JSON_Flattening": [],
+  "JSON_FlatteningToBody": [],
+  "JSON_FlatteningWithPathPrefix": [],
+  "JSON_FlatteningWithPaths": [],
+  "JSON_FromAttribute": [],
+  "JSON_FromMissingAttribute": [],
+  "JSON_MappingFromNestedParseTo": [],
+  "JSON_MappingSubset": [],
+  "JSON_ParseTwice": [],
+  "JSON_PredefinedMapping": [],
+  "JSON_PredefinedMapping_NoFlattening": [],
+  "JSON_ToAttributes": [],
+  "JSON_ToBody": [],
+  "JSON_ToNestedAttribute": [],
+  "JSON_ToResource": [],
+  "JSON_UserIfCondition": [],
+  "Move_AttributeToAttribute": [],
+  "Move_AttributeToBody": [],
+  "Move_AttributeToResource": [],
+  "Move_BodyToAttribute": [],
+  "Move_BracketPaths": [],
+  "Move_IntAttribute": [],
+  "Move_Missing": [],
+  "Move_NestedOutOfParsedJSON": [],
+  "Move_OverwriteExisting": [],
+  "Normalize_JSONBody": [],
+  "Normalize_TextBody": [],
+  "Normalize_ThenJSONParser": [],
+  "Pipeline_AliasWithSpecialChars": [],
+  "Pipeline_AllOperatorsDisabled": [],
+  "Pipeline_Disabled": [],
+  "Pipeline_DisabledLastOperator": [],
+  "Pipeline_DisabledMiddleOperator": [],
+  "Pipeline_DuplicateAliases": [],
+  "Pipeline_ManyOperatorsChain": [],
+  "Pipeline_OrderMatters": [],
+  "Pipeline_ParseThenTimeAndSeverity": [],
+  "Regex_EmptyBody": [],
+  "Regex_EscapesAndQuotes": [],
+  "Regex_NamedGroups_ToAttributes": [],
+  "Regex_NoMatch_Skipped": [],
+  "Regex_OnErrorDrop_Matched": [],
+  "Regex_OptionalGroupUnmatched": [],
+  "Regex_ParseFromAttribute": [],
+  "Regex_ParseFromIntAttribute": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is int64, not []uint8 (1:48)\n | attributes?.status != nil \u0026\u0026 attributes.status matches \"^(?P\u003cfirst\u003e\\\\d)(?P\u003crest\u003e\\\\d+)$\"\n | ...............................................^"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is int64, not []uint8 (1:48)\n | attributes?.status != nil \u0026\u0026 attributes.status matches \"^(?P\u003cfirst\u003e\\\\d)(?P\u003crest\u003e\\\\d+)$\"\n | ...............................................^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is int64, not []uint8 (1:48)\n | attributes?.status != nil \u0026\u0026 attributes.status matches \"^(?P\u003cfirst\u003e\\\\d)(?P\u003crest\u003e\\\\d+)$\"\n | ...............................................^"
+   }
+  ],
+  "Regex_ParseFromMissingAttribute": [],
+  "Regex_ParseToBody": [],
+  "Regex_ParseToNested": [],
+  "Regex_ParseToResource": [],
+  "Regex_Unicode": [],
+  "Remove_AllAttributes": [],
+  "Remove_AllResource": [],
+  "Remove_Attribute": [],
+  "Remove_Body": [],
+  "Remove_BracketAttribute": [],
+  "Remove_MissingAttribute": [],
+  "Remove_NestedFromParsedJSON": [],
+  "Remove_Resource": [],
+  "Severity_CustomMapping": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_DefaultMapping": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_DefaultSeverityMappingTable": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_EmptyLevelLists": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_FromBody": [],
+  "Severity_HTTPStatusRanges": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_NoMapping": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_NoOverwriteText": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_NumericValues": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_OnErrorDrop": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Severity_UppercaseMappingKeys": [
+   {
+    "input": 12,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 13,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 14,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 15,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 16,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   },
+   {
+    "input": 17,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be a severity"
+   }
+  ],
+  "Time_EpochFloatAttribute": [],
+  "Time_EpochIntAttribute": [],
+  "Time_EpochMicros": [],
+  "Time_EpochMillis": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "invalid value '17041646451234567890123' for layout 'ms'"
+   }
+  ],
+  "Time_EpochMillisIntAttribute": [],
+  "Time_EpochMissing": [],
+  "Time_EpochNanos": [],
+  "Time_EpochSeconds": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "invalid value ' 1704164645 ' for layout 's'"
+   }
+  ],
+  "Time_EpochSecondsMicros": [],
+  "Time_EpochSecondsMillis": [],
+  "Time_EpochSecondsNanos": [],
+  "Time_OnErrorDrop": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "parsing time \"2024-13-45T99:99:99.0+0000\": month out of range"
+   }
+  ],
+  "Time_StrptimeDateOnly": [],
+  "Time_StrptimeDefaultLayout": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "parsing time \"2024-13-45T99:99:99.0+0000\": month out of range"
+   }
+  ],
+  "Time_StrptimeISOShortcuts": [],
+  "Time_StrptimeMonthNameAndPM": [],
+  "Time_StrptimeNginx": [],
+  "Time_StrptimeNoMatch_Skipped": [],
+  "Time_StrptimePlain": [],
+  "Time_StrptimeZuluLiteral": [],
+  "Trace_AllFields": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_flags\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: odd length hex string\",\"trace_flags\":\"encoding/hex: invalid byte: U+007A 'z'\",\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: invalid byte: U+007A 'z'\",\"trace_id\":\"encoding/hex: invalid byte: U+007A 'z'\"}"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: odd length hex string\",\"trace_flags\":\"encoding/hex: odd length hex string\",\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   }
+  ],
+  "Trace_EmptyParseFromDropped": [
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_id\":\"encoding/hex: invalid byte: U+007A 'z'\"}"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   }
+  ],
+  "Trace_FlagsOnly": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_flags\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_flags\":\"encoding/hex: invalid byte: U+007A 'z'\"}"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_flags\":\"encoding/hex: odd length hex string\"}"
+   }
+  ],
+  "Trace_FromJSONBody": [],
+  "Trace_MissingFields": [],
+  "Trace_OnErrorDrop": [
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: odd length hex string\",\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: invalid byte: U+007A 'z'\",\"trace_id\":\"encoding/hex: invalid byte: U+007A 'z'\"}"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: odd length hex string\",\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   }
+  ],
+  "Trace_OnErrorSendQuiet": [],
+  "Trace_SpanIDOnly": [
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: invalid byte: U+007A 'z'\"}"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"span_id\":\"encoding/hex: odd length hex string\"}"
+   }
+  ],
+  "Trace_TraceIDOnly": [
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_id\":\"encoding/hex: invalid byte: U+007A 'z'\"}"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "Error decoding traces for logs: {\"trace_id\":\"encoding/hex: odd length hex string\"}"
+   }
+  ],
+  "X_AddNonString": [],
+  "X_Bodies_BodyFieldWithoutIf": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 5,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 6,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   }
+  ],
+  "X_Bodies_FieldAccess": [
+   {
+    "input": 2,
+    "operator_id": "op2",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 6,
+    "operator_id": "op2",
+    "error": "move: field does not exist: body.msg"
+   }
+  ],
+  "X_Bodies_FilterOnBodyField": [],
+  "X_Bodies_Grok": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type map[string]interface {} cannot be parsed with grok"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type int64 cannot be parsed with grok"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type []uint8 cannot be parsed with grok"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type float64 cannot be parsed with grok"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type bool cannot be parsed with grok"
+   },
+   {
+    "input": 5,
+    "operator_id": "op1",
+    "error": "value cannot be parsed: type []interface {} cannot be parsed with grok"
+   }
+  ],
+  "X_Bodies_JSON": [],
+  "X_Bodies_JSONToBodyFlatten": [],
+  "X_Bodies_Passthrough": [],
+  "X_Bodies_Regex": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is map[string]interface {}, not []uint8 (1:21)\n | body != nil \u0026\u0026 body matches \"^(?P\u003cverb\u003e[A-Z]+)\"\n | ....................^"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is int64, not []uint8 (1:21)\n | body != nil \u0026\u0026 body matches \"^(?P\u003cverb\u003e[A-Z]+)\"\n | ....................^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is float64, not []uint8 (1:21)\n | body != nil \u0026\u0026 body matches \"^(?P\u003cverb\u003e[A-Z]+)\"\n | ....................^"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is bool, not []uint8 (1:21)\n | body != nil \u0026\u0026 body matches \"^(?P\u003cverb\u003e[A-Z]+)\"\n | ....................^"
+   },
+   {
+    "input": 5,
+    "operator_id": "op1",
+    "error": "running if expr: interface conversion: interface {} is []interface {}, not []uint8 (1:21)\n | body != nil \u0026\u0026 body matches \"^(?P\u003cverb\u003e[A-Z]+)\"\n | ....................^"
+   }
+  ],
+  "X_Bodies_RegexNoIf": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "type 'map[string]interface {}' cannot be parsed as regex"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "type 'int64' cannot be parsed as regex"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "type '[]uint8' cannot be parsed as regex"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "type 'float64' cannot be parsed as regex"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "type 'bool' cannot be parsed as regex"
+   },
+   {
+    "input": 5,
+    "operator_id": "op1",
+    "error": "type '[]interface {}' cannot be parsed as regex"
+   }
+  ],
+  "X_Bodies_RegexNoIfDrop": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "type 'map[string]interface {}' cannot be parsed as regex"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "type 'int64' cannot be parsed as regex"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "type '[]uint8' cannot be parsed as regex"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "type 'float64' cannot be parsed as regex"
+   },
+   {
+    "input": 4,
+    "operator_id": "op1",
+    "error": "type 'bool' cannot be parsed as regex"
+   },
+   {
+    "input": 5,
+    "operator_id": "op1",
+    "error": "type '[]interface {}' cannot be parsed as regex"
+   }
+  ],
+  "X_Bodies_RemoveBody": [],
+  "X_Bodies_RouterTypeOf": [],
+  "X_Bodies_SeverityFromBody": [],
+  "X_BodyField_AddField": [],
+  "X_BodyField_AddField_AfterIf": [],
+  "X_BodyField_Copy": [],
+  "X_BodyField_Copy_AfterIf": [],
+  "X_BodyField_JSON": [],
+  "X_BodyField_JSON_AfterIf": [],
+  "X_BodyField_Move": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   }
+  ],
+  "X_BodyField_MoveToBodyField": [],
+  "X_BodyField_MoveToBodyField_AfterIf": [],
+  "X_BodyField_Move_AfterIf": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "move: field does not exist: body.msg"
+   }
+  ],
+  "X_BodyField_Regex": [],
+  "X_BodyField_Regex_AfterIf": [],
+  "X_BodyField_Remove": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "remove: field does not exist: body.msg"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "remove: field does not exist: body.msg"
+   }
+  ],
+  "X_BodyField_Remove_AfterIf": [
+   {
+    "input": 0,
+    "operator_id": "op1",
+    "error": "remove: field does not exist: body.msg"
+   },
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "remove: field does not exist: body.msg"
+   }
+  ],
+  "X_BodyField_Severity": [],
+  "X_BodyField_Severity_AfterIf": [],
+  "X_BodyField_Time": [],
+  "X_BodyField_Time_AfterIf": [],
+  "X_BodyField_Trace": [],
+  "X_BodyField_Trace_AfterIf": [],
+  "X_Expr_BodyMapVariable": [],
+  "X_Expr_IfRuntimeErrorDefault": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: string + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   }
+  ],
+  "X_Expr_IfRuntimeErrorDrop": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: string + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   }
+  ],
+  "X_Expr_IfRuntimeErrorSend": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: string + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "running if expr: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1 \u003e 2\n | .............^"
+   }
+  ],
+  "X_Expr_RouteRuntimeError": [],
+  "X_Expr_ValueRuntimeError": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "evaluate value expression: invalid operation: string + int (1:14)\n | attributes.n + 1\n | .............^"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "evaluate value expression: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1\n | .............^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "evaluate value expression: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1\n | .............^"
+   }
+  ],
+  "X_Expr_ValueRuntimeErrorSend": [
+   {
+    "input": 1,
+    "operator_id": "op1",
+    "error": "evaluate value expression: invalid operation: string + int (1:14)\n | attributes.n + 1\n | .............^"
+   },
+   {
+    "input": 2,
+    "operator_id": "op1",
+    "error": "evaluate value expression: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1\n | .............^"
+   },
+   {
+    "input": 3,
+    "operator_id": "op1",
+    "error": "evaluate value expression: invalid operation: \u003cnil\u003e + int (1:14)\n | attributes.n + 1\n | .............^"
+   }
+  ],
+  "X_IDDefaultsToType": [],
+  "X_ImplicitChain": [],
+  "X_JSON_Nulls": [],
+  "X_JSON_NullsFlatten": [],
+  "X_Metadata_AddAttribute": [],
+  "X_Metadata_MoveToResource": [],
+  "X_Metadata_SplitResource": [],
+  "X_Metadata_TwoPipelines": [],
+  "X_Metadata_Untouched": [],
+  "X_OnlyNoop": [],
+  "X_Order_ServiceListWins": [],
+  "X_ParsedBodyCache_AcrossPipelines": [],
+  "X_ParsedBodyCache_Stale": [],
+  "X_ParsedBodyCache_Visible": [],
+  "X_RouterNoDefault": [],
+  "X_StanzaIfOnly": []
+ }
+}

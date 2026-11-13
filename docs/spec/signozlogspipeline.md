@@ -10,7 +10,8 @@ block per enabled pipeline, `signozlogspipeline/pipeline_<alias>`, and places th
   integration suite checks against the existing collector
   (`tests/fixtures/simulatorcontract.py`, `tests/integration/tests/simulatorcontract/01_logspipelines.py`);
 - **[O]** black-box observation of `ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0`
-  ([`observed/signozlogspipeline`](observed/signozlogspipeline), harness in
+  ([`corpus/observed`](../../components/pkg/logspipeline/corpus/observed) of the
+  `logspipeline` module, published by its `corpus` package since ADR 0012 step 4; harness in
   `test/observe/signozlogspipeline`), cited by case name. The backend's 168 corpus cases were
   observed unchanged: the reference's output equals the backend's golden for every one;
 - **[S]** upstream `pkg/stanza` v0.164.1 (Apache-2.0), whose operators this processor runs.
