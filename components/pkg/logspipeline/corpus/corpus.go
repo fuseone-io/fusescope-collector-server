@@ -92,7 +92,8 @@ func decode(name string, v any) error {
 // Observed returns observed/cases.json.
 func Observed() (Cases, error) {
 	var c Cases
-	return c, decode("observed/cases.json", &c)
+	err := decode("observed/cases.json", &c)
+	return c, err
 }
 
 // ObservedOutputs returns, per case, the OTLP/JSON documents the reference
@@ -100,23 +101,26 @@ func Observed() (Cases, error) {
 // "set-by-collector". A case the reference refused has no entry.
 func ObservedOutputs() (map[string][]json.RawMessage, error) {
 	var o map[string][]json.RawMessage
-	return o, decode("observed/outputs.json", &o)
+	err := decode("observed/outputs.json", &o)
+	return o, err
 }
 
 // ObservedStartup returns observed/startup.json.
 func ObservedStartup() ([]StartupResult, error) {
 	var r []StartupResult
-	return r, decode("observed/startup.json", &r)
+	err := decode("observed/startup.json", &r)
+	return r, err
 }
 
 // LibraryMessages returns library/messages.json.
 func LibraryMessages() (Messages, error) {
 	var m Messages
-	return m, decode("library/messages.json", &m)
+	err := decode("library/messages.json", &m)
+	return m, err
 }
 
-// File returns a copy of one of the corpus's files, by its path in this
-// package (for example "observed/run.yaml").
-func File(name string) ([]byte, error) {
+// file returns a copy of one of the corpus's files, by its path in this
+// package. Not exported: the paths are not part of the API.
+func file(name string) ([]byte, error) {
 	return files.ReadFile(name)
 }

@@ -46,10 +46,10 @@ func TestFreshData(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, m, m2)
 
-	f, err := File("observed/run.yaml")
+	f, err := file("observed/run.yaml")
 	require.NoError(t, err)
 	f[0] = 'X'
-	f2, err := File("observed/run.yaml")
+	f2, err := file("observed/run.yaml")
 	require.NoError(t, err)
 	assert.NotEqual(t, f[0], f2[0])
 }
@@ -107,7 +107,7 @@ func TestObservationCounts(t *testing.T) {
 			refused++
 		}
 	}
-	run, err := File("observed/run.yaml")
+	run, err := file("observed/run.yaml")
 	require.NoError(t, err)
 	for _, line := range []string{
 		"reference_image: ghcr.io/fuseone-io/fusescope-otel-collector:0.145.0",
@@ -133,6 +133,41 @@ func TestObservationCounts(t *testing.T) {
 	for _, r := range startup {
 		assert.True(t, names[r.Name], "startup result %s has a case", r.Name)
 	}
+}
+
+// Every case that runs on records has the reference's output, or a startup
+// result saying the reference refused it: a case missing from outputs.json
+// must not pass by being skipped.
+func TestEveryCaseHasAnOutcome(t *testing.T) {
+	c, err := Observed()
+	require.NoError(t, err)
+	outputs, err := ObservedOutputs()
+	require.NoError(t, err)
+	startup, err := ObservedStartup()
+	require.NoError(t, err)
+	refused := map[string]bool{}
+	for _, r := range startup {
+		if !r.Starts {
+			refused[r.Name] = true
+		}
+	}
+	var withOutput, refusedCases []string
+	for _, k := range c.Cases {
+		_, hasOutput := outputs[k.Name]
+		switch {
+		case hasOutput && refused[k.Name]:
+			t.Errorf("%s has an output and a refusal", k.Name)
+		case hasOutput:
+			withOutput = append(withOutput, k.Name)
+		case refused[k.Name]:
+			refusedCases = append(refusedCases, k.Name)
+		default:
+			t.Errorf("%s has neither an output nor a startup refusal", k.Name)
+		}
+	}
+	assert.Len(t, withOutput, 222)
+	assert.Equal(t, []string{"X_ParsedBodyCache_Leak"}, refusedCases)
+	assert.Len(t, outputs, len(withOutput), "outputs.json holds outputs of run cases only")
 }
 
 func itoa(n int) string {
