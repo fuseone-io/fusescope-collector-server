@@ -8,8 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -22,10 +20,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor/processortest"
 
+	"github.com/fuseone-io/fusescope-collector-server/components/pkg/logspipeline/corpus"
 	"github.com/fuseone-io/fusescope-collector-server/components/processor/signozlogspipelineprocessor/internal/metadata"
 )
-
-var observed = filepath.Join("..", "..", "..", "docs", "spec", "observed", "signozlogspipeline")
 
 // collectorTime marks an observed timestamp the reference set from its clock.
 const collectorTime = "set-by-collector"
@@ -42,12 +39,6 @@ type observedCases struct {
 	Inputs  map[string][]json.RawMessage `json:"inputs"`
 	Cases   []observedCase               `json:"cases"`
 	Startup []observedCase               `json:"startup"`
-}
-
-type startupResult struct {
-	Name   string `json:"name"`
-	Starts bool   `json:"starts"`
-	Error  string `json:"error"`
 }
 
 // unsupported are cases this processor does not reproduce, with the reason
@@ -76,13 +67,29 @@ var withoutEnv = map[string]func(string) string{
 	},
 }
 
-func readObserved(t *testing.T, name string, v any) {
+// readObserved returns the observed cases of the published corpus
+// (components/pkg/logspipeline/corpus, ADR 0012 step 4), with the processor
+// configurations decoded keeping their numbers.
+func readObserved(t *testing.T) observedCases {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(observed, name))
+	c, err := corpus.Observed()
 	require.NoError(t, err)
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.UseNumber()
-	require.NoError(t, d.Decode(v))
+	convert := func(in []corpus.Case) []observedCase {
+		out := make([]observedCase, 0, len(in))
+		for _, k := range in {
+			oc := observedCase{Name: k.Name, Origin: k.Origin, LogSet: k.LogSet, ProcessorNames: k.ProcessorNames, Processors: map[string]map[string]any{}}
+			for name, raw := range k.Processors {
+				d := json.NewDecoder(bytes.NewReader(raw))
+				d.UseNumber()
+				var cfg map[string]any
+				require.NoError(t, d.Decode(&cfg))
+				oc.Processors[name] = cfg
+			}
+			out = append(out, oc)
+		}
+		return out
+	}
+	return observedCases{Inputs: c.Inputs, Cases: convert(c.Cases), Startup: convert(c.Startup)}
 }
 
 // unescape resolves `$$` as the collector's confmap does for the configs
@@ -139,10 +146,9 @@ func chain(t *testing.T, c observedCase, sink consumer.Logs) consumer.Logs {
 // grouped by resource and scope (spec §5.2: group order is not part of the
 // contract).
 func TestObservedOutputs(t *testing.T) {
-	var cases observedCases
-	readObserved(t, "cases.json", &cases)
-	var outputs map[string][]json.RawMessage
-	readObserved(t, "outputs.json", &outputs)
+	cases := readObserved(t)
+	outputs, err := corpus.ObservedOutputs()
+	require.NoError(t, err)
 
 	for _, c := range cases.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -222,10 +228,9 @@ func without(a, b []string) []string {
 // TestObservedStartup checks that a configuration is accepted exactly when
 // the reference starts with it, except where this processor is stricter.
 func TestObservedStartup(t *testing.T) {
-	var cases observedCases
-	readObserved(t, "cases.json", &cases)
-	var results []startupResult
-	readObserved(t, "startup.json", &results)
+	cases := readObserved(t)
+	results, err := corpus.ObservedStartup()
+	require.NoError(t, err)
 	byName := map[string]observedCase{}
 	for _, c := range append(cases.Startup, cases.Cases...) {
 		byName[c.Name] = c

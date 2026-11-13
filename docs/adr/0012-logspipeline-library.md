@@ -23,7 +23,7 @@ on contrib `pkg/stanza`, and neither one contains code from the AGPL fork or Sig
 
 Two corpora keep them close:
 
-- `docs/spec/observed/signozlogspipeline` here holds 223 cases and 88 startup outcomes, observed by
+- `docs/spec/observed/signozlogspipeline` here (since step 4, `components/pkg/logspipeline/corpus/observed`) holds 223 cases and 88 startup outcomes, observed by
   running the fork as a black box (ADR 0002). `golden_test.go` replays them against the
   processor. The cases it does not reproduce are listed in `unsupported` (1) and `stricter` (4).
 - `tests/integration/testdata/simulatorcontract` in the backend holds 171 log pipeline cases and

@@ -7,9 +7,10 @@ processors and records what comes out, for [`docs/spec/signozlogspipeline.md`](.
 ```sh
 # Regenerate the cases (only when they change); needs the FuseScope backend checkout.
 python3 -I cases.py <fusescope>/tests/integration/testdata/simulatorcontract/logspipelines.golden.json \
-  ../../../docs/spec/observed/signozlogspipeline/cases.json
+  ../../../components/pkg/logspipeline/corpus/observed/cases.json
 # Observe; needs Docker. Compose project observe-logspipeline, 127.0.0.1:34318 and :34133.
-python3 -I observe.py ../../../docs/spec/observed/signozlogspipeline/cases.json ../../../docs/spec/observed/signozlogspipeline
+python3 -I observe.py ../../../components/pkg/logspipeline/corpus/observed/cases.json \
+  ../../../components/pkg/logspipeline/corpus/observed
 ```
 
 - `cases.json`: log sets (OTLP/JSON) and, per case, the processor blocks and their order.
@@ -21,6 +22,12 @@ python3 -I observe.py ../../../docs/spec/observed/signozlogspipeline/cases.json 
   timestamps the reference took from its clock read `set-by-collector`.
 
 Each case runs in its own logs pipeline of one reference instance, behind a `filter` that keeps
-only that case's records. The golden tests in
+only that case's records. The files live in `components/pkg/logspipeline/corpus/observed` and are
+published by the `corpus` package (ADR 0012, step 4). The golden tests in
 `components/processor/signozlogspipelineprocessor` replay `cases.json` and compare with
-`outputs.json` and `startup.json`.
+`outputs.json` and `startup.json`. `corpus/library/messages.json` is not an observation: it comes
+from the library (`go test -run TestCorpusMessages -update-messages` in `components/pkg/logspipeline`).
+
+`cases.py` builds `cases.json` from the backend's golden as it was before step 4, when it still
+held each case's processors. The reference is archived, so the observed files are not expected to
+change.
