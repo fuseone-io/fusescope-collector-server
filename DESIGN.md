@@ -25,13 +25,17 @@ It writes to two storage backends ([ADR 0003](docs/adr/0003-clickhouse-and-engin
 
 | Mode | Runs as | Receives from | Sends to |
 |---|---|---|---|
-| Agent | DaemonSet / host service | node files (pod logs), kubelet, host; **not yet** OTLP from local SDKs ([#95](https://github.com/fuseone-io/fusescope-collector-server/issues/95)) | a gateway, over mTLS |
+| Agent | DaemonSet / host service | the chart's Kubernetes agent: node files (pod logs), kubelet, host, and **no** OTLP input for pods' SDKs yet ([#95](https://github.com/fuseone-io/fusescope-collector-server/issues/95)); the reference configuration also listens for OTLP on loopback | a gateway, over mTLS |
 | Gateway | Deployment behind a load balancer | agents, SDKs, browsers and mobile apps (RUM), CI artifact uploads | ClickHouse, the engine, both, or the existing collector during migration |
 
-One binary, two configurations ([`config/`](config/)). The agent takes no OTLP from SDKs today: a pod's
-`localhost` is its own network namespace and does not reach the DaemonSet, and how an SDK should reach its node's
-agent is open in #95. Until then, SDKs inside a cluster send to the gateway, over an endpoint with TLS and a key, or
-in plaintext only by the opt-in of [ADR 0013](docs/adr/0013-otlp-plaintext-for-migration.md). The gateway is the **only** ingest
+One binary, two configurations ([`config/`](config/)). The Kubernetes agent the chart delivers
+(`fusescopeAgent`) takes no OTLP from SDKs. The reference configuration,
+[`config/agent-kubernetes.yaml`](config/agent-kubernetes.yaml), still declares an OTLP receiver on
+`localhost:4317` and `localhost:4318`, wired to its three pipelines. Only processes in the agent's network
+namespace reach it, such as processes on the node when it runs as a host service; an ordinary pod does not, since
+a pod's `localhost` is its own network namespace. How a pod's SDK should reach its node's agent is the decision
+of #95. Until then, SDKs inside a cluster send to the gateway, over an endpoint with TLS and a key, or in plaintext
+only by the opt-in of [ADR 0013](docs/adr/0013-otlp-plaintext-for-migration.md). The gateway is the **only** ingest
 surface exposed to the internet ([ADR 0006](docs/adr/0006-single-ingress.md), FuseScope ADR
 0010). It carries OTLP, RUM, profiles and artifact uploads, and the backend serves no ingest
 route. Browsers and mobile apps send to its `rumreceiver` (`/rum/v1/*`), which replaces the
