@@ -1,0 +1,11 @@
+traces 2000
+traces 5000
+traces 10000
+traces 15000
+logs 5000
+logs 10000
+logs 20000
+metrics 10000
+metrics 25000
+metrics 50000
+traces 20000
