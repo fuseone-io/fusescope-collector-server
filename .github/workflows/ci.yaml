@@ -7,6 +7,10 @@ on:
   push:
     branches:
       - main
+  # The release gate needs a successful ci run on the exact commit a vX.Y.Z tag points at
+  # (release.yaml), whatever its event. A docs-only commit that skipped ci has none:
+  # run this on main before tagging it.
+  workflow_dispatch:
 
 permissions:
   contents: read
