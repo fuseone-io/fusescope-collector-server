@@ -14,6 +14,7 @@ import (
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/proto"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -85,7 +86,7 @@ type attempter interface {
 	setAttempt(now time.Time, random func([]byte))
 }
 
-func newSignalExporter[E attempter, D any](cfg *Config, database string, set component.TelemetrySettings, tables []table[E],
+func newSignalExporter[E attempter, D any](cfg *Config, database string, set exporter.Settings, tables []table[E],
 	newEncoder func() E, encode func(E, D, func() error) error,
 ) (*signalExporter[E, D], error) {
 	x := &signalExporter[E, D]{
@@ -102,13 +103,13 @@ func newSignalExporter[E attempter, D any](cfg *Config, database string, set com
 		x.bodies = append(x.bodies, fmt.Sprintf("INSERT INTO %s.%s %s VALUES", database, t.name, t.input(enc).Columns()))
 	}
 	var err error
-	if x.telemetry, err = newInsertTelemetry(set, names); err != nil {
+	if x.telemetry, err = newInsertTelemetry(set.TelemetrySettings, set.ID.String(), names); err != nil {
 		return nil, err
 	}
 	return x, nil
 }
 
-func newTracesExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*tracesEncoder, ptrace.Traces], error) {
+func newTracesExporter(cfg *Config, set exporter.Settings) (*signalExporter[*tracesEncoder, ptrace.Traces], error) {
 	newEncoder := func() *tracesEncoder {
 		e := newTracesEncoder()
 		e.logger = set.Logger
@@ -118,26 +119,26 @@ func newTracesExporter(cfg *Config, set component.TelemetrySettings) (*signalExp
 	if err != nil || !cfg.AttributesMetadata.Enabled {
 		return x, err
 	}
-	if x.meta, err = newAttrsMetadata(cfg, "traces", set); err != nil {
+	if x.meta, err = newAttrsMetadata(cfg, "traces", set.TelemetrySettings, set.ID.String()); err != nil {
 		return nil, err
 	}
 	x.observe = x.meta.observeTraces
 	return x, nil
 }
 
-func newLogsExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*logsEncoder, plog.Logs], error) {
+func newLogsExporter(cfg *Config, set exporter.Settings) (*signalExporter[*logsEncoder, plog.Logs], error) {
 	x, err := newSignalExporter(cfg, cfg.Logs.Database, set, logsTables, newLogsEncoder, (*logsEncoder).encode)
 	if err != nil || !cfg.AttributesMetadata.Enabled {
 		return x, err
 	}
-	if x.meta, err = newAttrsMetadata(cfg, "logs", set); err != nil {
+	if x.meta, err = newAttrsMetadata(cfg, "logs", set.TelemetrySettings, set.ID.String()); err != nil {
 		return nil, err
 	}
 	x.observe = x.meta.observeLogs
 	return x, nil
 }
 
-func newMetricsExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*metricsEncoder, pmetric.Metrics], error) {
+func newMetricsExporter(cfg *Config, set exporter.Settings) (*signalExporter[*metricsEncoder, pmetric.Metrics], error) {
 	newEncoder := func() *metricsEncoder {
 		e := newMetricsEncoder()
 		e.logger = set.Logger
@@ -147,14 +148,14 @@ func newMetricsExporter(cfg *Config, set component.TelemetrySettings) (*signalEx
 	if err != nil || !cfg.AttributesMetadata.Enabled {
 		return x, err
 	}
-	if x.meta, err = newAttrsMetadata(cfg, "metrics", set); err != nil {
+	if x.meta, err = newAttrsMetadata(cfg, "metrics", set.TelemetrySettings, set.ID.String()); err != nil {
 		return nil, err
 	}
 	x.observe = x.meta.observeMetrics
 	return x, nil
 }
 
-func newMeterExporter(cfg *Config, set component.TelemetrySettings) (*signalExporter[*meterEncoder, pmetric.Metrics], error) {
+func newMeterExporter(cfg *Config, set exporter.Settings) (*signalExporter[*meterEncoder, pmetric.Metrics], error) {
 	newEncoder := func() *meterEncoder {
 		e := newMeterEncoder()
 		e.logger = set.Logger

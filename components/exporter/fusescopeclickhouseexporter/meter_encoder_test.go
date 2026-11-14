@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -156,7 +155,7 @@ func TestMeterModeWritesOnlyMetrics(t *testing.T) {
 	if _, err := f.CreateMetrics(context.Background(), set, cfg); err != nil {
 		t.Errorf("metrics: err = %v", err)
 	}
-	m, err := newMeterExporter(cfg, componenttest.NewNopTelemetrySettings())
+	m, err := newMeterExporter(cfg, set)
 	if err != nil {
 		t.Fatal(err)
 	}

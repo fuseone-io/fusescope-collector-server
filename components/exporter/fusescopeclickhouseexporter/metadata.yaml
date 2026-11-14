@@ -34,6 +34,9 @@ attributes:
     description: The class of the failed attempt's error, as the exporter returns it.
     type: string
     enum: [retryable, permanent]
+  exporter:
+    description: The exporter instance, as the collector's otelcol_exporter_* metrics name it (for example fusescope_clickhouse/meter).
+    type: string
   outcome:
     description: The result of the attempt, as the exporter returns it.
     type: string
@@ -75,7 +78,7 @@ telemetry:
       sum:
         value_type: int
         monotonic: true
-      attributes: [signal, reason]
+      attributes: [exporter, signal, reason]
     exporter_fusescope_clickhouse_insert_duration:
       enabled: true
       stability: development
@@ -84,7 +87,7 @@ telemetry:
       histogram:
         value_type: double
         bucket_boundaries: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30]
-      attributes: [table, outcome]
+      attributes: [exporter, table, outcome]
     exporter_fusescope_clickhouse_insert_errors:
       enabled: true
       stability: development
@@ -93,7 +96,7 @@ telemetry:
       sum:
         value_type: int
         monotonic: true
-      attributes: [table, error_outcome]
+      attributes: [exporter, table, error_outcome]
     exporter_fusescope_clickhouse_inserted_rows:
       enabled: true
       stability: development
@@ -102,4 +105,4 @@ telemetry:
       sum:
         value_type: int
         monotonic: true
-      attributes: [table]
+      attributes: [exporter, table]

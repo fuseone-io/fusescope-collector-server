@@ -117,7 +117,7 @@ type attrsMetadata struct {
 	closed    chan struct{}
 }
 
-func newAttrsMetadata(cfg *Config, signal string, set component.TelemetrySettings) (*attrsMetadata, error) {
+func newAttrsMetadata(cfg *Config, signal string, set component.TelemetrySettings, exporterID string) (*attrsMetadata, error) {
 	mc := &cfg.AttributesMetadata
 	m := &attrsMetadata{
 		cfg: mc, signal: signal, logger: set.Logger, now: time.Now, timeout: cfg.Timeout,
@@ -128,14 +128,14 @@ func newAttrsMetadata(cfg *Config, signal string, set component.TelemetrySetting
 	m.scratch.New = func() any { return &amScratch{} }
 	m.body = fmt.Sprintf("INSERT INTO %s.%s %s VALUES", mc.Database, amTable, newAMColumns().input().Columns())
 	var err error
-	if m.insert, err = newInsertTelemetry(set, []string{amTable}); err != nil {
+	if m.insert, err = newInsertTelemetry(set, exporterID, []string{amTable}); err != nil {
 		return nil, err
 	}
 	if m.tb, err = metadata.NewTelemetryBuilder(set); err != nil {
 		return nil, err
 	}
 	for r := range numDropReasons {
-		m.drops[r] = []metric.AddOption{metric.WithAttributeSet(attribute.NewSet(attribute.String("signal", signal), attribute.String("reason", dropNames[r])))}
+		m.drops[r] = []metric.AddOption{metric.WithAttributeSet(attribute.NewSet(attribute.String("exporter", exporterID), attribute.String("signal", signal), attribute.String("reason", dropNames[r])))}
 	}
 	return m, nil
 }
