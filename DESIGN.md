@@ -25,18 +25,18 @@ It writes to two storage backends ([ADR 0003](docs/adr/0003-clickhouse-and-engin
 
 | Mode | Runs as | Receives from | Sends to |
 |---|---|---|---|
-| Agent | DaemonSet / host service | the chart's Kubernetes agent: node files (pod logs), kubelet, host, and, once the chart implements it, pods' SDKs over OTLP through a node-local Service with TLS and a token (decided by [ADR 0014](docs/adr/0014-otlp-from-pods-to-the-agent.md); implementation pending in chart 0.170.0); the reference configuration also listens for OTLP on loopback | a gateway, over mTLS |
+| Agent | DaemonSet / host service | the chart's Kubernetes agent: node files (pod logs), kubelet, host, and, with `fusescopeAgent.otlp` (chart 0.170.0 and later), pods' SDKs over OTLP through a node-local Service with TLS and a token ([ADR 0014](docs/adr/0014-otlp-from-pods-to-the-agent.md)); the reference configuration also listens for OTLP on loopback | a gateway, over mTLS |
 | Gateway | Deployment behind a load balancer | agents, SDKs, browsers and mobile apps (RUM), CI artifact uploads | ClickHouse, the engine, both, or the existing collector during migration |
 
 One binary, two configurations ([`config/`](config/)). [ADR 0014](docs/adr/0014-otlp-from-pods-to-the-agent.md)
-decides how a pod's SDK will reach the agent on its node: through a ClusterIP Service with
-`internalTrafficPolicy: Local`, over TLS 1.3 with a bearer token. The chart does not offer it yet;
-`fusescopeAgent.otlp`, off by default, is pending in chart 0.170.0. The route through the Service
-will be node-local, but it is not isolation: TLS and the token are the security boundary. The reference configuration,
+decides how a pod's SDK reaches the agent on its node: through a ClusterIP Service with
+`internalTrafficPolicy: Local`, over TLS 1.3 with a bearer token. The chart offers it from 0.170.0
+as `fusescopeAgent.otlp`, off by default. The route through the Service is node-local, but it is
+not isolation: TLS and the token are the security boundary. The reference configuration,
 [`config/agent-kubernetes.yaml`](config/agent-kubernetes.yaml), keeps an OTLP receiver on
 `localhost:4317` and `localhost:4318` for the host-service case, the loopback exception of
 [ADR 0004](docs/adr/0004-security-baseline.md): only processes in the agent's network namespace reach
-it, not other hosts or ordinary pods. Until then, and for SDKs that do not move, SDKs send to the gateway, over an
+it, not other hosts or ordinary pods. Without `fusescopeAgent.otlp`, and for SDKs that do not move, SDKs send to the gateway, over an
 endpoint with TLS and a key, or in plaintext only by the opt-in of
 [ADR 0013](docs/adr/0013-otlp-plaintext-for-migration.md). The gateway is the **only** ingest
 surface exposed to the internet ([ADR 0006](docs/adr/0006-single-ingress.md), FuseScope ADR
