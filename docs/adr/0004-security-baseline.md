@@ -5,9 +5,11 @@
   [ADR 0007](0007-clickhouse-plaintext-for-migration.md) (plaintext to ClickHouse by opt-in),
   [ADR 0008](0008-opamp-remote-config.md) (remote configuration, OpAMP transport),
   [ADR 0009](0009-rum-tls-compatibility.md) (TLS 1.2 opt-in on RUM ingress),
-  [ADR 0011](0011-agent-daemonset-root.md) (the Kubernetes agent DaemonSet as root) and
+  [ADR 0011](0011-agent-daemonset-root.md) (the Kubernetes agent DaemonSet as root),
   [ADR 0013](0013-otlp-plaintext-for-migration.md) (plaintext OTLP inside the cluster by opt-in,
-  during a SigNoz migration)
+  during a SigNoz migration) and
+  [ADR 0014](0014-otlp-from-pods-to-the-agent.md) (OTLP from pods to the agent; the loopback
+  exception)
 - Date: 2026-10-31
 
 ## Decision
@@ -18,6 +20,10 @@
   `otlp/insecure` receiver may run without TLS or a key, by explicit opt-in
   ([ADR 0013](0013-otlp-plaintext-for-migration.md)). mTLS between agents and gateways and from
   gateways to engine ingesters.
+- **The loopback exception** ([ADR 0014](0014-otlp-from-pods-to-the-agent.md)). An OTLP receiver
+  bound only to loopback, in the agent's host-service reference configuration, may run without
+  TLS or a token. It is reachable only by processes in the agent's network namespace, and not
+  from other hosts or ordinary pods. No other listener is exempt.
 - Ingest authentication on the gateway's public receivers by `ingestauth` and `rumreceiver`,
   against SHA-256 verifiers of ingestion and RUM keys from the OpAMP ingest policy
   ([ADR 0006](0006-single-ingress.md), decision 3 and security gates). Engine exporters present
@@ -41,5 +47,6 @@
 
 ## Consequences
 
-Plaintext or token-less example configurations are not shipped; local development uses the
-same configs with self-signed certificates.
+Plaintext or token-less example configurations are not shipped, with the one exception named
+above: the loopback OTLP receiver of `config/agent-kubernetes.yaml` (ADR 0014). Local development
+uses the same configs with self-signed certificates.
