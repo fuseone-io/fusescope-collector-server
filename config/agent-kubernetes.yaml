@@ -19,8 +19,8 @@ extensions:
 
 receivers:
   # Loopback only, for the host-service case: the loopback exception of ADR 0004 and ADR 0014.
-  # Pods reach the chart's agent through a node-local Service, with TLS and a token
-  # (ADR 0014; chart 0.170.0, fusescopeAgent.otlp).
+  # With fusescopeAgent.otlp enabled, pods reach the chart's agent through a node-local
+  # Service, with TLS and a token (ADR 0014; chart 0.170.0 and later).
   otlp:
     protocols:
       grpc:
