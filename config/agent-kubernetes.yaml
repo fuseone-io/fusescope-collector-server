@@ -18,6 +18,9 @@ extensions:
     create_directory: true
 
 receivers:
+  # Loopback only, for the host-service case: the loopback exception of ADR 0004 and ADR 0014.
+  # Pods are to reach the chart's agent through a node-local Service, with TLS and a token
+  # (ADR 0014; implementation pending in chart 0.170.0).
   otlp:
     protocols:
       grpc:
