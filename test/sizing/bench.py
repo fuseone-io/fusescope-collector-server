@@ -100,12 +100,57 @@ def snap(signal):
         "g_dur_cnt": total(g, "otelcol_exporter_fusescope_clickhouse_insert_duration_count", 'exporter="fusescope_clickhouse"'),
     }
 
+def wait_for_generator(name, timeout=180):
+    """Waits until the Job's pod has every container ready, so the warmup starts with load."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        out = subprocess.run(CTX + ["-n", "apps", "get", "pods", "-l", f"job-name={name}", "-o",
+                                    "jsonpath={range .items[*].status.containerStatuses[*]}{.ready}{' '}{end}"],
+                             capture_output=True, text=True).stdout.split()
+        if out and all(x == "true" for x in out):
+            return time.time()
+        time.sleep(2)
+    raise RuntimeError(f"generator {name} not ready after {timeout}s")
+
+def pod_state(selector):
+    """Name, UID, restart count and start time of the current pod, to tell measurements apart."""
+    out = subprocess.run(CTX + ["-n", "platform", "get", "pods", "-l", f"app.kubernetes.io/component={selector}", "-o",
+                                "jsonpath={.items[0].metadata.name}|{.items[0].metadata.uid}|"
+                                "{.items[0].status.containerStatuses[0].restartCount}|"
+                                "{.items[0].status.containerStatuses[0].state.running.startedAt}"],
+                         capture_output=True, text=True).stdout.split("|")
+    out += [""] * (4 - len(out))
+    return {"pod": out[0], "uid": out[1], "restarts": int(out[2] or 0), "container_started_at": out[3]}
+
+def limits():
+    """The memory limits in force for this step, as the pods run them."""
+    def one(selector):
+        return subprocess.run(CTX + ["-n", "platform", "get", "pods", "-l", f"app.kubernetes.io/component={selector}", "-o",
+                                     "jsonpath={.items[0].spec.containers[0].resources.limits.memory}"],
+                              capture_output=True, text=True).stdout.strip()
+    def image(selector):
+        return subprocess.run(CTX + ["-n", "platform", "get", "pods", "-l", f"app.kubernetes.io/component={selector}", "-o",
+                                     "jsonpath={.items[0].status.containerStatuses[0].imageID}"],
+                              capture_output=True, text=True).stdout.strip()
+    return {"gateway_memory_limit": one("fusescope-collector"), "agent_memory_limit": one("fusescope-agent"),
+            "gateway_image": image("fusescope-collector"), "agent_image": image("fusescope-agent")}
+
 def main():
     signal, rate, workers = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
     warmup = int(sys.argv[4]) if len(sys.argv) > 4 else 40
     window = int(sys.argv[5]) if len(sys.argv) > 5 else 90
-    name = job(signal, rate, workers, warmup + window + 20)
+    step_index = int(sys.argv[6]) if len(sys.argv) > 6 else 0
+    name = job(signal, rate, workers, 180 + warmup + window + 20)
+    try:
+        measure(signal, rate, workers, warmup, window, step_index, name)
+    finally:
+        # Always: a generator left running would load the next step.
+        subprocess.run(CTX + ["-n", "apps", "delete", "job", name, "--ignore-not-found", "--wait"], capture_output=True)
+
+def measure(signal, rate, workers, warmup, window, step_index, name):
+    started = wait_for_generator(name)
     time.sleep(warmup)
+    gw0, ag0 = pod_state("fusescope-collector"), pod_state("fusescope-agent")
     s0, samples = snap(signal), []
     while time.time() - s0["t"] < window:
         time.sleep(5)
@@ -113,13 +158,24 @@ def main():
     s1 = samples[-1]
     dt = s1["t"] - s0["t"]
     d = lambda k: (s1[k] - s0[k]) / dt
-    per_unit = 1
     res = {
-        "signal": signal, "offered_per_s": rate * workers * per_unit, "workers": workers,
+        "step_index": step_index,
+        "signal": signal, "offered_per_s": rate * workers, "workers": workers,
+        **limits(),
+        "gateway_pod_at_window_start": gw0, "agent_pod_at_window_start": ag0,
+        "gateway_pod_at_window_end": pod_state("fusescope-collector"),
+        "agent_pod_at_window_end": pod_state("fusescope-agent"),
+        "gateway_rss_mib_window_start": round(s0["g_rss"] / 2**20),
+        "gateway_heap_mib_window_start": round(s0["g_heap"] / 2**20),
+        "agent_rss_mib_window_start": round(s0["a_rss"] / 2**20),
         "agent_accepted_per_s": round(d("a_acc")), "agent_refused_per_s": round(d("a_ref")),
         "agent_send_failed_per_s": round(d("a_fail")),
         "gateway_accepted_per_s": round(d("g_acc")), "gateway_refused_per_s": round(d("g_ref")),
-        "gateway_send_failed_per_s": round(d("g_fail")), "gateway_insert_errors": s1["g_ins_err"] - s0["g_ins_err"],
+        "gateway_send_failed_per_s": round(d("g_fail")),
+        # Proof of writes to ClickHouse: rows of confirmed inserts across every table (spans,
+        # resources, tags, samples, series), so not one row per accepted record.
+        "gateway_inserted_rows_per_s": round(d("g_rows")),
+        "gateway_insert_errors": s1["g_ins_err"] - s0["g_ins_err"],
         "agent_cores": round(d("a_cpu"), 3), "gateway_cores": round(d("g_cpu"), 3),
         "agent_rss_mib_max": round(max(x["a_rss"] for x in samples) / 2**20),
         "gateway_rss_mib_max": round(max(x["g_rss"] for x in samples) / 2**20),
@@ -127,9 +183,9 @@ def main():
         "gateway_heap_mib_max": round(max(x["g_heap"] for x in samples) / 2**20),
         "gateway_queue_max": max(x["g_queue"] for x in samples),
         "gateway_insert_s_avg": round((s1["g_dur_sum"] - s0["g_dur_sum"]) / max(1, s1["g_dur_cnt"] - s0["g_dur_cnt"]), 3),
+        "generator_ready_to_window_s": round(s0["t"] - started),
         "window_s": round(dt),
     }
     print(json.dumps(res), flush=True)
-    subprocess.run(CTX + ["-n", "apps", "delete", "job", name, "--wait"], capture_output=True)
 
 main()

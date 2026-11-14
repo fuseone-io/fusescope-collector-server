@@ -1,0 +1,19 @@
+Traceback (most recent call last):
+  File "/home/kleber/Dados/fusescope-collector-server/.claude/worktrees/sizing/test/sizing/bench.py", line 191, in <module>
+    main()
+  File "/home/kleber/Dados/fusescope-collector-server/.claude/worktrees/sizing/test/sizing/bench.py", line 145, in main
+    measure(signal, rate, workers, warmup, window, step_index, name)
+  File "/home/kleber/Dados/fusescope-collector-server/.claude/worktrees/sizing/test/sizing/bench.py", line 157, in measure
+    samples.append(snap(signal))
+                   ^^^^^^^^^^^^
+  File "/home/kleber/Dados/fusescope-collector-server/.claude/worktrees/sizing/test/sizing/bench.py", line 83, in snap
+    a, g = scrape(AGENT), scrape(GATEWAY)
+                          ^^^^^^^^^^^^^^^
+  File "/home/kleber/Dados/fusescope-collector-server/.claude/worktrees/sizing/test/sizing/bench.py", line 33, in scrape
+    for line in fetch(url).splitlines():
+                ^^^^^^^^^^
+  File "/home/kleber/Dados/fusescope-collector-server/.claude/worktrees/sizing/test/sizing/bench.py", line 29, in fetch
+    raise RuntimeError(f"cannot scrape {url}")
+RuntimeError: cannot scrape http://127.0.0.1:18002/metrics
+FAILED traces 20000
+done

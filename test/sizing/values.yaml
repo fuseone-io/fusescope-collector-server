@@ -1,7 +1,4 @@
 fusescopeCollector:
-  image:
-    tag: 0.6.4
-    digest: sha256:65e3c13edb375a795ea1b3f6e3deba4c37e4326a51e3c0917d308c352800704d
   agentListener:
     enabled: true
     tls: {existingSecret: agents-tls}
