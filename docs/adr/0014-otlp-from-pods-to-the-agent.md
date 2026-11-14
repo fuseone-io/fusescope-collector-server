@@ -19,8 +19,9 @@ which is meant to end.
 **What constrains a node-local path.**
 - A pod's `localhost` is its own network namespace: it does not reach the DaemonSet.
 - A `hostPort` may be reachable beyond the node, depending on the CNI and the network.
-- ADR 0004 requires TLS 1.3 on every network listener, and ADR 0006 puts authentication on
-  receivers that accept telemetry.
+- ADR 0004 requires TLS 1.3 on every network listener. ADR 0006 governs authentication on the
+  gateway's public receivers; this node-local receiver is not one of them, and this ADR chooses a
+  bearer token for it.
 - Certificates are issued for names. A path whose address changes per node needs a certificate per
   node IP.
 
@@ -65,8 +66,8 @@ which is meant to end.
   node.
 - **A `hostPath` socket.** Every application pod would mount a host path, which pod security
   policies often refuse. Not every SDK exports OTLP over a unix socket.
-- **Plaintext.** ADR 0013 accepts it only during a migration, with an end date. This path is meant
-  to replace it.
+- **Plaintext.** ADR 0013 accepts it only during a migration, with explicit exit criteria. This
+  path is meant to replace it.
 
 ## Consequences
 
@@ -79,7 +80,7 @@ which is meant to end.
   - send telemetry with forged resource attributes: the agent's Kubernetes enrichment uses the
     connection's pod, but attributes the SDK sets pass through;
   - consume the agent's and the gateway's resources.
-  
+
   Mitigations: rotate the token; keep the NetworkPolicy's peer list narrow; rely on the agent's
   `memory_limiter`. Per-workload identity is future work.
 - **The agents' own telemetry is not centralized yet.** Refusals and drops at `otlp/sdks` are not
