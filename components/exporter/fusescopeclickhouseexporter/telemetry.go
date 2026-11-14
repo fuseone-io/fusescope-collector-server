@@ -55,19 +55,22 @@ type tableTelemetry struct {
 	errors   [numOutcomes][]metric.AddOption
 }
 
-// newInsertTelemetry prepares the attributes of tables, indexed as given.
-func newInsertTelemetry(set component.TelemetrySettings, tables []string) (*insertTelemetry, error) {
+// newInsertTelemetry prepares the attributes of tables, indexed as given,
+// each naming the exporter instance, so two instances in one process keep
+// their own series.
+func newInsertTelemetry(set component.TelemetrySettings, exporterID string, tables []string) (*insertTelemetry, error) {
 	tb, err := metadata.NewTelemetryBuilder(set)
 	if err != nil {
 		return nil, err
 	}
 	t := &insertTelemetry{tb: tb, tables: make([]tableTelemetry, len(tables))}
+	exporter := attribute.String("exporter", exporterID)
 	for i, name := range tables {
 		table := attribute.String("table", name)
 		tt := &t.tables[i]
-		tt.rows = []metric.AddOption{metric.WithAttributeSet(attribute.NewSet(table))}
+		tt.rows = []metric.AddOption{metric.WithAttributeSet(attribute.NewSet(exporter, table))}
 		for o := range numOutcomes {
-			attrs := metric.WithAttributeSet(attribute.NewSet(table, attribute.String("outcome", outcomeNames[o])))
+			attrs := metric.WithAttributeSet(attribute.NewSet(exporter, table, attribute.String("outcome", outcomeNames[o])))
 			tt.duration[o] = []metric.RecordOption{attrs}
 			tt.errors[o] = []metric.AddOption{attrs}
 		}

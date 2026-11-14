@@ -32,7 +32,7 @@ import (
 // nopTraces is the traces exporter with no-op telemetry.
 func nopTraces(t testing.TB, cfg *Config) *signalExporter[*tracesEncoder, ptrace.Traces] {
 	t.Helper()
-	x, err := newTracesExporter(cfg, componenttest.NewNopTelemetrySettings())
+	x, err := newTracesExporter(cfg, exportertest.NewNopSettings(metadata.Type))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func helperLogsWith(t *testing.T, set exporter.Settings, cfg *Config, queued boo
 	if !queued {
 		cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
 	}
-	x, err := newLogsExporter(cfg, set.TelemetrySettings)
+	x, err := newLogsExporter(cfg, set)
 	if err != nil {
 		t.Fatal(err)
 	}

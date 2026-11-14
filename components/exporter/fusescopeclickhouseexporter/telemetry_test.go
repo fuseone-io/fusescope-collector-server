@@ -30,6 +30,10 @@ const (
 	rowsMetric     = "otelcol_exporter_fusescope_clickhouse_inserted_rows"
 )
 
+// testExporter is the exporter label of the instance metadatatest.NewSettings
+// creates.
+var testExporter = attribute.String("exporter", "fusescope_clickhouse")
+
 // richLog has rows for every logs table.
 func richLog() plog.Logs {
 	ld := plog.NewLogs()
@@ -195,7 +199,7 @@ func TestInsertTelemetry(t *testing.T) {
 			var durations []metricdata.HistogramDataPoint[float64]
 			for _, o := range tt.attempts {
 				durations = append(durations, metricdata.HistogramDataPoint[float64]{
-					Attributes: attribute.NewSet(attribute.String("table", o.table), attribute.String("outcome", o.outcome)),
+					Attributes: attribute.NewSet(testExporter, attribute.String("table", o.table), attribute.String("outcome", o.outcome)),
 				})
 			}
 			metadatatest.AssertEqualExporterFusescopeClickhouseInsertDuration(t, tel, durations,
@@ -208,7 +212,7 @@ func TestInsertTelemetry(t *testing.T) {
 				var dps []metricdata.DataPoint[int64]
 				for _, o := range tt.errors {
 					dps = append(dps, metricdata.DataPoint[int64]{
-						Attributes: attribute.NewSet(attribute.String("table", o.table), attribute.String("outcome", o.outcome)),
+						Attributes: attribute.NewSet(testExporter, attribute.String("table", o.table), attribute.String("outcome", o.outcome)),
 						Value:      int64(o.count),
 					})
 				}
@@ -222,7 +226,7 @@ func TestInsertTelemetry(t *testing.T) {
 			var dps []metricdata.DataPoint[int64]
 			for _, table := range tt.rows {
 				dps = append(dps, metricdata.DataPoint[int64]{
-					Attributes: attribute.NewSet(attribute.String("table", table)),
+					Attributes: attribute.NewSet(testExporter, attribute.String("table", table)),
 					Value:      fake.sentRows(t, table),
 				})
 			}
@@ -236,7 +240,7 @@ func TestInsertTelemetry(t *testing.T) {
 func TestInsertedRowsCountsEveryChunk(t *testing.T) {
 	tel := componenttest.NewTelemetry()
 	t.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
-	x, err := newLogsExporter(createDefaultConfig(), metadatatest.NewSettings(tel).TelemetrySettings)
+	x, err := newLogsExporter(createDefaultConfig(), metadatatest.NewSettings(tel))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +272,7 @@ func TestInsertedRowsCountsEveryChunk(t *testing.T) {
 	var dps []metricdata.DataPoint[int64]
 	var attempts []attemptCount
 	for table, n := range inserts {
-		dps = append(dps, metricdata.DataPoint[int64]{Attributes: attribute.NewSet(attribute.String("table", table)), Value: rows[table]})
+		dps = append(dps, metricdata.DataPoint[int64]{Attributes: attribute.NewSet(testExporter, attribute.String("table", table)), Value: rows[table]})
 		attempts = append(attempts, attemptCount{table, "ok", n})
 	}
 	metadatatest.AssertEqualExporterFusescopeClickhouseInsertedRows(t, tel, dps, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -293,7 +297,7 @@ func TestRecordAllocations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tel := componenttest.NewTelemetry()
 			t.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
-			it, err := newInsertTelemetry(tel.NewTelemetrySettings(), allLogsTables)
+			it, err := newInsertTelemetry(tel.NewTelemetrySettings(), "fusescope_clickhouse", allLogsTables)
 			if err != nil {
 				t.Fatal(err)
 			}

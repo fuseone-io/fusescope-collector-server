@@ -38,7 +38,7 @@ func createTraces(ctx context.Context, set exporter.Settings, cfg component.Conf
 	if c.Mode == modeMeter {
 		return nil, errMeterOnlyMetrics
 	}
-	x, err := newTracesExporter(c, set.TelemetrySettings)
+	x, err := newTracesExporter(c, set)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config
 	if c.Mode == modeMeter {
 		return nil, errMeterOnlyMetrics
 	}
-	x, err := newLogsExporter(c, set.TelemetrySettings)
+	x, err := newLogsExporter(c, set)
 	if err != nil {
 		return nil, err
 	}
@@ -60,13 +60,13 @@ func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config
 func createMetrics(ctx context.Context, set exporter.Settings, cfg component.Config) (exporter.Metrics, error) {
 	c := cfg.(*Config)
 	if c.Mode == modeMeter {
-		x, err := newMeterExporter(c, set.TelemetrySettings)
+		x, err := newMeterExporter(c, set)
 		if err != nil {
 			return nil, err
 		}
 		return newMetrics(ctx, set, c, x)
 	}
-	x, err := newMetricsExporter(c, set.TelemetrySettings)
+	x, err := newMetricsExporter(c, set)
 	if err != nil {
 		return nil, err
 	}

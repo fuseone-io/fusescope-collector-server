@@ -106,7 +106,7 @@ func newMetaFixture(t testing.TB, signal string, edit func(*AttributesMetadataCo
 	}
 	tel := componenttest.NewTelemetry()
 	t.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
-	m, err := newAttrsMetadata(cfg, signal, metadatatest.NewSettings(tel).TelemetrySettings)
+	m, err := newAttrsMetadata(cfg, signal, metadatatest.NewSettings(tel).TelemetrySettings, "fusescope_clickhouse")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func (f *metaFixture) assertDropped(t *testing.T, want map[string]int64) {
 	var dps []metricdata.DataPoint[int64]
 	for reason, n := range want {
 		dps = append(dps, metricdata.DataPoint[int64]{
-			Attributes: attribute.NewSet(attribute.String("signal", f.m.signal), attribute.String("reason", reason)), Value: n,
+			Attributes: attribute.NewSet(testExporter, attribute.String("signal", f.m.signal), attribute.String("reason", reason)), Value: n,
 		})
 	}
 	metadatatest.AssertEqualExporterFusescopeClickhouseAttributesMetadataDropped(t, f.tel, dps,
@@ -523,7 +523,7 @@ func TestMetadataOnlyAfterWholeSuccess(t *testing.T) {
 			fake := &clickhouseFake{reply: tt.reply}
 			meta := &metaFake{}
 			set := exportertest.NewNopSettings(metadata.Type)
-			x, err := newLogsExporter(cfg, set.TelemetrySettings)
+			x, err := newLogsExporter(cfg, set)
 			if err != nil {
 				t.Fatal(err)
 			}

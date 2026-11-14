@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/ClickHouse/ch-go"
-	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+
+	"github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter/internal/metadatatest"
 )
 
 // syntheticMetrics resembles an HTTP service: 10 resources, per resource a
@@ -83,12 +85,12 @@ func BenchmarkExportMetrics(b *testing.B) {
 // benchExport runs one export attempt per iteration with ClickHouse replaced by
 // a no-op, reporting the cost per record. Telemetry records into the SDK, so
 // the benchmark pays its real cost.
-func benchExport[E attempter, D any](b *testing.B, newExporter func(*Config, component.TelemetrySettings) (*signalExporter[E, D], error),
+func benchExport[E attempter, D any](b *testing.B, newExporter func(*Config, exporter.Settings) (*signalExporter[E, D], error),
 	data D, records int, unit string,
 ) {
 	tel := componenttest.NewTelemetry()
 	b.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
-	x, err := newExporter(createDefaultConfig(), tel.NewTelemetrySettings())
+	x, err := newExporter(createDefaultConfig(), metadatatest.NewSettings(tel))
 	if err != nil {
 		b.Fatal(err)
 	}
