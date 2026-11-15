@@ -19,7 +19,7 @@ host, on 2026-11-14 and 2026-11-15.
 |---|---|
 | `setup.sh` | Builds the environment: the kind cluster, throwaway TLS material and tokens in a temp dir, chart 0.170.1, the telemetrygen image, the relay, and port-forwards to both collectors' loopback `:8888` (agent on 18001, gateway on 18002). |
 | `all.sh` | Runs the three runs in order, setting the gateway's memory limit to 1Gi, 2Gi and 4Gi with `helm upgrade`. |
-| `run.sh RUN` | Runs each line of `runs/RUN/steps.txt`. Before every step it deletes any leftover Job, restarts the gateway and the agent, and waits until they are ready and the agent's queues are empty, so every step starts from fresh pods. It records restarts and, for any pod that restarted, its status and previous logs. |
+| `run.sh RUN` | Runs each line of `runs/RUN/steps.txt`. It first removes that run's earlier outputs, so a rerun replaces them and never appends. Before every step it deletes any leftover Job, restarts the gateway and the agent, and waits until they are ready and the agent's queues are empty. A step that cannot start that way is skipped and logged as `SKIPPED`, not measured. It records restarts and, for any pod that restarted, its status and previous logs. |
 | `bench.py` | One step. It starts a telemetrygen Job (one worker per 250 records/s), waits until the generator is ready, warms up 40 s, samples both collectors every 5 s for 90 s, prints one JSON line, and always deletes its Job. |
 | `relay.yaml` | For logs and metrics, a collector in the generator pod that sends batches of 512 records to the agent, as SDKs do. telemetrygen alone sends one log or point per request. |
 | `pf.sh` | Keeps a port-forward to the current pod of a label selector, across restarts. |
@@ -41,7 +41,8 @@ host, on 2026-11-14 and 2026-11-15.
 python3 build_valid.py
 ```
 
-Start one runner at a time. Runners share the Job names.
+Start one runner at a time. Runners share the Job names. Running a run again replaces its
+versioned results.
 
 ## What each row records
 
@@ -50,7 +51,8 @@ Start one runner at a time. Runners share the Job names.
 - **The pods:** for the gateway and the agent, at both ends of the window, the pod name, UID, restart count and container start time. A row is valid only when they did not change during the window.
 - **Memory at the window's start:** `gateway_rss_mib_window_start`, `gateway_heap_mib_window_start` and `agent_rss_mib_window_start`. Pods are restarted before each step, so the steps are independent.
 - **Throughput:** accepted and refused at the agent and at the gateway, and `gateway_inserted_rows_per_s`. That last one is the rows of confirmed ClickHouse inserts, the proof of writes; it is not one row per accepted record.
-- **Cost:** CPU (the rate of `otelcol_process_cpu_seconds`) and peak RSS and heap during the window.
+- **Cost:** CPU (the rate of `otelcol_process_cpu_seconds`) and peak RSS and heap during the window, first sample included.
+  The runs here were made by an earlier `bench.py` that left the first sample out of its maxima. Their raw rows keep those maxima and the first sample as the `*_window_start` fields, and `build_valid.py` takes the larger of the two. So `valid.jsonl` holds the true peaks.
 
 ## Results
 

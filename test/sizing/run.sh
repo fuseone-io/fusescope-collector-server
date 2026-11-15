@@ -11,6 +11,9 @@ set -u
 cd "$(dirname "$0")"
 RUN=${1:?usage: run.sh RUN}
 D=runs/$RUN
+[ -f "$D/steps.txt" ] || { echo "no $D/steps.txt" >&2; exit 2; }
+# A run starts clean: earlier outputs of this run are removed, never appended to.
+rm -rf "$D/results.jsonl" "$D/restarts.jsonl" "$D/errors.log" "$D/evidence"
 mkdir -p "$D/evidence"
 k() { kubectl --context kind-bench "$@"; }
 
@@ -35,6 +38,7 @@ fresh() { # restart both collectors and wait until they serve their metrics agai
     curl -sf -m 5 -o /dev/null localhost:18001/metrics && curl -sf -m 5 -o /dev/null localhost:18002/metrics && break
     sleep 2
   done
+  curl -sf -m 5 -o /dev/null localhost:18001/metrics && curl -sf -m 5 -o /dev/null localhost:18002/metrics || return 1
   sleep 15
 }
 
@@ -47,6 +51,7 @@ recover() { # until both pods are ready and the agent's queues are empty, at mos
     sleep 5
   done
   echo "recover: not idle after 5 minutes (ready=$ready queued=$queued)" >> "$D/errors.log"
+  return 1
 }
 
 i=0
@@ -54,8 +59,11 @@ while read -r sig total; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
   k -n apps delete job --all --wait >/dev/null 2>&1
-  fresh
-  recover
+  # A step that does not start from fresh, idle collectors is skipped, not measured.
+  if ! fresh || ! recover; then
+    echo "SKIPPED $sig $total: collectors not fresh and idle" >> "$D/errors.log"
+    continue
+  fi
   w=$(( (total + 249) / 250 ))
   before=$(state)
   python3 bench.py "$sig" $(( total / w )) "$w" 40 90 "$i" >> "$D/results.jsonl" 2>> "$D/errors.log" \

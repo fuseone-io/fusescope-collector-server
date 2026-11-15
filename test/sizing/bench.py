@@ -156,6 +156,7 @@ def measure(signal, rate, workers, warmup, window, step_index, name):
         time.sleep(5)
         samples.append(snap(signal))
     s1 = samples[-1]
+    window = [s0] + samples  # peaks and averages include the window's first sample
     dt = s1["t"] - s0["t"]
     d = lambda k: (s1[k] - s0[k]) / dt
     res = {
@@ -177,11 +178,11 @@ def measure(signal, rate, workers, warmup, window, step_index, name):
         "gateway_inserted_rows_per_s": round(d("g_rows")),
         "gateway_insert_errors": s1["g_ins_err"] - s0["g_ins_err"],
         "agent_cores": round(d("a_cpu"), 3), "gateway_cores": round(d("g_cpu"), 3),
-        "agent_rss_mib_max": round(max(x["a_rss"] for x in samples) / 2**20),
-        "gateway_rss_mib_max": round(max(x["g_rss"] for x in samples) / 2**20),
-        "gateway_rss_mib_avg": round(sum(x["g_rss"] for x in samples) / len(samples) / 2**20),
-        "gateway_heap_mib_max": round(max(x["g_heap"] for x in samples) / 2**20),
-        "gateway_queue_max": max(x["g_queue"] for x in samples),
+        "agent_rss_mib_max": round(max(x["a_rss"] for x in window) / 2**20),
+        "gateway_rss_mib_max": round(max(x["g_rss"] for x in window) / 2**20),
+        "gateway_rss_mib_avg": round(sum(x["g_rss"] for x in window) / len(window) / 2**20),
+        "gateway_heap_mib_max": round(max(x["g_heap"] for x in window) / 2**20),
+        "gateway_queue_max": max(x["g_queue"] for x in window),
         "gateway_insert_s_avg": round((s1["g_dur_sum"] - s0["g_dur_sum"]) / max(1, s1["g_dur_cnt"] - s0["g_dur_cnt"]), 3),
         "generator_ready_to_window_s": round(s0["t"] - started),
         "window_s": round(dt),
