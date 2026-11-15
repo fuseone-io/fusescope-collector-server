@@ -60,8 +60,8 @@ func (b *idleBudget) give(n int) {
 type retainer interface {
 	attempter
 	// retire empties the encoder and drops its references to the batch it
-	// encoded, keeping the capacity of its columns, maps and buffers. It returns
-	// an estimate of the bytes of that capacity outside the tables' columns.
+	// encoded, keeping the capacity of its columns and buffers but not of its
+	// maps. It returns the bytes of that capacity outside the tables' columns.
 	retire() int
 }
 
@@ -164,10 +164,14 @@ func retireColumn(c proto.ColInput) (int, bool) {
 	case *proto.ColJSONStr:
 		return retireColumn(&c.Str)
 	case *proto.ColLowCardinality[string]:
-		// Values, plus about as much again for the keys and the dictionary,
-		// which the column keeps unexported.
-		n := retireSlice(c.Values)
-		return 2*n + cap(c.Values)*8, true
+		// The column keeps a private copy of every distinct value, its index map
+		// and its keys, which Reset keeps and nothing can measure: it is rebuilt
+		// empty, keeping only Values.
+		values := c.Values
+		n := retireSlice(values)
+		*c = *new(proto.ColStr).LowCardinality()
+		c.Values = values[:0]
+		return n, true
 	case *proto.ColEnum:
 		return retireSlice(c.Values) + cap(c.Values)*2, true
 	case *proto.ColArr[string]:
@@ -221,10 +225,7 @@ func retireSlice[T any](s []T) int {
 	return cap(s) * int(unsafe.Sizeof(zero))
 }
 
-// mapBytes estimates the memory of m, which keeps its buckets once cleared:
-// each entry at a 7/8 load factor, plus a control byte.
-func mapBytes[K comparable, V any](m map[K]V) int {
-	var k K
-	var v V
-	return len(m) * (int(unsafe.Sizeof(k)+unsafe.Sizeof(v)) + 1) * 8 / 7
-}
+// emptyMap returns a new map for m: clear keeps a map's buckets at the size of
+// its largest batch, which no estimate of its entries sees, so a retired
+// encoder keeps no map of an old batch.
+func emptyMap[K comparable, V any](map[K]V) map[K]V { return map[K]V{} }

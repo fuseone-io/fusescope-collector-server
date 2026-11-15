@@ -296,8 +296,9 @@ func (e *tracesEncoder) addKey(key string, t tagType, dt dataType) {
 
 // retire implements retainer.
 func (e *tracesEncoder) retire() int {
-	n := mapBytes(e.seenKeys) + mapBytes(e.resources.seen) + mapBytes(e.tags.seen) + cap(e.buf)
+	n := cap(e.buf)
 	e.reset()
+	e.seenKeys, e.resources.seen, e.tags.seen = emptyMap(e.seenKeys), emptyMap(e.resources.seen), emptyMap(e.tags.seen)
 	e.release()
 	n += retireSlice(e.kvs) + retireSlice(e.resInfos) + retireSlice(e.scopeJSONs)
 	e.kvs = e.kvs[:0]

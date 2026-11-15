@@ -7,6 +7,8 @@ import (
 	"context"
 	"math"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -409,4 +411,54 @@ func syntheticMeter() pmetric.Metrics {
 		p.Attributes().PutStr("service.name", "svc")
 	}
 	return md
+}
+
+// Regression: a prepared LowCardinality column keeps a copy of each distinct
+// value in a private dictionary, which Reset keeps. An 8 MiB value was estimated
+// at 40 bytes while the dictionary held it. Retiring must free what it cannot
+// measure.
+func TestRetireFreesLowCardinalityDictionary(t *testing.T) {
+	col := new(proto.ColStr).LowCardinality()
+	before := int64(heapAfterGC())
+	big := strings.Repeat("x", 8<<20)
+	col.Append(big)
+	if err := col.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	big = ""
+	n, ok := retireColumn(col)
+	kept := int64(heapAfterGC()) - before
+	runtime.KeepAlive(col)
+	if !ok {
+		t.Fatal("not measured")
+	}
+	if kept > 1<<20 {
+		t.Fatalf("the retired column keeps %d bytes on the heap, estimated %d", kept, n)
+	}
+	// It still works after retiring.
+	col.Append("a")
+	col.Append("a")
+	if err := col.Prepare(); err != nil || col.Rows() != 2 {
+		t.Fatalf("after retire: rows %d, err %v", col.Rows(), err)
+	}
+}
+
+// Regression: clear keeps a map's buckets, so after 100,000 entries, a retire
+// and one new entry, the estimate fell to that one entry while the buckets of
+// the 100,000 stayed. The estimate must cover what the encoder really keeps.
+func TestRetireAfterALargeThenASmallBatch(t *testing.T) {
+	enc := newTracesEncoder()
+	before := int64(heapAfterGC())
+	for i := range 100_000 {
+		enc.tags.seen[tagRow{key: strconv.Itoa(i)}] = struct{}{}
+	}
+	_ = enc.retire()
+	enc.tags.seen[tagRow{key: "one"}] = struct{}{}
+	est := enc.retire()
+	kept := int64(heapAfterGC()) - before
+	runtime.KeepAlive(enc)
+	t.Logf("estimate %d KiB, heap kept %d KiB", est>>10, kept>>10)
+	if kept > 2*int64(est)+(256<<10) {
+		t.Fatalf("the encoder keeps %d bytes, over twice the %d estimated", kept, est)
+	}
 }

@@ -593,12 +593,9 @@ func formatBound(f float64) string {
 
 // retire implements retainer.
 func (e *metricsEncoder) retire() int {
-	n := mapBytes(e.seenSeries) + mapBytes(e.metaIndex) + mapBytes(e.scopeMeta) + cap(e.buf)
-	for _, rows := range e.scopeMeta {
-		n += cap(rows) * 8
-	}
+	n := cap(e.buf)
 	e.resetChunk()
-	clear(e.seenSeries)
+	e.seenSeries, e.metaIndex, e.scopeMeta = emptyMap(e.seenSeries), emptyMap(e.metaIndex), emptyMap(e.scopeMeta)
 	n += retireSlice(e.metaRows) + retireSlice(e.resource) + retireSlice(e.scope) +
 		retireSlice(e.point) + retireSlice(e.labels)
 	e.resource, e.scope, e.point, e.labels = e.resource[:0], e.scope[:0], e.point[:0], e.labels[:0]
