@@ -35,8 +35,11 @@ uptime_of() { # seconds the process behind a forwarded :8888 has been up
 }
 
 clear_jobs() { # no generator may survive into the next step
+  local remaining
   k -n apps delete job --all --wait --timeout=120s >/dev/null 2>&1 || return 1
-  [ -z "$(k -n apps get jobs,pods -l '!none' --no-headers 2>/dev/null)" ] || return 1
+  # Captured apart from the test, so a failing kubectl fails the check instead of passing it.
+  remaining=$(k -n apps get jobs,pods -l '!none' --no-headers 2>/dev/null) || return 1
+  [ -z "$remaining" ] || return 1
 }
 
 fresh() { # restart both collectors and prove the step will measure the new pods
