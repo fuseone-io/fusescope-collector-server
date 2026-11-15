@@ -1,0 +1,15 @@
+fusescopeCollector:
+  agentListener:
+    enabled: true
+    tls: {existingSecret: agents-tls}
+    token: {existingSecret: agent-token}
+fusescopeAgent:
+  enabled: true
+  tls: {existingSecret: agent-client}
+  podLogs: {enabled: false}
+  hostMetrics: {enabled: false}
+  kubeletStats: {enabled: false}
+  otlp:
+    enabled: true
+    tls: {existingSecret: agent-otlp-server}
+    token: {existingSecret: fusescope-agent-otlp-token}

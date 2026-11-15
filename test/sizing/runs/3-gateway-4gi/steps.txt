@@ -1,0 +1,6 @@
+traces 30000
+traces 40000
+traces 60000
+metrics 100000
+logs 40000
+logs 60000
