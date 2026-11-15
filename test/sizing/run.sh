@@ -25,20 +25,45 @@ state() { # restartCount|reason|finishedAt per component
   done
 }
 
-fresh() { # restart both collectors and wait until they serve their metrics again
-  k -n platform rollout restart deploy/fusescope-collector ds/fusescope-agent >/dev/null
-  k -n platform rollout status deploy/fusescope-collector --timeout=300s >/dev/null
-  k -n platform rollout status ds/fusescope-agent --timeout=300s >/dev/null
+pods() { # name/uid of every gateway and agent pod
+  k -n platform get pods -l 'app.kubernetes.io/component in (fusescope-collector,fusescope-agent)' \
+    -o jsonpath='{range .items[*]}{.metadata.uid}{"\n"}{end}'
+}
+
+uptime_of() { # seconds the process behind a forwarded :8888 has been up
+  curl -sf -m 5 "localhost:$1/metrics" | awk '/^otelcol_process_uptime/ {print int($2); exit}'
+}
+
+clear_jobs() { # no generator may survive into the next step
+  k -n apps delete job --all --wait --timeout=120s >/dev/null 2>&1 || return 1
+  [ -z "$(k -n apps get jobs,pods -l '!none' --no-headers 2>/dev/null)" ] || return 1
+}
+
+fresh() { # restart both collectors and prove the step will measure the new pods
+  local before after uid n up
+  before=$(pods) || return 1
+  [ -n "$before" ] || return 1
+  k -n platform rollout restart deploy/fusescope-collector ds/fusescope-agent >/dev/null || return 1
+  k -n platform rollout status deploy/fusescope-collector --timeout=300s >/dev/null || return 1
+  k -n platform rollout status ds/fusescope-agent --timeout=300s >/dev/null || return 1
   for _ in $(seq 1 90); do # until the replaced pods are gone: one pod per component
     n=$(k -n platform get pods -l 'app.kubernetes.io/component in (fusescope-collector,fusescope-agent)' --no-headers | wc -l)
     [ "$n" = 2 ] && break
     sleep 2
   done
+  [ "$n" = 2 ] || return 1
+  after=$(pods) || return 1
+  for uid in $after; do # every pod now running must be new
+    if printf '%s\n' "$before" | grep -qx "$uid"; then return 1; fi
+  done
   for _ in $(seq 1 60); do
     curl -sf -m 5 -o /dev/null localhost:18001/metrics && curl -sf -m 5 -o /dev/null localhost:18002/metrics && break
     sleep 2
   done
-  curl -sf -m 5 -o /dev/null localhost:18001/metrics && curl -sf -m 5 -o /dev/null localhost:18002/metrics || return 1
+  for port in 18001 18002; do # the forwarded processes are the restarted ones
+    up=$(uptime_of $port)
+    [ -n "$up" ] && [ "$up" -lt 300 ] || return 1
+  done
   sleep 15
 }
 
@@ -58,11 +83,16 @@ i=0
 while read -r sig total; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
-  k -n apps delete job --all --wait >/dev/null 2>&1
-  # A step that does not start from fresh, idle collectors is skipped, not measured.
-  if ! fresh || ! recover; then
-    echo "SKIPPED $sig $total: collectors not fresh and idle" >> "$D/errors.log"
-    continue
+  # A step that does not start without generators, from fresh and idle collectors, is skipped,
+  # not measured.
+  if ! clear_jobs; then
+    echo "SKIPPED $sig $total: a generator Job or pod remains" >> "$D/errors.log"; continue
+  fi
+  if ! fresh; then
+    echo "SKIPPED $sig $total: collectors not restarted" >> "$D/errors.log"; continue
+  fi
+  if ! recover; then
+    echo "SKIPPED $sig $total: collectors not idle" >> "$D/errors.log"; continue
   fi
   w=$(( (total + 249) / 250 ))
   before=$(state)
