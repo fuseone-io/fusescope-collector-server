@@ -153,3 +153,11 @@ func (e *meterEncoder) appendPoints(m pmetric.Metric, temporality string, monoto
 		c.value.Append(value)
 	}
 }
+
+// retire implements retainer.
+func (e *meterEncoder) retire() int {
+	e.rows.input().Reset()
+	n := cap(e.buf) + retireSlice(e.resource) + retireSlice(e.scope) + retireSlice(e.point) + retireSlice(e.labels)
+	e.resource, e.scope, e.point, e.labels = e.resource[:0], e.scope[:0], e.point[:0], e.labels[:0]
+	return n
+}

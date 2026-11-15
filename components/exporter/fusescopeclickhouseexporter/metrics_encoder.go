@@ -590,3 +590,18 @@ func temporalityName(t pmetric.AggregationTemporality) string {
 func formatBound(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
+
+// retire implements retainer.
+func (e *metricsEncoder) retire() int {
+	n := mapBytes(e.seenSeries) + mapBytes(e.metaIndex) + mapBytes(e.scopeMeta) + cap(e.buf)
+	for _, rows := range e.scopeMeta {
+		n += cap(rows) * 8
+	}
+	e.resetChunk()
+	clear(e.seenSeries)
+	n += retireSlice(e.metaRows) + retireSlice(e.resource) + retireSlice(e.scope) +
+		retireSlice(e.point) + retireSlice(e.labels)
+	e.resource, e.scope, e.point, e.labels = e.resource[:0], e.scope[:0], e.point[:0], e.labels[:0]
+	e.env, e.emit, e.err = "", nil, nil
+	return n
+}

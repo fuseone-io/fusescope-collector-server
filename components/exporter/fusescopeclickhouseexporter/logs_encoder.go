@@ -208,3 +208,14 @@ func base62(src [20]byte) (dst [27]byte) {
 	}
 	return dst
 }
+
+// retire implements retainer.
+func (e *logsEncoder) retire() int {
+	n := mapBytes(e.resources.seen) + mapBytes(e.tags.seen) + mapBytes(e.attrKeys.seen) +
+		mapBytes(e.resKeys.seen) + cap(e.buf)
+	e.reset()
+	n += retireSlice(e.scope)
+	e.scope = e.scope[:0]
+	e.emit, e.err = nil, nil
+	return n
+}

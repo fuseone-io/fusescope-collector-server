@@ -293,3 +293,14 @@ func (e *tracesEncoder) addKey(key string, t tagType, dt dataType) {
 	e.keys.dataType.Append(dt.String())
 	e.keys.isColumn.Append(false)
 }
+
+// retire implements retainer.
+func (e *tracesEncoder) retire() int {
+	n := mapBytes(e.seenKeys) + mapBytes(e.resources.seen) + mapBytes(e.tags.seen) + cap(e.buf)
+	e.reset()
+	e.release()
+	n += retireSlice(e.kvs) + retireSlice(e.resInfos) + retireSlice(e.scopeJSONs)
+	e.kvs = e.kvs[:0]
+	e.emit, e.err = nil, nil
+	return n
+}

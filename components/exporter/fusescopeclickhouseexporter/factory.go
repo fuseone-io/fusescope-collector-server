@@ -89,7 +89,7 @@ func newLogs(ctx context.Context, set exporter.Settings, c *Config, x *signalExp
 	return logsExporter{exp, x.stopRetries}, nil
 }
 
-func newMetrics[E attempter](ctx context.Context, set exporter.Settings, c *Config, x *signalExporter[E, pmetric.Metrics]) (exporter.Metrics, error) {
+func newMetrics[E retainer](ctx context.Context, set exporter.Settings, c *Config, x *signalExporter[E, pmetric.Metrics]) (exporter.Metrics, error) {
 	exp, err := exporterhelper.NewMetrics(ctx, set, c, x.push, helperOptions(c, x.start, x.shutdown)...)
 	if err != nil {
 		return nil, err

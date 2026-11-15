@@ -85,7 +85,7 @@ func BenchmarkExportMetrics(b *testing.B) {
 // benchExport runs one export attempt per iteration with ClickHouse replaced by
 // a no-op, reporting the cost per record. Telemetry records into the SDK, so
 // the benchmark pays its real cost.
-func benchExport[E attempter, D any](b *testing.B, newExporter func(*Config, exporter.Settings) (*signalExporter[E, D], error),
+func benchExport[E retainer, D any](b *testing.B, newExporter func(*Config, exporter.Settings) (*signalExporter[E, D], error),
 	data D, records int, unit string,
 ) {
 	tel := componenttest.NewTelemetry()
@@ -94,6 +94,7 @@ func benchExport[E attempter, D any](b *testing.B, newExporter func(*Config, exp
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(x.encoders.drain)
 	x.do = func(context.Context, ch.Query) error { return nil }
 	ctx := context.Background()
 	id := newRequestID(time.Now())

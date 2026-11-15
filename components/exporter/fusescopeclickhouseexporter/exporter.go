@@ -63,11 +63,11 @@ var metricsTables = []table[*metricsEncoder]{
 }
 
 // signalExporter encodes a batch of one signal and inserts one block per table.
-type signalExporter[E attempter, D any] struct {
+type signalExporter[E retainer, D any] struct {
 	*clickhouseClient
 	tables   []table[E]
 	bodies   []string
-	encoders sync.Pool
+	encoders *encoderPool[E]
 	encode   func(E, D, func() error) error
 	// telemetry records each insert attempt, indexed like tables.
 	telemetry *insertTelemetry
@@ -86,7 +86,7 @@ type attempter interface {
 	setAttempt(now time.Time, random func([]byte))
 }
 
-func newSignalExporter[E attempter, D any](cfg *Config, database string, set exporter.Settings, tables []table[E],
+func newSignalExporter[E retainer, D any](cfg *Config, database string, set exporter.Settings, tables []table[E],
 	newEncoder func() E, encode func(E, D, func() error) error,
 ) (*signalExporter[E, D], error) {
 	x := &signalExporter[E, D]{
@@ -95,7 +95,11 @@ func newSignalExporter[E attempter, D any](cfg *Config, database string, set exp
 		encode:           encode,
 		stopping:         make(chan struct{}),
 	}
-	x.encoders.New = func() any { return newEncoder() }
+	maxIdle := 0
+	if q := cfg.QueueConfig.Get(); q != nil {
+		maxIdle = q.NumConsumers
+	}
+	x.encoders = newEncoderPool(newEncoder, tables, maxIdle, processIdleBudget)
 	enc := newEncoder()
 	names := make([]string, len(tables))
 	for i, t := range tables {
@@ -199,6 +203,7 @@ func (x *signalExporter[E, D]) start(ctx context.Context, _ component.Host) erro
 
 // shutdown inserts the queued metadata, then closes the connection.
 func (x *signalExporter[E, D]) shutdown(ctx context.Context) error {
+	x.encoders.drain()
 	var err error
 	if x.meta != nil {
 		err = x.meta.shutdown(ctx)
@@ -239,8 +244,8 @@ func (x *signalExporter[E, D]) push(ctx context.Context, data D) error {
 // the request, not the content: equal telemetry sent twice is written twice,
 // while a retry is deduplicated (DESIGN §4).
 func (x *signalExporter[E, D]) export(ctx context.Context, data D, id requestID) error {
-	enc := x.encoders.Get().(E)
-	defer x.encoders.Put(enc)
+	enc := x.encoders.get()
+	defer x.encoders.put(enc)
 	enc.setAttempt(id.started, id.random())
 	token := id.token()
 	// The encoder inserts the chunks that fill up and leaves the last to us.

@@ -252,7 +252,7 @@ func TestInsertedRowsCountsEveryChunk(t *testing.T) {
 		records.AppendEmpty().Body().SetStr("chunked")
 	}
 	// Every record fills a chunk, so each goes in an insert of its own.
-	x.encoders.New = func() any {
+	x.encoders.newEncoder = func() *logsEncoder {
 		e := newLogsEncoder()
 		e.maxChunkBytes = 1
 		return e

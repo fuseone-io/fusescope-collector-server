@@ -4,12 +4,21 @@
 package fusescopeclickhouseexporter
 
 import (
+	"context"
 	"fmt"
+	"runtime"
 	"testing"
+	"time"
+
+	"github.com/ClickHouse/ch-go"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/exporter"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+
+	"github.com/fuseone-io/fusescope-collector-server/components/exporter/fusescopeclickhouseexporter/internal/metadatatest"
 )
 
 // syntheticTraces resembles an HTTP service: 10 resources, 15 attributes per
@@ -154,4 +163,42 @@ func BenchmarkEncodeTracesChunked(b *testing.B) {
 		_ = enc.encode(td, func() error { return nil })
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*20_000), "ns/span")
+}
+
+// Two collections between exports, as under GOMEMLIMIT on a busy collector: the
+// first moves sync.Pool items to its victim cache, the second drops them. The
+// collections are outside the timer, so B/op and ns/op are the export's own.
+func BenchmarkExportTracesAfterTwoCollections(b *testing.B) {
+	benchExportAfterTwoCollections(b, newTracesExporter, syntheticTraces(10_000), 10_000, "span")
+}
+
+func BenchmarkExportLogsAfterTwoCollections(b *testing.B) {
+	benchExportAfterTwoCollections(b, newLogsExporter, syntheticLogs(), 10_000, "record")
+}
+
+func benchExportAfterTwoCollections[E retainer, D any](b *testing.B, newExporter func(*Config, exporter.Settings) (*signalExporter[E, D], error),
+	data D, records int, unit string,
+) {
+	tel := componenttest.NewTelemetry()
+	b.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
+	x, err := newExporter(createDefaultConfig(), metadatatest.NewSettings(tel))
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(x.encoders.drain)
+	x.do = func(context.Context, ch.Query) error { return nil }
+	ctx := context.Background()
+	id := newRequestID(time.Now())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := x.export(ctx, data, id); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		runtime.GC()
+		runtime.GC()
+		b.StartTimer()
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*records), "ns/"+unit)
 }
