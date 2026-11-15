@@ -69,9 +69,10 @@ type retainer interface {
 // batches. A sync.Pool loses its items at the second garbage collection after
 // they are put back, and under GOMEMLIMIT a busy collector collects about once
 // per batch: the columns would regrow from empty every batch. The pool keeps at
-// most maxIdle encoders, none estimated over maxEach, within a budget shared by
-// the process; an encoder that does not fit, as after an unusually large batch,
-// is dropped whole. It is safe for concurrent use.
+// most maxIdle encoders within a budget shared by the process, which one encoder
+// may fill: a busy exporter has about one encoder in use at a time, and at 1Gi a
+// 20,000-span encoder is about two thirds of the budget. An encoder that does
+// not fit, as after an unusually large batch, is dropped whole. It is safe for concurrent use.
 type encoderPool[E retainer] struct {
 	newEncoder func() E
 	tables     []table[E]
@@ -94,7 +95,7 @@ func newEncoderPool[E retainer](newEncoder func() E, tables []table[E], maxIdle 
 	}
 	return &encoderPool[E]{
 		newEncoder: newEncoder, tables: tables,
-		maxIdle: maxIdle, maxEach: budget.max / 2, budget: budget,
+		maxIdle: maxIdle, maxEach: budget.max, budget: budget,
 	}
 }
 

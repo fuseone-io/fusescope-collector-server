@@ -191,6 +191,23 @@ func TestEncoderPoolLimits(t *testing.T) {
 	}
 }
 
+// Regression: at 1Gi a 20,000-span encoder (about 67 MiB estimated) was over
+// half the 102 MiB budget and dropped after every batch. One encoder as large
+// as the whole budget is kept.
+func TestEncoderPoolKeepsOneEncoderUpToTheBudget(t *testing.T) {
+	enc := encodedTraces(1_000)
+	n, _ := tracesPool(1).retire(enc)
+	p := newEncoderPool(newTracesEncoder, tracesTables, 4, newIdleBudget(n+n/4))
+	p.put(encodedTraces(1_000))
+	if len(p.idle) != 1 {
+		t.Fatalf("an encoder of %d bytes within a budget of %d was dropped", n, p.budget.max)
+	}
+	p.put(encodedTraces(1_000))
+	if len(p.idle) != 1 || p.budget.used > p.budget.max {
+		t.Fatalf("idle %d holding %d of %d bytes, want 1 within the budget", len(p.idle), p.budget.used, p.budget.max)
+	}
+}
+
 // The budget is shared: a second large encoder, from another pool, does not fit
 // beside the first, and get gives its bytes back.
 func TestEncoderPoolSharedBudget(t *testing.T) {
