@@ -2,10 +2,14 @@ traces 2000
 traces 5000
 traces 10000
 traces 15000
+traces 20000
+traces 25000
+traces 30000
 logs 5000
 logs 10000
 logs 20000
+logs 30000
 metrics 10000
 metrics 25000
 metrics 50000
-traces 20000
+metrics 75000

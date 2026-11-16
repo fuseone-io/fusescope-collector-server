@@ -1,11 +1,11 @@
 #!/bin/bash
 # Builds the benchmark environment: a kind cluster, throwaway TLS material and tokens, the
-# fusescope chart 0.170.1 with the agents' listener and an OTLP-only agent, the telemetrygen
+# fusescope chart 0.171.0 with the agents' listener and an OTLP-only agent, the telemetrygen
 # image, the batching relay, and port-forwards to both collectors' loopback :8888
 # (agent on 18001, gateway on 18002). Certificates and tokens stay in a temp dir, never here.
 set -euo pipefail
 cd "$(dirname "$0")"
-CHART_VERSION=${CHART_VERSION:-0.170.1}
+CHART_VERSION=${CHART_VERSION:-0.171.0}
 TG=ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.135.0
 k() { kubectl --context kind-bench "$@"; }
 

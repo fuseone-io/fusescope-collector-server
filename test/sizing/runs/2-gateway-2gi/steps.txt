@@ -1,5 +1,6 @@
-traces 15000
 traces 20000
 traces 30000
+traces 40000
 logs 20000
 logs 30000
+logs 40000
