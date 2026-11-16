@@ -1,6 +1,7 @@
-traces 30000
 traces 40000
 traces 60000
+traces 80000
 metrics 100000
 logs 40000
 logs 60000
+logs 80000

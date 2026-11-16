@@ -4,7 +4,7 @@
 set -u
 cd "$(dirname "$0")"
 up() {
-  helm --kube-context kind-bench upgrade fusescope fusescope/fusescope --version "${CHART_VERSION:-0.170.1}" \
+  helm --kube-context kind-bench upgrade fusescope fusescope/fusescope --version "${CHART_VERSION:-0.171.0}" \
     -n platform -f values.yaml --set "fusescopeCollector.resources.limits.memory=$1" --wait --timeout 10m >/dev/null
 }
 up 1Gi && ./run.sh 1-gateway-1gi
